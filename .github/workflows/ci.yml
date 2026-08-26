@@ -126,6 +126,9 @@ jobs:
       - name: WPF XAML load smoke
         shell: powershell
         run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfLoadSmoke.ps1
+      - name: WPF Doctor and Core binding smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfBindingSmoke.ps1
       - name: Standalone Emergency Doctor smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EmergencyDoctorSmoke.ps1
@@ -149,7 +152,7 @@ jobs:
   cold-checkout-bootstrap:
     name: Raw checkout bootstrap / Windows 2022
     runs-on: windows-2022
-    timeout-minutes: 5
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
       - name: Cold checkout launcher smoke
@@ -161,6 +164,12 @@ jobs:
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Cli -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
           if ($LASTEXITCODE -ne 0) { throw "Cold checkout launcher failed rc=$LASTEXITCODE" }
           Write-Host 'COLD_CHECKOUT_BOOTSTRAP=PASS'
+      - name: Cold checkout WPF load smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfLoadSmoke.ps1
+      - name: Cold checkout WPF binding smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfBindingSmoke.ps1
 
   cold-entrypoints:
     name: Raw checkout ${{ matrix.scenario }} / Windows 2022

@@ -1,0 +1,25 @@
+name: gui-preflight-entrypoint
+
+on:
+  push:
+    branches: [ safe-core ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gui-preflight-entrypoint:
+    name: GUI preflight entrypoint / Windows 2022
+    runs-on: windows-2022
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Non-installing GUI preflight entrypoint
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-GuiPreflightEntrypointSmoke.ps1

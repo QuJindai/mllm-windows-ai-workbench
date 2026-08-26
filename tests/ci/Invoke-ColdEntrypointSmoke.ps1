@@ -11,13 +11,11 @@ $Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 function Read-JsonItems([string]$Path){
     $parsed=Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-    $items=@()
     if($parsed -is [System.Array]){
-        foreach($item in $parsed){$items += ,$item}
+        foreach($item in $parsed){$item}
     }else{
-        $items += ,$parsed
+        $parsed
     }
-    return $items
 }
 
 if($Scenario -eq 'doctor'){

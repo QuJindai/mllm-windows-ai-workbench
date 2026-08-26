@@ -11,18 +11,29 @@ $Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 function Expand-JsonValue([object]$Value){
     if($null -eq $Value){return}
-    $isEnumerable=($Value -is [System.Collections.IEnumerable])
-    $isString=($Value -is [string])
     $hasId=($null -ne $Value.PSObject.Properties['id'])
     $hasStatus=($null -ne $Value.PSObject.Properties['status'])
     if($hasId -and $hasStatus){
         Write-Output -NoEnumerate $Value
         return
     }
+
+    # Windows PowerShell 5.1 can serialize some collection wrappers as
+    # {"value":[...],"Count":N}. Normalize that representation without
+    # weakening the semantic checks applied to each doctor/core result.
+    $valueProperty=$Value.PSObject.Properties['value']
+    if($null -ne $valueProperty){
+        Expand-JsonValue -Value $valueProperty.Value
+        return
+    }
+
+    $isEnumerable=($Value -is [System.Collections.IEnumerable])
+    $isString=($Value -is [string])
     if($isEnumerable -and -not $isString){
         foreach($child in $Value){Expand-JsonValue -Value $child}
         return
     }
+
     $props=@($Value.PSObject.Properties.Name) -join ','
     throw "Unexpected JSON leaf type=$($Value.GetType().FullName) properties=$props"
 }
@@ -56,7 +67,7 @@ if($Scenario -eq 'doctor'){
 
         $evidence=@(Get-ChildItem -LiteralPath (Join-Path $Data 'evidence') -Filter '*.zip' -File -ErrorAction SilentlyContinue)
         if($evidence.Count -lt 1){throw 'Cold checkout Doctor did not create evidence ZIP'}
-        Write-Host "COLD_CHECKOUT_DOCTOR=PASS rc=$rc count=$($items.Count) failed=$failedCount evidence=$($evidence.Count)"
+        Write-Host "COLD_CHECKOUT_DOCTOR=PASS rc=$rc count=$($items.Count) failed=$failedCount evidence=$($evidence.Count) summary=$($summaryPath.FullName)"
     }finally{
         Remove-Item -LiteralPath $Data -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -85,7 +96,7 @@ try{
     $items=@(Read-JsonItems -Path $summaryPath.FullName)
     if(@($items | Where-Object { $_.PSObject.Properties['status'].Value -eq 'BLOCKED' }).Count -lt 1){throw 'Cold checkout offline Core did not return BLOCKED'}
     if(@($items | Where-Object { $_.PSObject.Properties['status'].Value -eq 'FAILED' }).Count -ne 0){throw 'Cold checkout offline Core returned FAILED instead of fail-closed BLOCKED'}
-    Write-Host "COLD_CHECKOUT_CORE_FAIL_CLOSED=PASS count=$($items.Count)"
+    Write-Host "COLD_CHECKOUT_CORE_FAIL_CLOSED=PASS count=$($items.Count) summary=$($summaryPath.FullName)"
 }finally{
     $env:Path=$oldPath
     $env:LOCALAPPDATA=$oldLocalAppData

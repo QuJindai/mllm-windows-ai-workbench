@@ -23,6 +23,35 @@ with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             raise SystemExit(f'SAFE_CORE_OVERLAY_UNSAFE_PATH member={info.filename}')
     zf.extractall(ROOT)
 
+# The GUI adapter is itself a PowerShell module. Importing Core, State,
+# Detection, Runtime, etc. as sibling nested modules leaves task scriptblocks
+# (dot-sourced by Core.psm1) unable to resolve functions exported by those
+# siblings. Keep Core local to GuiAdapter, but expose the shared engine
+# dependencies in the process-global session state, matching the proven CLI
+# launcher topology. This fixes Dashboard Detect and out-of-process GUI jobs.
+gui_adapter = ROOT / 'gui' / 'GuiAdapter.psm1'
+gui_text = gui_adapter.read_text(encoding='utf-8-sig')
+gui_old = '''function Initialize-MLLMGuiEngine {
+    param([string]$ProjectRoot)
+    foreach($m in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){
+        Import-Module (Join-Path $ProjectRoot "engine\\$m.psm1") -Force
+    }
+    Import-MLLMTasks -ProjectRoot $ProjectRoot
+}'''
+gui_new = '''function Initialize-MLLMGuiEngine {
+    param([string]$ProjectRoot)
+    foreach($m in @('State','Detection','Network','Download','Security','Evidence','Runtime')){
+        Import-Module (Join-Path $ProjectRoot "engine\\$m.psm1") -Force -Global
+    }
+    Import-Module (Join-Path $ProjectRoot 'engine\\Core.psm1') -Force
+    Import-MLLMTasks -ProjectRoot $ProjectRoot
+}'''
+if gui_old in gui_text:
+    gui_text = gui_text.replace(gui_old, gui_new, 1)
+elif gui_new not in gui_text:
+    raise SystemExit('SAFE_CORE_GUI_SCOPE_PATCH_TARGET_MISSING')
+gui_adapter.write_text(gui_text, encoding='utf-8-sig')
+
 # Windows PowerShell 5.1 ParseFile/script loading treats UTF-8 without BOM as
 # the active ANSI code page. Workbench.Wpf.ps1 contains a non-ASCII em dash,
 # so a no-BOM file can be tokenized incorrectly even when ParseInput(UTF8)
@@ -72,6 +101,7 @@ elif core_new not in core_text:
 core.write_text(core_text, encoding='utf-8-sig')
 
 print(f'SAFE_CORE_MATERIALIZE=PASS parts={len(PARTS)} sha256={actual}')
+print('SAFE_CORE_GUI_SCOPE_PATCH=PASS')
 print('SAFE_CORE_PS51_WPF_PATCH=PASS')
 print('SAFE_CORE_PS51_UTF8_BOM=PASS')
 print('SAFE_CORE_PS51_EMERGENCY_DOCTOR_PATCH=PASS')

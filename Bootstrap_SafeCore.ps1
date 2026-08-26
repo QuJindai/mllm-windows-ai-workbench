@@ -24,6 +24,7 @@ $RequiredPaths = @(
     'gui\Workbench.Wpf.ps1'
 )
 $GuiScopeMarker = 'Import-Module (Join-Path $ProjectRoot "engine\$m.psm1") -Force -Global'
+$WpfNetworkModeMarker = 'WPF_SMOKE=PASS network_mode='
 
 function Test-SafeCoreReady {
     if (-not (Test-Path -LiteralPath $StampPath -PathType Leaf)) { return $false }
@@ -33,6 +34,8 @@ function Test-SafeCoreReady {
     try {
         $adapterText = Get-Content -LiteralPath (Join-Path $ProjectRoot 'gui\GuiAdapter.psm1') -Raw -Encoding UTF8
         if (-not $adapterText.Contains($GuiScopeMarker)) { return $false }
+        $readyWpfText = Get-Content -LiteralPath (Join-Path $ProjectRoot 'gui\Workbench.Wpf.ps1') -Raw -Encoding UTF8
+        if (-not $readyWpfText.Contains($WpfNetworkModeMarker)) { return $false }
     } catch { return $false }
     return $true
 }
@@ -143,6 +146,23 @@ if ($wpfText.Contains($wpfOld)) {
     $wpfText = $wpfText.Replace($wpfOld, $wpfNew)
 } elseif (-not $wpfText.Contains($wpfNew)) {
     throw 'SAFE_CORE_PS51_PATCH_TARGET_MISSING'
+}
+
+$networkOld = "if(`$SmokeTest){Write-Output 'WPF_SMOKE=PASS';return}"
+$networkNew = @'
+$networkBootstrap=$window.FindName('NetworkModeCombo')
+if(-not $networkBootstrap){throw 'Missing WPF control: NetworkModeCombo'}
+$networkMatched=$false
+foreach($item in @($networkBootstrap.Items)){
+    if([string]$item.Content -eq [string]$NetworkMode){$networkBootstrap.SelectedItem=$item;$networkMatched=$true;break}
+}
+if(-not $networkMatched){throw "Unsupported initial network mode: $NetworkMode"}
+if($SmokeTest){Write-Output ('WPF_SMOKE=PASS network_mode='+[string]$networkBootstrap.SelectedItem.Content);$window.Close();return}
+'@
+if ($wpfText.Contains($networkOld)) {
+    $wpfText = $wpfText.Replace($networkOld, $networkNew)
+} elseif (-not $wpfText.Contains($WpfNetworkModeMarker)) {
+    throw 'SAFE_CORE_WPF_NETWORK_MODE_PATCH_TARGET_MISSING'
 }
 Set-Content -LiteralPath $wpfPath -Value $wpfText -Encoding UTF8 -NoNewline
 

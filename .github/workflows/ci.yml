@@ -120,9 +120,29 @@ jobs:
       - name: WPF XAML load smoke
         shell: powershell
         run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfLoadSmoke.ps1
-      - name: Standalone Emergency Doctor smoke
+      - name: Standalone Emergency Doctor diagnostic
         shell: powershell
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EmergencyDoctorSmoke.ps1
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=(Get-Location).Path
+          $data=Join-Path $env:TEMP ('mllm-emergency-'+[guid]::NewGuid().ToString('N'))
+          . .\engine\EmergencyDoctor.ps1
+          try {
+            $r=Invoke-MLLMEmergencyDoctor -ProjectRoot $root -DataRoot $data -Cause 'ci-diagnostic'
+            if(-not $r){throw 'Emergency Doctor returned null'}
+            if(-not(Test-Path -LiteralPath $r.json)){throw 'Emergency Doctor JSON evidence missing'}
+            if(-not(Test-Path -LiteralPath $r.text)){throw 'Emergency Doctor text evidence missing'}
+            Write-Host 'EMERGENCY_DOCTOR_DIAGNOSTIC=PASS'
+          } catch {
+            Write-Host ("EMERGENCY_EXCEPTION_TYPE={0}" -f $_.Exception.GetType().FullName)
+            Write-Host ("EMERGENCY_EXCEPTION_MESSAGE={0}" -f $_.Exception.Message)
+            Write-Host ("EMERGENCY_ERROR_ID={0}" -f $_.FullyQualifiedErrorId)
+            Write-Host ("EMERGENCY_POSITION={0}" -f $_.InvocationInfo.PositionMessage)
+            Write-Host ("EMERGENCY_STACK={0}" -f $_.ScriptStackTrace)
+            throw
+          } finally {
+            Remove-Item -LiteralPath $data -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
   no-paid-services:
     name: CI billing guard

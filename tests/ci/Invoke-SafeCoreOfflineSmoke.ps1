@@ -29,6 +29,20 @@ try{
     $env:LOCALAPPDATA=Join-Path $Data 'fake-localappdata'
     $env:ProgramFiles=Join-Path $Data 'fake-programfiles'
 
+    # Exercise the exact Install Center "Core" orchestration path first. With
+    # OFFLINE_CACHE and an empty cache it must fail closed: return BLOCKED and
+    # make no executable/system installation changes.
+    $presetResult=Invoke-MLLMPreset -Preset 'Core' -ProjectRoot $Root -DataRoot $Data -NetworkMode 'OFFLINE_CACHE' -RunDir ''
+    $presetItems=@($presetResult | ForEach-Object {$_})
+    Assert-True ($presetItems.Count -ge 1) 'Core preset returned no result.'
+    Assert-True (@($presetItems | Where-Object {$_.status -eq 'BLOCKED'}).Count -ge 1) 'Offline empty-cache Core preset must return BLOCKED.'
+    Assert-True (@($presetItems | Where-Object {$_.status -eq 'FAILED'}).Count -eq 0) 'Offline empty-cache Core preset must not crash/fail.'
+    Assert-True (-not(Test-Path (Join-Path $Data 'runtime\python-portable\python.exe'))) 'Blocked Core preset unexpectedly created Python executable.'
+    Assert-True (-not(Test-Path (Join-Path $Data 'runtime\llama.cpp\llama-server.exe'))) 'Blocked Core preset unexpectedly created llama-server executable.'
+    Write-Host 'SAFE_CORE_PRESET_OFFLINE=PASS'
+
+    # Also exercise each installer handler independently so one blocked upstream
+    # dependency cannot hide an unsafe downstream behavior.
     $ctx=@{ProjectRoot=$Root;DataRoot=$Data;NetworkMode='OFFLINE_CACHE';RunDir=''}
     $py=Invoke-MLLMTask -Id 'python' -Action Install -Context $ctx
     Assert-True ($py.status -eq 'BLOCKED') ("Offline empty-cache Python must BLOCK, got: "+$py.status)

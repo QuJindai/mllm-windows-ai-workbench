@@ -11,7 +11,7 @@ permissions:
 jobs:
   dashboard-diagnostics:
     runs-on: windows-2022
-    timeout-minutes: 5
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,3 +20,6 @@ jobs:
       - name: Dashboard diagnostics
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-DashboardDiagnostics.ps1
+      - name: Real GUI snapshot smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-GuiSnapshotSmoke.ps1

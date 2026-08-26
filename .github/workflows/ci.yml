@@ -161,3 +161,56 @@ jobs:
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Cli -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
           if ($LASTEXITCODE -ne 0) { throw "Cold checkout launcher failed rc=$LASTEXITCODE" }
           Write-Host 'COLD_CHECKOUT_BOOTSTRAP=PASS'
+
+  cold-entrypoints:
+    name: Raw checkout ${{ matrix.scenario }} / Windows 2022
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [doctor, core]
+    runs-on: windows-2022
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cold checkout Doctor
+        if: matrix.scenario == 'doctor'
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'mllm-cold-doctor-data'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Doctor -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
+          if ($LASTEXITCODE -ne 0) { throw "Cold checkout Doctor failed rc=$LASTEXITCODE" }
+          $summaryPath = Get-ChildItem -LiteralPath $dataRoot -Recurse -Filter summary.json -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $summaryPath) { throw 'Cold checkout Doctor did not write summary.json' }
+          $items = @(Get-Content -LiteralPath $summaryPath.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+          if ($items.Count -lt 8) { throw "Cold checkout Doctor returned too few checks: $($items.Count)" }
+          foreach ($required in @('system.os','system.disk','filesystem.permissions','python.interpreter','llama.runtime','model.qwen35-4b','runtime.health','runtime.chat')) {
+            if (@($items.id) -notcontains $required) { throw "Cold checkout Doctor missing required check: $required" }
+          }
+          Write-Host "COLD_CHECKOUT_DOCTOR=PASS count=$($items.Count)"
+      - name: Cold checkout Core fail-closed
+        if: matrix.scenario == 'core'
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'mllm-cold-core-data'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $oldPath = $env:Path
+          try {
+            $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+            & $ps -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Preset Core -Cli -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
+            $rc = $LASTEXITCODE
+          } finally {
+            $env:Path = $oldPath
+          }
+          if ($rc -ne 1) { throw "Cold checkout offline Core must fail closed with rc=1, got rc=$rc" }
+          $executables = @(Get-ChildItem -LiteralPath $dataRoot -Recurse -Filter *.exe -File -ErrorAction SilentlyContinue)
+          if ($executables.Count -ne 0) { throw ('Cold checkout offline Core created executable(s): ' + (($executables.FullName) -join ', ')) }
+          $summaryPath = Get-ChildItem -LiteralPath $dataRoot -Recurse -Filter summary.json -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $summaryPath) { throw 'Cold checkout Core did not write summary.json' }
+          $items = @(Get-Content -LiteralPath $summaryPath.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+          if (@($items | Where-Object {$_.status -eq 'BLOCKED'}).Count -lt 1) { throw 'Cold checkout offline Core did not return BLOCKED' }
+          if (@($items | Where-Object {$_.status -eq 'FAILED'}).Count -ne 0) { throw 'Cold checkout offline Core returned FAILED instead of fail-closed BLOCKED' }
+          Write-Host "COLD_CHECKOUT_CORE_FAIL_CLOSED=PASS count=$($items.Count)"

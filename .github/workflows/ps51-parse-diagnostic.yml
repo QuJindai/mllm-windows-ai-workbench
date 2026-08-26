@@ -1,0 +1,48 @@
+name: ps51-parse-diagnostic
+
+on:
+  push:
+    branches: [ safe-core ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parse-wpf:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize source
+        shell: powershell
+        run: python ci/materialize.py
+      - name: Parse WPF with PS5.1 and print exact extents
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $file=(Resolve-Path .\gui\Workbench.Wpf.ps1).Path
+          $tokens=$null; $errs=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errs)
+          Write-Host "PARSEFILE_ERRORS=$(@($errs).Count)"
+          foreach($e in @($errs)){
+            Write-Host ("PARSEFILE id={0} line={1} col={2} text=<{3}> message=<{4}>" -f $e.ErrorId,$e.Extent.StartLineNumber,$e.Extent.StartColumnNumber,$e.Extent.Text,$e.Message)
+          }
+          $content=Get-Content -LiteralPath $file -Raw -Encoding UTF8
+          $tokens2=$null; $errs2=$null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($content,[ref]$tokens2,[ref]$errs2)
+          Write-Host "PARSEINPUT_UTF8_ERRORS=$(@($errs2).Count)"
+          foreach($e in @($errs2)){
+            Write-Host ("PARSEINPUT id={0} line={1} col={2} text=<{3}> message=<{4}>" -f $e.ErrorId,$e.Extent.StartLineNumber,$e.Extent.StartColumnNumber,$e.Extent.Text,$e.Message)
+          }
+          $lines=Get-Content -LiteralPath $file -Encoding UTF8
+          $interesting=@(@($errs).Extent.StartLineNumber + @($errs2).Extent.StartLineNumber | Sort-Object -Unique)
+          foreach($n in $interesting){
+            $start=[Math]::Max(1,[int]$n-2); $end=[Math]::Min($lines.Count,[int]$n+2)
+            for($i=$start;$i -le $end;$i++){ Write-Host ("LINE {0}: {1}" -f $i,$lines[$i-1]) }
+          }
+          if(@($errs).Count -or @($errs2).Count){ exit 1 }
+          Write-Host 'PS51_WPF_PARSE_DIAGNOSTIC=PASS'

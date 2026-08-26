@@ -10,26 +10,24 @@ $parseErrors=$null
 [void][System.Management.Automation.Language.Parser]::ParseFile($GuiScript,[ref]$tokens,[ref]$parseErrors)
 if(@($parseErrors).Count -ne 0){throw ('Workbench.Wpf.ps1 parse error: '+(@($parseErrors | ForEach-Object {$_.Message}) -join '; '))}
 
-function Require-Match([string]$Name,[string]$Pattern){
-    if($text -notmatch $Pattern){throw "WPF_BINDING_MISSING=$Name"}
+function Require-Contains([string]$Name,[string]$Needle){
+    if(-not $text.Contains($Needle)){throw "WPF_BINDING_MISSING=$Name"}
     Write-Host "WPF_BINDING_FOUND=$Name"
 }
 
 # Doctor must resolve the named control, subscribe Click, and route through
 # the asynchronous Doctor operation rather than invoking system tools inline.
-Require-Match 'Doctor control lookup' "(?is)\(C\s*['\"]DoctorButton['\"]\)"
-Require-Match 'Doctor click subscription' "(?is)\(C\s*['\"]DoctorButton['\"]\)\s*\.\s*Add_Click\s*\("
-Require-Match 'Doctor async route' "(?is)DoctorButton['\"]\)\s*\.\s*Add_Click\s*\(.*?-Operation\s*['\"]Doctor['\"]"
+Require-Contains 'Doctor click route' '(C ''DoctorButton'').Add_Click({Run-AsyncJob -Label ''Running Doctor'' -Operation ''Doctor'''
 
 # Install Core is intentionally wired through the generic preset loop. The
 # binding is safe from PowerShell loop-variable capture because the preset is
 # stored on each Button.Tag and read from $this.Tag inside the event handler.
-Require-Match 'Install Core preset map' "(?is)@\(\s*['\"]InstallCoreButton['\"]\s*,\s*['\"]Core['\"]\s*\)"
-Require-Match 'Preset button lookup' '(?is)\$btn\s*=\s*C\s+\$pair\[0\]'
-Require-Match 'Preset stored on button Tag' '(?is)\$btn\.Tag\s*=\s*\$pair\[1\]'
-Require-Match 'Preset click subscription' '(?is)\$btn\.Add_Click\s*\('
-Require-Match 'Preset read from sender Tag' '(?is)\$preset\s*=\s*\[string\]\$this\.Tag'
-Require-Match 'Preset async route' "(?is)-Operation\s*['\"]Preset['\"]\s*-Arguments\s*@\{\s*Preset\s*=\s*\$preset\s*\}"
+Require-Contains 'Install Core preset map' '@(''InstallCoreButton'',''Core'')'
+Require-Contains 'Preset button lookup' '$btn=C $pair[0]'
+Require-Contains 'Preset stored on button Tag' '$btn.Tag=$pair[1]'
+Require-Contains 'Preset click subscription' '$btn.Add_Click({'
+Require-Contains 'Preset read from sender Tag' '$preset=[string]$this.Tag'
+Require-Contains 'Preset async route' '-Operation ''Preset'' -Arguments @{Preset=$preset}'
 
 # GUI code must not bypass Safe Core and invoke machine-wide installers or
 # privileged configuration tools directly.

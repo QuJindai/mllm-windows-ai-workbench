@@ -46,7 +46,7 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
+    timeout-minutes: 14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -129,6 +129,12 @@ jobs:
       - name: WPF Doctor and Core binding smoke
         shell: powershell
         run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfBindingSmoke.ps1
+      - name: GUI Dashboard snapshot smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-GuiSnapshotSmoke.ps1
+      - name: WPF initial network mode smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfNetworkModeSmoke.ps1
       - name: Standalone Emergency Doctor smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EmergencyDoctorSmoke.ps1
@@ -152,7 +158,7 @@ jobs:
   cold-checkout-bootstrap:
     name: Raw checkout bootstrap / Windows 2022
     runs-on: windows-2022
-    timeout-minutes: 7
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Cold checkout launcher smoke
@@ -170,6 +176,12 @@ jobs:
       - name: Cold checkout WPF binding smoke
         shell: powershell
         run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfBindingSmoke.ps1
+      - name: Cold checkout GUI Dashboard snapshot smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-GuiSnapshotSmoke.ps1
+      - name: Cold checkout WPF network mode smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfNetworkModeSmoke.ps1
 
   cold-entrypoints:
     name: Raw checkout ${{ matrix.scenario }} / Windows 2022

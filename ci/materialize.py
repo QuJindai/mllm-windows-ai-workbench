@@ -52,12 +52,7 @@ elif gui_new not in gui_text:
     raise SystemExit('SAFE_CORE_GUI_SCOPE_PATCH_TARGET_MISSING')
 gui_adapter.write_text(gui_text, encoding='utf-8-sig')
 
-# Windows PowerShell 5.1 ParseFile/script loading treats UTF-8 without BOM as
-# the active ANSI code page. Workbench.Wpf.ps1 contains a non-ASCII em dash,
-# so a no-BOM file can be tokenized incorrectly even when ParseInput(UTF8)
-# reports zero errors. Also avoid the variable/colon interpolation ambiguity in
-# the LAN URL builder. Remove this compatibility rewrite after the next source
-# bundle contains both fixes directly.
+# Windows PowerShell 5.1 compatibility and GUI startup-mode correctness.
 wpf = ROOT / 'gui' / 'Workbench.Wpf.ps1'
 text = wpf.read_text(encoding='utf-8-sig')
 old = '{"http://$_`:$($st.runtime.web.port)"}'
@@ -66,6 +61,20 @@ if old in text:
     text = text.replace(old, new, 1)
 elif new not in text:
     raise SystemExit('SAFE_CORE_PS51_PATCH_TARGET_MISSING')
+
+network_old = "if($SmokeTest){Write-Output 'WPF_SMOKE=PASS';return}"
+network_new = '''$networkBootstrap=$window.FindName('NetworkModeCombo')
+if(-not $networkBootstrap){throw 'Missing WPF control: NetworkModeCombo'}
+$networkMatched=$false
+foreach($item in @($networkBootstrap.Items)){
+    if([string]$item.Content -eq [string]$NetworkMode){$networkBootstrap.SelectedItem=$item;$networkMatched=$true;break}
+}
+if(-not $networkMatched){throw "Unsupported initial network mode: $NetworkMode"}
+if($SmokeTest){Write-Output ('WPF_SMOKE=PASS network_mode='+[string]$networkBootstrap.SelectedItem.Content);$window.Close();return}'''
+if network_old in text:
+    text = text.replace(network_old, network_new, 1)
+elif network_new not in text:
+    raise SystemExit('SAFE_CORE_WPF_NETWORK_MODE_PATCH_TARGET_MISSING')
 wpf.write_text(text, encoding='utf-8-sig')
 
 # Windows PowerShell 5.1 can throw System.ArgumentException ('Argument types do
@@ -86,10 +95,6 @@ for old_text, new_text in doctor_patches:
 doctor.write_text(doctor_text, encoding='utf-8-sig')
 
 # Invoke-MLLMDoctor must emit each result object to the PowerShell pipeline.
-# The bundled source used unary comma before ToArray(), which wraps all checks
-# as one nested array object; callers using @(Invoke-MLLMDoctor ...) therefore
-# observe Count == 1. Remove only that wrapper so callers receive a normal
-# object[] when they collect the pipeline.
 core = ROOT / 'engine' / 'Core.psm1'
 core_text = core.read_text(encoding='utf-8-sig')
 core_old = '    ,$results.ToArray()\n}\nfunction Get-MLLMTaskStatus'
@@ -103,6 +108,7 @@ core.write_text(core_text, encoding='utf-8-sig')
 print(f'SAFE_CORE_MATERIALIZE=PASS parts={len(PARTS)} sha256={actual}')
 print('SAFE_CORE_GUI_SCOPE_PATCH=PASS')
 print('SAFE_CORE_PS51_WPF_PATCH=PASS')
+print('SAFE_CORE_WPF_NETWORK_MODE_PATCH=PASS')
 print('SAFE_CORE_PS51_UTF8_BOM=PASS')
 print('SAFE_CORE_PS51_EMERGENCY_DOCTOR_PATCH=PASS')
 print('SAFE_CORE_DOCTOR_ARRAY_SHAPE_PATCH=PASS')

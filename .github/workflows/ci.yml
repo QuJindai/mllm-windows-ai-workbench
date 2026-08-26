@@ -172,55 +172,6 @@ jobs:
     timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
-      - name: Cold checkout Doctor
-        if: matrix.scenario == 'doctor'
+      - name: Cold checkout ${{ matrix.scenario }}
         shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $dataRoot = Join-Path $env:RUNNER_TEMP 'mllm-cold-doctor-data'
-          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Doctor -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
-          $rc = $LASTEXITCODE
-          if ($rc -notin @(0,1)) { throw "Cold checkout Doctor execution failed rc=$rc" }
-          $summaryPath = Get-ChildItem -LiteralPath $dataRoot -Recurse -Filter summary.json -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($null -eq $summaryPath) { throw 'Cold checkout Doctor did not write summary.json' }
-          $items = @(Get-Content -LiteralPath $summaryPath.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
-          if ($items.Count -lt 8) { throw "Cold checkout Doctor returned too few checks: $($items.Count)" }
-          foreach ($required in @('system.os','system.disk','filesystem.permissions','python.interpreter','llama.runtime','model.qwen35-4b','runtime.health','runtime.chat')) {
-            if (@($items.id) -notcontains $required) { throw "Cold checkout Doctor missing required check: $required" }
-          }
-          $failedCount = @($items | Where-Object {$_.status -eq 'FAILED'}).Count
-          if (($rc -eq 0) -and ($failedCount -ne 0)) { throw "Doctor rc=0 but reported FAILED checks=$failedCount" }
-          if (($rc -eq 1) -and ($failedCount -eq 0)) { throw 'Doctor rc=1 without FAILED checks' }
-          Write-Host "COLD_CHECKOUT_DOCTOR=PASS rc=$rc count=$($items.Count) failed=$failedCount"
-      - name: Cold checkout Core fail-closed
-        if: matrix.scenario == 'core'
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $dataRoot = Join-Path $env:RUNNER_TEMP 'mllm-cold-core-data'
-          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-          $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-          $oldPath = $env:Path
-          $oldLocalAppData = $env:LOCALAPPDATA
-          $oldProgramFiles = $env:ProgramFiles
-          try {
-            $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
-            $env:LOCALAPPDATA = Join-Path $dataRoot 'fake-localappdata'
-            $env:ProgramFiles = Join-Path $dataRoot 'fake-programfiles'
-            & $ps -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Preset Core -Cli -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
-            $rc = $LASTEXITCODE
-          } finally {
-            $env:Path = $oldPath
-            $env:LOCALAPPDATA = $oldLocalAppData
-            $env:ProgramFiles = $oldProgramFiles
-          }
-          if ($rc -ne 1) { throw "Cold checkout offline Core must fail closed with rc=1, got rc=$rc" }
-          $executables = @(Get-ChildItem -LiteralPath $dataRoot -Recurse -Filter *.exe -File -ErrorAction SilentlyContinue)
-          if ($executables.Count -ne 0) { throw ('Cold checkout offline Core created executable(s): ' + (($executables.FullName) -join ', ')) }
-          $summaryPath = Get-ChildItem -LiteralPath $dataRoot -Recurse -Filter summary.json -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($null -eq $summaryPath) { throw 'Cold checkout Core did not write summary.json' }
-          $items = @(Get-Content -LiteralPath $summaryPath.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
-          if (@($items | Where-Object {$_.status -eq 'BLOCKED'}).Count -lt 1) { throw 'Cold checkout offline Core did not return BLOCKED' }
-          if (@($items | Where-Object {$_.status -eq 'FAILED'}).Count -ne 0) { throw 'Cold checkout offline Core returned FAILED instead of fail-closed BLOCKED' }
-          Write-Host "COLD_CHECKOUT_CORE_FAIL_CLOSED=PASS count=$($items.Count)"
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-ColdEntrypointSmoke.ps1 -Scenario '${{ matrix.scenario }}'

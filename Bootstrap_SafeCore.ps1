@@ -128,7 +128,7 @@ if ($guiText.Contains($guiOldForeach)) {
     $guiText = $guiText.Replace($guiOldImport, $guiNewImport)
     if (-not $guiText.Contains($guiOldTasks)) { throw 'SAFE_CORE_GUI_SCOPE_TASK_TARGET_MISSING' }
     $guiText = $guiText.Replace($guiOldTasks, $guiNewTasks)
-} elseif ((-not $guiText.Contains($GuiScopeMarker)) -or (-not $guiText.Contains("engine\Core.psm1'))) -or (-not $guiText.Contains($guiNewForeach))) {
+} elseif ((-not $guiText.Contains($GuiScopeMarker)) -or (-not $guiText.Contains('engine\Core.psm1')) -or (-not $guiText.Contains($guiNewForeach))) {
     throw 'SAFE_CORE_GUI_SCOPE_PATCH_TARGET_MISSING'
 }
 Set-Content -LiteralPath $guiAdapterPath -Value $guiText -Encoding UTF8 -NoNewline

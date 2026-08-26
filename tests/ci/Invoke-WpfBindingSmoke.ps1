@@ -11,16 +11,12 @@ $parseErrors=$null
 [void][System.Management.Automation.Language.Parser]::ParseFile($GuiScript,[ref]$tokens,[ref]$parseErrors)
 if(@($parseErrors).Count -ne 0){throw ('Workbench.Wpf.ps1 parse error: '+(@($parseErrors | ForEach-Object {$_.Message}) -join '; '))}
 
-# Keep a bounded diagnostic trace in CI so a binding failure can be
-# distinguished from an alternate binding style without exposing the full
-# source file in normal logs.
-$contextCount=0
-for($i=0;$i -lt $sourceLines.Count;$i++){
-    if($sourceLines[$i] -match '(?i)DoctorButton|InstallCoreButton|Add_Click|Invoke-MLLMDoctor|Invoke-MLLMPreset|FindName'){
-        Write-Host ("WPF_SOURCE_CONTEXT line={0}: {1}" -f ($i+1),$sourceLines[$i].Trim())
-        $contextCount++
-        if($contextCount -ge 80){break}
-    }
+# Bounded context around the event-wiring section. This is intentionally
+# temporary diagnostic evidence while the GUI binding contract is hardened.
+$start=125
+$end=[Math]::Min(185,$sourceLines.Count)
+for($lineNo=$start;$lineNo -le $end;$lineNo++){
+    Write-Host ("WPF_SOURCE_CONTEXT line={0}: {1}" -f $lineNo,$sourceLines[$lineNo-1])
 }
 
 function Require-Match([string]$Name,[string]$Pattern){

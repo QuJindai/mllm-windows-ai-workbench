@@ -145,3 +145,19 @@ jobs:
         run: python -m pip install --disable-pip-version-check pytest
       - name: Reject metered AI actions, larger runners, and storage uploads
         run: python -m pytest -q tests/ci/test_ci_billing.py
+
+  cold-checkout-bootstrap:
+    name: Raw checkout bootstrap / Windows 2022
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cold checkout launcher smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'mllm-cold-checkout-data'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start_M_LLM_Workbench.ps1 -Cli -DataRoot $dataRoot -NetworkMode OFFLINE_CACHE
+          if ($LASTEXITCODE -ne 0) { throw "Cold checkout launcher failed rc=$LASTEXITCODE" }
+          Write-Host 'COLD_CHECKOUT_BOOTSTRAP=PASS'

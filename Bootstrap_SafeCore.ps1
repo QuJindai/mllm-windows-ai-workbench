@@ -1,9 +1,20 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$false)][string]$ProjectRoot = $PSScriptRoot
+    [Parameter(Mandatory=$false)][string]$ProjectRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = $PSScriptRoot
+}
+if ([string]::IsNullOrWhiteSpace($ProjectRoot) -and $MyInvocation.MyCommand.Path) {
+    $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    throw 'SAFE_CORE_PROJECT_ROOT_UNRESOLVED'
+}
+$ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
+
 $ExpectedSha256 = '6a2e73091b27df0b711346df0b3abc39c78838a9764e03e1ec8c696cbfde3c6a'
 $StampPath = Join-Path $ProjectRoot ('.safe-core-materialized-' + $ExpectedSha256 + '.stamp')
 $RequiredPaths = @(

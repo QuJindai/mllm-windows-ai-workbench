@@ -17,9 +17,12 @@ jobs:
   direct-bootstrap-ps51:
     name: Direct Bootstrap / Windows PowerShell 5.1
     runs-on: windows-2022
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - name: Reproduce direct raw Bootstrap invocation
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-DirectBootstrapSmoke.ps1
+      - name: Full user CMD preflight entrypoint
+        shell: cmd
+        run: M_LLM_WORKBENCH_FULL_TEST_R2.cmd --preflight-only --refresh --no-pause

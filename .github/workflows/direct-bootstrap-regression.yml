@@ -1,0 +1,25 @@
+name: direct-bootstrap-regression
+
+on:
+  push:
+    branches: [ safe-core ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: direct-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  direct-bootstrap-ps51:
+    name: Direct Bootstrap / Windows PowerShell 5.1
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reproduce direct raw Bootstrap invocation
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-DirectBootstrapSmoke.ps1

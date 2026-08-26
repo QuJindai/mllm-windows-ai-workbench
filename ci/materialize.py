@@ -23,17 +23,24 @@ with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             raise SystemExit(f'SAFE_CORE_OVERLAY_UNSAFE_PATH member={info.filename}')
     zf.extractall(ROOT)
 
-# Avoid PS 5.1's ambiguous variable/colon parsing in the WPF LAN URL builder.
-# Use plain concatenation rather than nested interpolation; remove this patch
-# after the next source bundle refresh contains the corrected source directly.
+# Windows PowerShell 5.1 ParseFile/script loading treats UTF-8 without BOM as
+# the active ANSI code page. Workbench.Wpf.ps1 contains a non-ASCII em dash,
+# so a no-BOM file can be tokenized incorrectly even when ParseInput(UTF8)
+# reports zero errors. Also avoid the variable/colon interpolation ambiguity in
+# the LAN URL builder. Remove this compatibility rewrite after the next source
+# bundle contains both fixes directly.
 wpf = ROOT / 'gui' / 'Workbench.Wpf.ps1'
 text = wpf.read_text(encoding='utf-8-sig')
 old = '{"http://$_`:$($st.runtime.web.port)"}'
 new = "{ 'http://' + [string]$_ + ':' + [string]($st.runtime.web.port) }"
 if old in text:
-    wpf.write_text(text.replace(old, new, 1), encoding='utf-8')
+    text = text.replace(old, new, 1)
 elif new not in text:
     raise SystemExit('SAFE_CORE_PS51_PATCH_TARGET_MISSING')
+# utf-8-sig writes the BOM that Windows PowerShell 5.1 requires for reliable
+# decoding of non-ASCII script text.
+wpf.write_text(text, encoding='utf-8-sig')
 
 print(f'SAFE_CORE_MATERIALIZE=PASS parts={len(PARTS)} sha256={actual}')
 print('SAFE_CORE_PS51_WPF_PATCH=PASS')
+print('SAFE_CORE_PS51_UTF8_BOM=PASS')

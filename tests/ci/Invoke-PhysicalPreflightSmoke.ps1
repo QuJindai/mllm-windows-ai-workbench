@@ -39,15 +39,26 @@ try{
     if($null -eq $reportFile){throw 'Physical preflight did not create physical_preflight.json'}
     $report=Get-Content -LiteralPath $reportFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
 
+    if([string]$report.mode -ne 'NON_INSTALLING'){throw "Physical preflight mode=$($report.mode)"}
+    if([string]$report.release_gate -ne 'BLOCKED_PENDING_EVIDENCE_REVIEW'){throw "Physical preflight release gate=$($report.release_gate)"}
     if([bool]$report.core_install_authorized){throw 'Physical preflight must never authorize Core installation'}
+    if([int]$report.install_actions_executed -ne 0){throw "Physical preflight install_actions_executed=$($report.install_actions_executed)"}
+    if([int]$report.network_actions_executed -ne 0){throw "Physical preflight network_actions_executed=$($report.network_actions_executed)"}
     if([string]$report.bootstrap.status -ne 'PASS'){throw "Physical preflight bootstrap status=$($report.bootstrap.status)"}
     if([int]$report.cli.exit_code -ne 0){throw "Physical preflight CLI rc=$($report.cli.exit_code)"}
     if([int]$report.doctor.exit_code -notin @(0,1)){throw "Physical preflight Doctor rc=$($report.doctor.exit_code)"}
+    if([int]$report.doctor.evidence_count -lt 1){throw 'Physical preflight Doctor evidence_count < 1'}
+
+    $doctorEvidence=Join-Path ([string]$report.run_dir) 'doctor_evidence.zip'
+    if(-not(Test-Path -LiteralPath $doctorEvidence -PathType Leaf)){throw "Physical preflight doctor evidence copy missing: $doctorEvidence"}
+    $bundle=[string]$report.evidence_bundle
+    if(-not(Test-Path -LiteralPath $bundle -PathType Leaf)){throw "Physical preflight evidence bundle missing: $bundle"}
+    if((Get-Item -LiteralPath $bundle).Length -lt 1){throw 'Physical preflight evidence bundle is empty'}
 
     $executables=@(Get-ChildItem -LiteralPath $Data -Recurse -Filter '*.exe' -File -ErrorAction SilentlyContinue)
     if($executables.Count -ne 0){throw ('Physical preflight created executable payload(s): '+(($executables.FullName)-join ', '))}
 
-    Write-Host "PHYSICAL_PREFLIGHT_SMOKE=PASS report=$($reportFile.FullName) doctor_rc=$($report.doctor.exit_code)"
+    Write-Host "PHYSICAL_PREFLIGHT_SMOKE=PASS report=$($reportFile.FullName) doctor_rc=$($report.doctor.exit_code) doctor_evidence=$($report.doctor.evidence_count) bundle=$bundle"
 }finally{
     Remove-Item -LiteralPath $Data -Recurse -Force -ErrorAction SilentlyContinue
 }

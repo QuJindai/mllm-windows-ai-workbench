@@ -20,14 +20,20 @@ $StampPath = Join-Path $ProjectRoot ('.safe-core-materialized-' + $ExpectedSha25
 $RequiredPaths = @(
     'engine\Core.psm1',
     'engine\EmergencyDoctor.ps1',
+    'gui\GuiAdapter.psm1',
     'gui\Workbench.Wpf.ps1'
 )
+$GuiScopeMarker = 'Import-Module (Join-Path $ProjectRoot "engine\$m.psm1") -Force -Global'
 
 function Test-SafeCoreReady {
     if (-not (Test-Path -LiteralPath $StampPath -PathType Leaf)) { return $false }
     foreach ($relative in $RequiredPaths) {
         if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $relative) -PathType Leaf)) { return $false }
     }
+    try {
+        $adapterText = Get-Content -LiteralPath (Join-Path $ProjectRoot 'gui\GuiAdapter.psm1') -Raw -Encoding UTF8
+        if (-not $adapterText.Contains($GuiScopeMarker)) { return $false }
+    } catch { return $false }
     return $true
 }
 
@@ -103,6 +109,29 @@ try {
     if ($archive) { $archive.Dispose() }
     Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
 }
+
+# GuiAdapter is a module and Core dot-sources task handlers in Core's module
+# scope. Shared engine modules imported only as GuiAdapter siblings are not
+# visible to those handler scriptblocks. Keep Core local to GuiAdapter but
+# expose State/Detection/Runtime/etc. globally, matching the CLI topology.
+$guiAdapterPath = Join-Path $ProjectRoot 'gui\GuiAdapter.psm1'
+$guiText = Get-Content -LiteralPath $guiAdapterPath -Raw -Encoding UTF8
+$guiOldForeach = "    foreach(`$m in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){"
+$guiNewForeach = "    foreach(`$m in @('State','Detection','Network','Download','Security','Evidence','Runtime')){"
+$guiOldImport = '        Import-Module (Join-Path $ProjectRoot "engine\$m.psm1") -Force'
+$guiNewImport = '        Import-Module (Join-Path $ProjectRoot "engine\$m.psm1") -Force -Global'
+$guiOldTasks = '    Import-MLLMTasks -ProjectRoot $ProjectRoot'
+$guiNewTasks = "    Import-Module (Join-Path `$ProjectRoot 'engine\Core.psm1') -Force`r`n    Import-MLLMTasks -ProjectRoot `$ProjectRoot"
+if ($guiText.Contains($guiOldForeach)) {
+    $guiText = $guiText.Replace($guiOldForeach, $guiNewForeach)
+    if (-not $guiText.Contains($guiOldImport)) { throw 'SAFE_CORE_GUI_SCOPE_IMPORT_TARGET_MISSING' }
+    $guiText = $guiText.Replace($guiOldImport, $guiNewImport)
+    if (-not $guiText.Contains($guiOldTasks)) { throw 'SAFE_CORE_GUI_SCOPE_TASK_TARGET_MISSING' }
+    $guiText = $guiText.Replace($guiOldTasks, $guiNewTasks)
+} elseif ((-not $guiText.Contains($GuiScopeMarker)) -or (-not $guiText.Contains("engine\Core.psm1'))) -or (-not $guiText.Contains($guiNewForeach))) {
+    throw 'SAFE_CORE_GUI_SCOPE_PATCH_TARGET_MISSING'
+}
+Set-Content -LiteralPath $guiAdapterPath -Value $guiText -Encoding UTF8 -NoNewline
 
 # Keep raw-checkout behavior identical to the validated CI materializer until
 # the next source bundle includes these PowerShell 5.1 fixes directly.

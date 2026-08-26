@@ -1,0 +1,1 @@
+Source sync is managed by the connected GitHub integration. Public CI is the validation gate.

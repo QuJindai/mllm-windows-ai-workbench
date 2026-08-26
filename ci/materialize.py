@@ -23,13 +23,13 @@ with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             raise SystemExit(f'SAFE_CORE_OVERLAY_UNSAFE_PATH member={info.filename}')
     zf.extractall(ROOT)
 
-# PS 5.1 parses a colon directly following an interpolated automatic variable as
-# scoped-variable syntax. Keep this compatibility patch explicit until the next
-# source bundle refresh, then remove it when the corrected source is bundled.
+# Avoid PS 5.1's ambiguous variable/colon parsing in the WPF LAN URL builder.
+# Use plain concatenation rather than nested interpolation; remove this patch
+# after the next source bundle refresh contains the corrected source directly.
 wpf = ROOT / 'gui' / 'Workbench.Wpf.ps1'
 text = wpf.read_text(encoding='utf-8-sig')
 old = '{"http://$_`:$($st.runtime.web.port)"}'
-new = '{"http://$($_):$($st.runtime.web.port)"}'
+new = "{ 'http://' + [string]$_ + ':' + [string]($st.runtime.web.port) }"
 if old in text:
     wpf.write_text(text.replace(old, new, 1), encoding='utf-8')
 elif new not in text:

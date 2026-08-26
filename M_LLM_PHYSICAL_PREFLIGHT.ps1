@@ -48,7 +48,7 @@ function Invoke-ChildPowerShell {
 }
 
 function Write-PreflightArtifacts {
-    param([hashtable]$Report)
+    param([System.Collections.IDictionary]$Report)
     $Report.finished_at=(Get-Date).ToString('o')
     $Report.duration_seconds=[Math]::Round(((Get-Date)-$StartedAt).TotalSeconds,3)
     $Report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ReportPath -Encoding UTF8
@@ -240,10 +240,14 @@ if($Report.doctor.evidence_count -lt 1){
 Write-PreflightArtifacts -Report $Report
 try{
     if(Test-Path -LiteralPath $BundlePath -PathType Leaf){Remove-Item -LiteralPath $BundlePath -Force}
-    Compress-Archive -LiteralPath (Join-Path $RunDir '*') -DestinationPath $BundlePath -CompressionLevel Optimal -Force
+    Compress-Archive -Path (Join-Path $RunDir '*') -DestinationPath $BundlePath -CompressionLevel Optimal -Force
+    if(-not(Test-Path -LiteralPath $BundlePath -PathType Leaf)){throw 'Evidence bundle was not created'}
+    if((Get-Item -LiteralPath $BundlePath).Length -lt 1){throw 'Evidence bundle is empty'}
 }catch{
-    $Report.warnings += ('Evidence bundle creation warning: '+$_.Exception.Message)
+    $Report.warnings += ('Evidence bundle creation failed: '+$_.Exception.Message)
     Write-PreflightArtifacts -Report $Report
+    Write-Host "PHYSICAL_PREFLIGHT=FAIL stage=bundle report=$ReportPath bundle=$BundlePath"
+    exit 5
 }
 
 if($Report.doctor.status -ne 'COMPLETE'){

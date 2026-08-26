@@ -37,10 +37,22 @@ if old in text:
     text = text.replace(old, new, 1)
 elif new not in text:
     raise SystemExit('SAFE_CORE_PS51_PATCH_TARGET_MISSING')
-# utf-8-sig writes the BOM that Windows PowerShell 5.1 requires for reliable
-# decoding of non-ASCII script text.
 wpf.write_text(text, encoding='utf-8-sig')
+
+# Windows PowerShell 5.1 can throw System.ArgumentException ('Argument types do
+# not match') when @() forces enumeration of Generic.List[object] inside the
+# PSCustomObject payload literal. Convert the list explicitly to object[] first.
+doctor = ROOT / 'engine' / 'EmergencyDoctor.ps1'
+doctor_text = doctor.read_text(encoding='utf-8-sig')
+doctor_old = '        checks=@($checks)'
+doctor_new = '        checks=$checks.ToArray()'
+if doctor_old in doctor_text:
+    doctor_text = doctor_text.replace(doctor_old, doctor_new, 1)
+elif doctor_new not in doctor_text:
+    raise SystemExit('SAFE_CORE_PS51_EMERGENCY_DOCTOR_PATCH_TARGET_MISSING')
+doctor.write_text(doctor_text, encoding='utf-8-sig')
 
 print(f'SAFE_CORE_MATERIALIZE=PASS parts={len(PARTS)} sha256={actual}')
 print('SAFE_CORE_PS51_WPF_PATCH=PASS')
 print('SAFE_CORE_PS51_UTF8_BOM=PASS')
+print('SAFE_CORE_PS51_EMERGENCY_DOCTOR_PATCH=PASS')

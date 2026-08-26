@@ -1,0 +1,6 @@
+{
+  "pypi": "https://mirrors.aliyun.com/pypi/simple/",
+  "modelscope": "https://modelscope.cn",
+  "python": "https://mirrors.huaweicloud.com/python/",
+  "bootstrap_pip": "https://mirrors.huaweicloud.com/repository/toolkit/bootstrap-pypa-io/"
+}

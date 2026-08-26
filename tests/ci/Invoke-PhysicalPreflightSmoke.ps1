@@ -25,9 +25,17 @@ $Data=Join-Path $env:RUNNER_TEMP ('mllm-physical-preflight-'+[guid]::NewGuid().T
 New-Item -ItemType Directory -Force -Path $Data | Out-Null
 try{
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Preflight -DataRoot $Data -SkipEventLog -SkipDriverInventory
-    if($LASTEXITCODE -ne 0){throw "Physical preflight smoke failed rc=$LASTEXITCODE"}
-
+    $preflightRc=$LASTEXITCODE
     $reportFile=Get-ChildItem -LiteralPath $Data -Recurse -Filter 'physical_preflight.json' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if($preflightRc -ne 0){
+        if($null -ne $reportFile){
+            Write-Host 'PHYSICAL_PREFLIGHT_FAILURE_REPORT_BEGIN'
+            Get-Content -LiteralPath $reportFile.FullName -Raw -Encoding UTF8 | Write-Host
+            Write-Host 'PHYSICAL_PREFLIGHT_FAILURE_REPORT_END'
+        }
+        throw "Physical preflight smoke failed rc=$preflightRc"
+    }
+
     if($null -eq $reportFile){throw 'Physical preflight did not create physical_preflight.json'}
     $report=Get-Content -LiteralPath $reportFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
 

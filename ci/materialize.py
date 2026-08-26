@@ -56,7 +56,23 @@ for old_text, new_text in doctor_patches:
         raise SystemExit('SAFE_CORE_PS51_EMERGENCY_DOCTOR_PATCH_TARGET_MISSING')
 doctor.write_text(doctor_text, encoding='utf-8-sig')
 
+# Invoke-MLLMDoctor must emit each result object to the PowerShell pipeline.
+# The bundled source used unary comma before ToArray(), which wraps all checks
+# as one nested array object; callers using @(Invoke-MLLMDoctor ...) therefore
+# observe Count == 1. Remove only that wrapper so callers receive a normal
+# object[] when they collect the pipeline.
+core = ROOT / 'engine' / 'Core.psm1'
+core_text = core.read_text(encoding='utf-8-sig')
+core_old = '    ,$results.ToArray()\n}\nfunction Get-MLLMTaskStatus'
+core_new = '    $results.ToArray()\n}\nfunction Get-MLLMTaskStatus'
+if core_old in core_text:
+    core_text = core_text.replace(core_old, core_new, 1)
+elif core_new not in core_text:
+    raise SystemExit('SAFE_CORE_DOCTOR_ARRAY_SHAPE_PATCH_TARGET_MISSING')
+core.write_text(core_text, encoding='utf-8-sig')
+
 print(f'SAFE_CORE_MATERIALIZE=PASS parts={len(PARTS)} sha256={actual}')
 print('SAFE_CORE_PS51_WPF_PATCH=PASS')
 print('SAFE_CORE_PS51_UTF8_BOM=PASS')
 print('SAFE_CORE_PS51_EMERGENCY_DOCTOR_PATCH=PASS')
+print('SAFE_CORE_DOCTOR_ARRAY_SHAPE_PATCH=PASS')

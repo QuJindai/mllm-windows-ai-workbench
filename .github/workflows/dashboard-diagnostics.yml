@@ -23,3 +23,6 @@ jobs:
       - name: Real GUI snapshot smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-GuiSnapshotSmoke.ps1
+      - name: WPF initial network mode smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfNetworkModeSmoke.ps1

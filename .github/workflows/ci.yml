@@ -1,0 +1,82 @@
+name: safe-core-ci
+
+on:
+  push:
+    branches: [ main, safe-core ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: safe-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-linux:
+    name: Static and safety policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize Safe Core source
+        run: python ci/materialize.py
+      - name: Install test-only dependencies
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Repository contract
+        run: python -m pytest -q tests/ci/test_repo_contract.py
+      - name: Safe Core policy
+        run: python -m pytest -q tests/ci/test_safety_policy.py
+      - name: Existing static validator
+        run: python tools/validate_source.py
+      - name: Backend tests
+        working-directory: web/backend
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt pytest
+          python -m pytest -q
+
+  windows-ps51:
+    name: Windows PowerShell 5.1 / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize Safe Core source
+        shell: powershell
+        run: python ci/materialize.py
+      - name: PS5.1 parser, module and task smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WindowsPS51Smoke.ps1
+      - name: WPF XAML load smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfLoadSmoke.ps1
+      - name: Standalone Emergency Doctor smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EmergencyDoctorSmoke.ps1
+
+  no-paid-services:
+    name: CI billing guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize Safe Core source
+        run: python ci/materialize.py
+      - name: Install pytest only
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Reject metered AI actions, larger runners, and storage uploads
+        run: python -m pytest -q tests/ci/test_ci_billing.py

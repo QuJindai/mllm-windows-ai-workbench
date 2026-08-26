@@ -1,7 +1,19 @@
-.pytest_cache/
-__pycache__/
+# Generated releases
+/dist/
+/M_LLM_WINDOWS_BOOTSTRAP.cmd
+
+# Python caches
+**/__pycache__/
+**/.pytest_cache/
 *.pyc
-*.log
-*.zip
-.env
-.venv/
+
+# Local runtime/user data if project is run in-place
+/models/
+/state/
+/logs/
+/evidence/
+/credentials/
+/cache/
+/venvs/
+/runtime/
+/tmp/

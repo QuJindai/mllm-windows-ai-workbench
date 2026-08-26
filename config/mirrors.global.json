@@ -1,0 +1,8 @@
+{
+  "pypi": "https://pypi.org/simple/",
+  "modelscope": "https://modelscope.cn",
+  "github": "https://github.com",
+  "github_api": "https://api.github.com",
+  "huggingface": "https://huggingface.co",
+  "python": "https://www.python.org"
+}

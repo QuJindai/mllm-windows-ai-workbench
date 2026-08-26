@@ -1,0 +1,15 @@
+{
+  "models": [
+    {
+      "id": "qwen35-4b-q4km",
+      "role": "local-fast",
+      "repository": "bartowski/Qwen_Qwen3.5-4B-GGUF",
+      "allow_patterns": ["*Q4_K_M.gguf"],
+      "canonical_filename": "Qwen3.5-4B-Q4_K_M.gguf",
+      "filename_candidates": ["Qwen3.5-4B-Q4_K_M.gguf", "Qwen_Qwen3.5-4B-Q4_K_M.gguf"],
+      "format": "gguf",
+      "minimum_bytes": 2684354560,
+      "sha256": null
+    }
+  ]
+}

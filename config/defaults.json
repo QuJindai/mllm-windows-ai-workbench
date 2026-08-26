@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "app_version": "1.1.0-safe-core-ci.1",
+  "network_mode": "AUTO_CN_FIRST",
+  "minimum_free_gb": 12,
+  "preferred_roots": [
+    "D:\\M-LLM",
+    "C:\\M-LLM"
+  ],
+  "api": {
+    "host": "127.0.0.1",
+    "preferred_port": 8080,
+    "port_max": 8090,
+    "context_size": 8192
+  },
+  "web": {
+    "host": "127.0.0.1",
+    "preferred_port": 8765,
+    "port_max": 8775,
+    "lan_enabled": false
+  },
+  "python": {
+    "minimum_version": "3.10",
+    "preferred_version": "3.12",
+    "fallback_version": "3.12.10",
+    "embed_url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "get_pip_url": "https://bootstrap.pypa.io/get-pip.py",
+    "embed_url_cn": "https://mirrors.huaweicloud.com/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "get_pip_url_cn": "https://mirrors.huaweicloud.com/repository/toolkit/bootstrap-pypa-io/get-pip.py"
+  },
+  "llama": {
+    "github_api": "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=12",
+    "asset_regex": "llama-.*-bin-win-cpu-x64\\.zip$"
+  },
+  "timeouts": {
+    "network_sec": 8,
+    "install_sec": 1800,
+    "service_start_sec": 120
+  }
+}

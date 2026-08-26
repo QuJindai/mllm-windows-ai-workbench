@@ -9,13 +9,27 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
 $Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
+function Expand-JsonValue([object]$Value){
+    if($null -eq $Value){return}
+    $isEnumerable=($Value -is [System.Collections.IEnumerable])
+    $isString=($Value -is [string])
+    $hasId=($null -ne $Value.PSObject.Properties['id'])
+    $hasStatus=($null -ne $Value.PSObject.Properties['status'])
+    if($hasId -and $hasStatus){
+        Write-Output -NoEnumerate $Value
+        return
+    }
+    if($isEnumerable -and -not $isString){
+        foreach($child in $Value){Expand-JsonValue -Value $child}
+        return
+    }
+    $props=@($Value.PSObject.Properties.Name) -join ','
+    throw "Unexpected JSON leaf type=$($Value.GetType().FullName) properties=$props"
+}
+
 function Read-JsonItems([string]$Path){
     $parsed=Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if($parsed -is [System.Array]){
-        foreach($item in $parsed){$item}
-    }else{
-        $parsed
-    }
+    @(Expand-JsonValue -Value $parsed)
 }
 
 if($Scenario -eq 'doctor'){
@@ -31,12 +45,12 @@ if($Scenario -eq 'doctor'){
         $items=@(Read-JsonItems -Path $summaryPath.FullName)
         if($items.Count -lt 8){throw "Cold checkout Doctor returned too few checks: $($items.Count)"}
 
-        $ids=@($items | ForEach-Object {$_.id})
+        $ids=@($items | ForEach-Object { $_.PSObject.Properties['id'].Value })
         foreach($required in @('system.os','system.disk','filesystem.permissions','python.interpreter','llama.runtime','model.qwen35-4b','runtime.health','runtime.chat')){
             if($ids -notcontains $required){throw "Cold checkout Doctor missing required check: $required"}
         }
 
-        $failedCount=@($items | Where-Object {$_.status -eq 'FAILED'}).Count
+        $failedCount=@($items | Where-Object { $_.PSObject.Properties['status'].Value -eq 'FAILED' }).Count
         if(($rc -eq 0) -and ($failedCount -ne 0)){throw "Doctor rc=0 but reported FAILED checks=$failedCount"}
         if(($rc -eq 1) -and ($failedCount -eq 0)){throw 'Doctor rc=1 without FAILED checks'}
 
@@ -69,8 +83,8 @@ try{
     $summaryPath=Get-ChildItem -LiteralPath $Data -Recurse -Filter summary.json -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if($null -eq $summaryPath){throw 'Cold checkout Core did not write summary.json'}
     $items=@(Read-JsonItems -Path $summaryPath.FullName)
-    if(@($items | Where-Object {$_.status -eq 'BLOCKED'}).Count -lt 1){throw 'Cold checkout offline Core did not return BLOCKED'}
-    if(@($items | Where-Object {$_.status -eq 'FAILED'}).Count -ne 0){throw 'Cold checkout offline Core returned FAILED instead of fail-closed BLOCKED'}
+    if(@($items | Where-Object { $_.PSObject.Properties['status'].Value -eq 'BLOCKED' }).Count -lt 1){throw 'Cold checkout offline Core did not return BLOCKED'}
+    if(@($items | Where-Object { $_.PSObject.Properties['status'].Value -eq 'FAILED' }).Count -ne 0){throw 'Cold checkout offline Core returned FAILED instead of fail-closed BLOCKED'}
     Write-Host "COLD_CHECKOUT_CORE_FAIL_CLOSED=PASS count=$($items.Count)"
 }finally{
     $env:Path=$oldPath

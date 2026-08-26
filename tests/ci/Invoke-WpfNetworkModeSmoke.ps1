@@ -3,8 +3,8 @@ param()
 $ErrorActionPreference='Stop'
 $Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
-python (Join-Path $Root 'ci\materialize.py')
-if($LASTEXITCODE -ne 0){throw "materialize failed rc=$LASTEXITCODE"}
+& (Join-Path $Root 'Bootstrap_SafeCore.ps1') -ProjectRoot $Root | Out-Host
+if($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null){throw "bootstrap failed rc=$LASTEXITCODE"}
 
 $out=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $Root 'gui\Workbench.Wpf.ps1') -ProjectRoot $Root -DataRoot (Join-Path $env:RUNNER_TEMP 'mllm-wpf-network-mode') -NetworkMode OFFLINE_CACHE -SmokeTest 2>&1)
 $rc=$LASTEXITCODE

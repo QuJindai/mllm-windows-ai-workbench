@@ -13,6 +13,12 @@ param(
 )
 $ErrorActionPreference='Stop'
 $ProjectRoot=$PSScriptRoot
+$bootstrapScript=Join-Path $ProjectRoot 'Bootstrap_SafeCore.ps1'
+if(Test-Path -LiteralPath $bootstrapScript -PathType Leaf){
+    & $bootstrapScript -ProjectRoot $ProjectRoot
+}elseif(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'engine\Core.psm1') -PathType Leaf)){
+    throw 'Safe Core source is not materialized and Bootstrap_SafeCore.ps1 is missing.'
+}
 foreach($m in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){Import-Module (Join-Path $ProjectRoot "engine\$m.psm1") -Force}
 $config=Get-MLLMConfig -ProjectRoot $ProjectRoot
 if(-not $DataRoot){$DataRoot=Select-MLLMRoot -Config $config}

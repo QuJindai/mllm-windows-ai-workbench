@@ -98,7 +98,7 @@ try {
 $wpfPath = Join-Path $ProjectRoot 'gui\Workbench.Wpf.ps1'
 $wpfText = Get-Content -LiteralPath $wpfPath -Raw -Encoding UTF8
 $wpfOld = '{"http://$_`:$($st.runtime.web.port)"}'
-$wpfNew = "{ 'http://' + [string]$_ + ':' + [string](`$st.runtime.web.port) }"
+$wpfNew = "{ 'http://' + [string]`$_ + ':' + [string](`$st.runtime.web.port) }"
 if ($wpfText.Contains($wpfOld)) {
     $wpfText = $wpfText.Replace($wpfOld, $wpfNew)
 } elseif (-not $wpfText.Contains($wpfNew)) {

@@ -22,4 +22,18 @@ with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         if target != root_resolved and root_resolved not in target.parents:
             raise SystemExit(f'SAFE_CORE_OVERLAY_UNSAFE_PATH member={info.filename}')
     zf.extractall(ROOT)
+
+# PS 5.1 parses a colon directly following an interpolated automatic variable as
+# scoped-variable syntax. Keep this compatibility patch explicit until the next
+# source bundle refresh, then remove it when the corrected source is bundled.
+wpf = ROOT / 'gui' / 'Workbench.Wpf.ps1'
+text = wpf.read_text(encoding='utf-8-sig')
+old = '{"http://$_`:$($st.runtime.web.port)"}'
+new = '{"http://$($_):$($st.runtime.web.port)"}'
+if old in text:
+    wpf.write_text(text.replace(old, new, 1), encoding='utf-8')
+elif new not in text:
+    raise SystemExit('SAFE_CORE_PS51_PATCH_TARGET_MISSING')
+
 print(f'SAFE_CORE_MATERIALIZE=PASS parts={len(PARTS)} sha256={actual}')
+print('SAFE_CORE_PS51_WPF_PATCH=PASS')

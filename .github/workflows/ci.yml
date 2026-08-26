@@ -55,9 +55,68 @@ jobs:
       - name: Materialize Safe Core source
         shell: powershell
         run: python ci/materialize.py
-      - name: PS5.1 parser, module and task smoke
+      - name: PS5.1 identity
         shell: powershell
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WindowsPS51Smoke.ps1
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)" }
+          Write-Host "PS51_IDENTITY=PASS version=$($PSVersionTable.PSVersion)"
+      - name: PS5.1 parse all source
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $errs = @()
+          Get-ChildItem -Recurse -Include *.ps1,*.psm1 -File | Where-Object { $_.FullName -notmatch '[\\/]dist[\\/]' } | ForEach-Object {
+            $tokens=$null; $parse=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tokens,[ref]$parse)
+            foreach($e in @($parse)){ $errs += "$($_.FullName): $($e.Message)" }
+          }
+          if($errs.Count){ throw ($errs -join "`n") }
+          Write-Host 'PS51_PARSE_ALL=PASS'
+      - name: Import Core module
+        shell: powershell
+        run: Import-Module .\engine\Core.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_CORE=PASS'
+      - name: Import State module
+        shell: powershell
+        run: Import-Module .\engine\State.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_STATE=PASS'
+      - name: Import Detection module
+        shell: powershell
+        run: Import-Module .\engine\Detection.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_DETECTION=PASS'
+      - name: Import Network module
+        shell: powershell
+        run: Import-Module .\engine\Network.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_NETWORK=PASS'
+      - name: Import Download module
+        shell: powershell
+        run: Import-Module .\engine\Download.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_DOWNLOAD=PASS'
+      - name: Import Security module
+        shell: powershell
+        run: Import-Module .\engine\Security.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_SECURITY=PASS'
+      - name: Import Evidence module
+        shell: powershell
+        run: Import-Module .\engine\Evidence.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_EVIDENCE=PASS'
+      - name: Import Runtime module
+        shell: powershell
+        run: Import-Module .\engine\Runtime.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_RUNTIME=PASS'
+      - name: Config smoke
+        shell: powershell
+        run: |
+          Import-Module .\engine\Core.psm1 -Force -ErrorAction Stop
+          $cfg=Get-MLLMConfig -ProjectRoot (Get-Location).Path
+          if($null -eq $cfg){throw 'Get-MLLMConfig returned null'}
+          Write-Host 'CONFIG_SMOKE=PASS'
+      - name: Task registry smoke
+        shell: powershell
+        run: |
+          foreach($m in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')) { Import-Module ".\engine\$m.psm1" -Force -ErrorAction Stop }
+          Import-MLLMTasks -ProjectRoot (Get-Location).Path
+          $tasks=@(Get-MLLMRegisteredTasks)
+          if($tasks.Count -lt 1){throw 'No tasks registered'}
+          Write-Host "TASK_REGISTRY_SMOKE=PASS count=$($tasks.Count)"
+      - name: XAML XML parse smoke
+        shell: powershell
+        run: |
+          [xml]$xaml=Get-Content -LiteralPath .\gui\Workbench.xaml -Raw -Encoding UTF8
+          if($null -eq $xaml){throw 'XAML XML parse returned null'}
+          Write-Host 'XAML_XML_PARSE=PASS'
       - name: WPF XAML load smoke
         shell: powershell
         run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfLoadSmoke.ps1

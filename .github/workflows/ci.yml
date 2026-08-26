@@ -184,3 +184,13 @@ jobs:
       - name: Cold checkout ${{ matrix.scenario }}
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-ColdEntrypointSmoke.ps1 -Scenario '${{ matrix.scenario }}'
+
+  physical-preflight-smoke:
+    name: Physical preflight contract / Windows 2022
+    runs-on: windows-2022
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Raw checkout non-installing physical preflight
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-PhysicalPreflightSmoke.ps1

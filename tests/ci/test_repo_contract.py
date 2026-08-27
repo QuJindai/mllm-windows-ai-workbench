@@ -24,15 +24,16 @@ def test_xaml_is_well_formed_xml():
     ET.parse(ROOT / "gui" / "Workbench.xaml")
 
 
-def test_prebootstrap_windows_ps51_entrypoints_are_ascii_only():
+def test_direct_windows_ps51_entrypoints_are_ascii_only():
     # Windows PowerShell 5.1 reads UTF-8 files without a BOM using the active
     # Windows ANSI code page. GitHub archives do not add a BOM, so any script
-    # executed before Bootstrap_SafeCore can be mis-tokenized on non-English
-    # Windows even when it parses on an English GitHub-hosted runner.
+    # invoked directly from the raw snapshot can be mis-tokenized on a
+    # non-English Windows host even when it parses on an English CI runner.
     direct_entrypoints = [
         "Bootstrap_SafeCore.ps1",
         "M_LLM_PHYSICAL_PREFLIGHT.ps1",
         "M_LLM_GUI_PREFLIGHT.ps1",
+        "Start_M_LLM_Workbench.ps1",
     ]
     offenders = []
     for relative in direct_entrypoints:
@@ -41,6 +42,6 @@ def test_prebootstrap_windows_ps51_entrypoints_are_ascii_only():
         if any(byte > 0x7F for byte in raw):
             offenders.append(relative)
     assert not offenders, (
-        "Pre-bootstrap Windows PowerShell 5.1 entrypoints must be ASCII-only "
-        "because raw GitHub archives are UTF-8 without BOM: " + ", ".join(offenders)
+        "Direct Windows PowerShell 5.1 entrypoints must be ASCII-only because "
+        "raw GitHub archives are UTF-8 without BOM: " + ", ".join(offenders)
     )

@@ -31,8 +31,6 @@ function New-TestState {
 }
 
 # Case 1: unreachable HTTP must fall through to a valid local file.
-# BITS is deliberately disabled here so this test isolates provider failover;
-# BITS boundedness is tested separately before it can be enabled by default.
 $c1=New-TestState -Suffix 'local'
 $package1=[pscustomobject]@{
     id='safe-core-payload'
@@ -44,7 +42,9 @@ $package1=[pscustomobject]@{
         [pscustomobject]@{id='offline-local';kind='local_file';path=$payload}
     )
 }
+$case1Start=Get-Date
 $r1=Invoke-MLLMAcquirePackage -Package $package1 -CacheRoot $c1.cache -State $c1.state -StatePath $c1.state_path
+if(((Get-Date)-$case1Start).TotalSeconds -gt 8){throw 'HTTP to local-file failover exceeded bounded time'}
 if([string]$r1.source_id -ne 'offline-local'){throw "failover did not select local source: $($r1.source_id)"}
 if(-not(Test-Path -LiteralPath $r1.path -PathType Leaf)){throw 'acquired local file missing'}
 if((Get-FileHash -LiteralPath $r1.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sha){throw 'acquired local file hash mismatch'}
@@ -61,9 +61,13 @@ $port=([Net.IPEndPoint]$probe.LocalEndpoint).Port
 $probe.Stop()
 $server=Start-Job -ScriptBlock {
     param($Port,$PayloadPath)
+    $ErrorActionPreference='Stop'
     $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,[int]$Port)
     $listener.Start()
     try{
+        $deadline=(Get-Date).AddSeconds(12)
+        while((-not $listener.Pending()) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 50}
+        if(-not $listener.Pending()){throw 'TEST_HTTP_SERVER_ACCEPT_TIMEOUT'}
         $client=$listener.AcceptTcpClient()
         try{
             $stream=$client.GetStream()
@@ -77,7 +81,7 @@ $server=Start-Job -ScriptBlock {
         }finally{$client.Close()}
     }finally{$listener.Stop()}
 } -ArgumentList $port,$payload
-Start-Sleep -Milliseconds 500
+Start-Sleep -Milliseconds 700
 try{
     $c2=New-TestState -Suffix 'http'
     $package2=[pscustomobject]@{
@@ -90,7 +94,9 @@ try{
             [pscustomobject]@{id='http-good';kind='http';uri=('http://127.0.0.1:'+[string]$port+'/payload.zip');timeout_seconds=5;prefer_bits=$false}
         )
     }
+    $case2Start=Get-Date
     $r2=Invoke-MLLMAcquirePackage -Package $package2 -CacheRoot $c2.cache -State $c2.state -StatePath $c2.state_path
+    if(((Get-Date)-$case2Start).TotalSeconds -gt 10){throw 'HTTP to HTTP failover exceeded bounded time'}
     if([string]$r2.source_id -ne 'http-good'){throw "HTTP failover selected wrong source: $($r2.source_id)"}
     if((Get-FileHash -LiteralPath $r2.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sha){throw 'HTTP acquired file hash mismatch'}
     $loaded2=Read-MLLMInstallerState -Path $c2.state_path
@@ -98,7 +104,9 @@ try{
     if(@($loaded2.source_attempts | Where-Object {$_.source_id -eq 'http-good' -and $_.status -eq 'PASS'}).Count -ne 1){throw 'successful HTTP source not recorded'}
     Write-Host 'ACQUISITION_HTTP_FAILOVER_SMOKE=PASS selected=http-good'
 }finally{
-    if($server.State -eq 'Running'){Stop-Job -Job $server -ErrorAction SilentlyContinue}
+    if($server.State -eq 'Running'){
+        Stop-Job -Job $server -ErrorAction SilentlyContinue
+    }
     Receive-Job -Job $server -ErrorAction SilentlyContinue | Out-Null
     Remove-Job -Job $server -Force -ErrorAction SilentlyContinue
 }

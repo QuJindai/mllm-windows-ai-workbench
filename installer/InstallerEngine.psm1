@@ -107,7 +107,7 @@ function Invoke-MLLMFoundationInstall {
 
         $failStage='VERIFY_PACKAGE'
         if(-not(Test-MLLMStageComplete -State $State -Stage 'VERIFY_PACKAGE')){
-            if(-not(Test-MLLMPackageHash -Path $acquiredPath -ExpectedSha256 ([string]$Package.sha256)){throw 'Cached package SHA256 verification failed'}
+            if(-not (Test-MLLMPackageHash -Path $acquiredPath -ExpectedSha256 ([string]$Package.sha256))){throw 'Cached package SHA256 verification failed'}
             Set-MLLMInstallerStage -State $State -Stage 'VERIFY_PACKAGE' -StatePath $StatePath | Out-Null
         }
         if(Test-MLLMEngineStop -StopAfterStage $StopAfterStage -Stage 'VERIFY_PACKAGE'){

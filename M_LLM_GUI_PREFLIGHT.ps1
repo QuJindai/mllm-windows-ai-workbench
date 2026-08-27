@@ -78,7 +78,11 @@ try{
         throw "GUI snapshot contains internal errors: $detail"
     }
 
-    $badCommands=@($taskRows | Where-Object { ([string]$_.summary) -match 'CommandNotFoundException|not recognized as the name of a cmdlet|无法将.+识别为' })
+    # Keep the source ASCII-only because Windows PowerShell 5.1 parses raw
+    # GitHub UTF-8 files without BOM using the active Windows ANSI code page.
+    # The final regex branch still matches the Chinese CommandNotFound text.
+    $commandScopePattern='CommandNotFoundException|not recognized as the name of a cmdlet|\u65E0\u6CD5\u5C06.+\u8BC6\u522B\u4E3A'
+    $badCommands=@($taskRows | Where-Object { ([string]$_.summary) -match $commandScopePattern })
     if($badCommands.Count -gt 0){
         throw ('GUI task detection lost required command scope: '+(($badCommands | ForEach-Object { [string]$_.id }) -join ','))
     }

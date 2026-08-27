@@ -98,7 +98,7 @@ function Convert-GuiComponents {
             repairTask=if($repairTask){$repairTask}else{$null}
         })
     }
-    return @($rows)
+    return $rows.ToArray()
 }
 
 function Get-MachineSnapshot {

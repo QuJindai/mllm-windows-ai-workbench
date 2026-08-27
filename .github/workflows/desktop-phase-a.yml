@@ -35,3 +35,6 @@ jobs:
       - name: Backend live snapshot smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendSnapshotSmoke.ps1
+      - name: WPF shell load smoke
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter ShellContractTests

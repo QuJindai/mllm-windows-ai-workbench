@@ -29,9 +29,20 @@ if([int]$r.snapshot_errors -ne 0){throw "GUI preflight snapshot errors: $($r.sna
 if([int]$r.task_count -lt 8){throw "GUI preflight task count too small: $($r.task_count)"}
 if([string]$r.status -ne 'PASS'){throw "GUI preflight report status not PASS: $($r.status)"}
 
-$bad=@($r.tasks | Where-Object { ([string]$_.summary) -match 'CommandNotFoundException|not recognized as the name of a cmdlet|无法将.+识别为' })
+$commandScopePattern='CommandNotFoundException|not recognized as the name of a cmdlet|\u65E0\u6CD5\u5C06.+\u8BC6\u522B\u4E3A'
+$bad=@($r.tasks | Where-Object { ([string]$_.summary) -match $commandScopePattern })
 if($bad.Count -gt 0){throw "GUI preflight leaked command visibility errors: $($bad.id -join ',')"}
+
+# Build the Chinese phrase from character codes so this test file is also
+# source-encoding independent while proving the Unicode-regex branch works.
+$zh=[string]::Concat(
+    [char]0x65E0,[char]0x6CD5,[char]0x5C06,
+    'Find-MLLMPython',
+    [char]0x8BC6,[char]0x522B,[char]0x4E3A
+)
+if($zh -notmatch $commandScopePattern){throw 'Unicode command-scope regex did not match the Chinese PowerShell diagnostic form'}
+
 foreach($id in @('llama-cpp','local-api','modelscope','python','qwen35-4b','web-workbench')){
     if(-not(@($r.tasks | Where-Object { $_.id -eq $id }).Count)){throw "GUI preflight missing required task: $id"}
 }
-Write-Host "GUI_PREFLIGHT_ENTRYPOINT_SMOKE=PASS tasks=$($r.task_count) snapshot_errors=$($r.snapshot_errors)"
+Write-Host "GUI_PREFLIGHT_ENTRYPOINT_SMOKE=PASS tasks=$($r.task_count) snapshot_errors=$($r.snapshot_errors) unicode_regex=PASS"

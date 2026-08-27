@@ -62,3 +62,6 @@ jobs:
       - name: Main entrypoint transaction engine integration
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EngineIntegrationSmoke.ps1
+      - name: UAC argument preservation
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-ElevationArgumentsSmoke.ps1

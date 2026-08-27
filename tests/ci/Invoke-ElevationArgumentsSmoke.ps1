@@ -19,7 +19,7 @@ if($args[0] -ne '-NoProfile' -or $args[1] -ne '-ExecutionPolicy' -or $args[2] -n
 if([string]::IsNullOrWhiteSpace([string]$args[4])){throw 'EncodedCommand payload is empty'}
 
 $decoded=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String([string]$args[4]))
-$m=[regex]::Match($decoded,"\$payload='([A-Za-z0-9+/=]+)'")
+$m=[regex]::Match($decoded,'\$payload=''([A-Za-z0-9+/=]+)''')
 if(-not $m.Success){throw "Encoded elevation script does not contain payload: $decoded"}
 $json=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($m.Groups[1].Value))
 $obj=$json | ConvertFrom-Json

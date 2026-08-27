@@ -12,11 +12,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private object _currentPage;
     private string _backendStatus = "Safe Core backend: starting";
 
-    public MainWindowViewModel(
-        DashboardPageViewModel dashboard,
-        DoctorPageViewModel doctor,
-        InstallationPageViewModel installation,
-        WorkbenchRuntimeOptions runtime)
+    public MainWindowViewModel(DashboardPageViewModel dashboard, DoctorPageViewModel doctor, InstallationPageViewModel installation, WorkbenchRuntimeOptions runtime)
     {
         Dashboard = dashboard;
         Doctor = doctor;
@@ -43,19 +39,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public ICommand NavigateDashboardCommand { get; }
     public ICommand NavigateDoctorCommand { get; }
     public ICommand NavigateInstallationCommand { get; }
-
-    public object CurrentPage
-    {
-        get => _currentPage;
-        private set => SetProperty(ref _currentPage, value);
-    }
-
-    public string BackendStatus
-    {
-        get => _backendStatus;
-        private set => SetProperty(ref _backendStatus, value);
-    }
-
+    public object CurrentPage { get => _currentPage; private set => SetProperty(ref _currentPage, value); }
+    public string BackendStatus { get => _backendStatus; private set => SetProperty(ref _backendStatus, value); }
     public void SetBackendStatus(string value) => BackendStatus = value;
 
     private void Navigate(string route)
@@ -66,5 +51,6 @@ public sealed class MainWindowViewModel : ObservableObject
             "installation" => Installation,
             _ => Dashboard
         };
+        if (route == "doctor") Doctor.RefreshCommand.Execute(null);
     }
 }

@@ -12,6 +12,9 @@ def test_required_files_exist():
         "gui/Workbench.xaml",
         "config/task-policy.json",
         "config/defaults.json",
+        "M_LLM_UNIVERSAL_INSTALLER.cmd",
+        "installer/Start-UniversalInstaller.ps1",
+        "installer/InstallerPaths.psm1",
     ]
     missing = [x for x in required if not (ROOT / x).is_file()]
     assert not missing, missing
@@ -34,6 +37,8 @@ def test_direct_windows_ps51_entrypoints_are_ascii_only():
         "M_LLM_PHYSICAL_PREFLIGHT.ps1",
         "M_LLM_GUI_PREFLIGHT.ps1",
         "Start_M_LLM_Workbench.ps1",
+        "M_LLM_UNIVERSAL_INSTALLER.cmd",
+        "installer/Start-UniversalInstaller.ps1",
     ]
     offenders = []
     for relative in direct_entrypoints:

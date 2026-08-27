@@ -95,7 +95,7 @@ $expected=$env:MLLM_SEED_PAYLOAD_SHA256
 if(-not(Test-Path -LiteralPath $self -PathType Leaf)){throw 'Seed self path missing'}
 $content=[IO.File]::ReadAllText($self,[Text.Encoding]::ASCII)
 $marker='__MLLM_SEED_PAYLOAD__'
-$pos=$content.IndexOf($marker,[StringComparison]::Ordinal)
+$pos=$content.LastIndexOf($marker,[StringComparison]::Ordinal)
 if($pos -lt 0){throw 'Seed payload marker missing'}
 $b64=($content.Substring($pos+$marker.Length) -replace '[^A-Za-z0-9+/=]','')
 [byte[]]$payload=[Convert]::FromBase64String($b64)
@@ -189,7 +189,7 @@ def build_seed(output: Path, version: str) -> dict[str, str | int]:
     bootstrap_reader = (
         "$c=[IO.File]::ReadAllText($env:MLLM_SEED_SELF,[Text.Encoding]::ASCII);"
         "$m='__MLLM_SEED_BOOTSTRAP__';$p='__MLLM_SEED_PAYLOAD__';"
-        "$a=$c.IndexOf($m);$b=$c.IndexOf($p);if($a -lt 0 -or $b -le $a){exit 90};"
+        "$a=$c.LastIndexOf($m);$b=$c.LastIndexOf($p);if($a -lt 0 -or $b -le $a){exit 90};"
         "$x=($c.Substring($a+$m.Length,$b-$a-$m.Length) -replace '\\s','');"
         "iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($x)))"
     )

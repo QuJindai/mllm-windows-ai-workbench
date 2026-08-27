@@ -52,14 +52,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Materialize Safe Core source
-        shell: powershell
-        run: python ci/materialize.py
       - name: PS5.1 identity
         shell: powershell
         run: |
           if ($PSVersionTable.PSVersion.Major -ne 5) { throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)" }
           Write-Host "PS51_IDENTITY=PASS version=$($PSVersionTable.PSVersion)"
+      - name: Universal installer bootstrap smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-UniversalInstallerBootstrapSmoke.ps1
+      - name: Materialize Safe Core source
+        shell: powershell
+        run: python ci/materialize.py
       - name: PS5.1 parse all source
         shell: powershell
         run: |

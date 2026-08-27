@@ -53,3 +53,6 @@ jobs:
       - name: Doctor ViewModel tests
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter DoctorViewModelTests
+      - name: Installer CLI action regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-UniversalInstallerCliActionSmoke.ps1

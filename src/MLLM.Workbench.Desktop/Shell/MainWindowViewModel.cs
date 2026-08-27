@@ -23,9 +23,10 @@ public sealed class MainWindowViewModel : ObservableObject
         Installation = installation;
         _currentPage = dashboard;
         NetworkMode = runtime.NetworkMode;
-        NavigateDashboardCommand = new RelayCommand(() => CurrentPage = Dashboard);
-        NavigateDoctorCommand = new RelayCommand(() => CurrentPage = Doctor);
-        NavigateInstallationCommand = new RelayCommand(() => CurrentPage = Installation);
+        NavigateDashboardCommand = new RelayCommand(() => Navigate("dashboard"));
+        NavigateDoctorCommand = new RelayCommand(() => Navigate("doctor"));
+        NavigateInstallationCommand = new RelayCommand(() => Navigate("installation"));
+        Dashboard.NavigationRequested += Navigate;
         NavigationItems = new ObservableCollection<NavigationItem>
         {
             new("dashboard", "工作台", NavigateDashboardCommand),
@@ -56,4 +57,14 @@ public sealed class MainWindowViewModel : ObservableObject
     }
 
     public void SetBackendStatus(string value) => BackendStatus = value;
+
+    private void Navigate(string route)
+    {
+        CurrentPage = route switch
+        {
+            "doctor" => Doctor,
+            "installation" => Installation,
+            _ => Dashboard
+        };
+    }
 }

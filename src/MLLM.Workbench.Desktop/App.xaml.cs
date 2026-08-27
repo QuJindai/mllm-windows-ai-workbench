@@ -23,8 +23,7 @@ public partial class App : Application
             {
                 services.AddSingleton(runtime);
                 services.AddSingleton(_ => new BackendProcessHost(runtime.ProjectRoot, runtime.DataRoot, runtime.NetworkMode));
-                services.AddSingleton<IWorkbenchBackendClient>(sp =>
-                    new NamedPipeBackendClient(sp.GetRequiredService<BackendProcessHost>().Options));
+                services.AddSingleton<IWorkbenchBackendClient>(sp => new NamedPipeBackendClient(sp.GetRequiredService<BackendProcessHost>().Options));
                 services.AddSingleton<WorkbenchCoordinator>();
                 services.AddSingleton<DashboardPageViewModel>();
                 services.AddSingleton<DoctorPageViewModel>();
@@ -41,6 +40,7 @@ public partial class App : Application
         {
             await coordinator.StartAsync(CancellationToken.None).ConfigureAwait(true);
             viewModel.SetBackendStatus("Safe Core backend: connected");
+            await viewModel.Dashboard.RefreshAsync(CancellationToken.None).ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -59,10 +59,7 @@ public partial class App : Application
             try
             {
                 var coordinator = _host.Services.GetService<WorkbenchCoordinator>();
-                if (coordinator is not null)
-                {
-                    await coordinator.DisposeAsync().ConfigureAwait(false);
-                }
+                if (coordinator is not null) await coordinator.DisposeAsync().ConfigureAwait(false);
                 await _host.StopAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
             }
             finally

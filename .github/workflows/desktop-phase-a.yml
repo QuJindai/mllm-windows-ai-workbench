@@ -56,3 +56,9 @@ jobs:
       - name: Installer CLI action regression
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-UniversalInstallerCliActionSmoke.ps1
+      - name: Installer delegation tests
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter PrivilegedInstallerInvokerTests
+      - name: Installation Center ViewModel tests
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter InstallationViewModelTests

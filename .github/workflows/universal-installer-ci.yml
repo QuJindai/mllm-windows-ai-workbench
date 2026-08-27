@@ -56,3 +56,6 @@ jobs:
       - name: Universal installer WPF contract
         shell: powershell
         run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-UniversalInstallerWpfSmoke.ps1
+      - name: Main entrypoint WPF integration
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-WpfIntegrationSmoke.ps1

@@ -6,7 +6,9 @@ param(
     [switch]$NoElevate,
     [switch]$PathsOnly,
     [switch]$NoGui,
-    [switch]$GuiSmoke
+    [switch]$GuiSmoke,
+    [ValidateSet('None','InstallResume','RetryAcquisition','ImportOffline','Rollback')][string]$Action='None',
+    [string]$OfflinePackagePath=''
 )
 
 $ErrorActionPreference='Stop'
@@ -74,6 +76,8 @@ if((-not $elevated) -and (-not $NoElevate)){
     if($PathsOnly){$forward+='-PathsOnly'}
     if($NoGui){$forward+='-NoGui'}
     if($GuiSmoke){$forward+='-GuiSmoke'}
+    if($Action -ne 'None'){$forward+=@('-Action',$Action)}
+    if($OfflinePackagePath){$forward+=@('-OfflinePackagePath',$OfflinePackagePath)}
     Restart-MLLMInstallerElevated -OriginalArgs $forward -RunId $RunId
     Write-Host "UNIVERSAL_INSTALLER_ELEVATION=REQUESTED run_id=$RunId"
     exit 0
@@ -158,7 +162,7 @@ Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_ENGINE=PASS'
 
-if($NoGui){
+if($NoGui -and $Action -eq 'None'){
     if($elevated){Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'}else{Write-Host 'UNIVERSAL_INSTALLER_NEXT=ELEVATED_REQUIRED'}
     exit 0
 }
@@ -214,6 +218,21 @@ $actions=[ordered]@{
         $rolled=Invoke-MLLMRollback -PointerPath $paths.CurrentPointer
         return ('Active version: '+[string]$rolled.version_id)
     }
+}
+
+if($Action -ne 'None'){
+    switch($Action){
+        'InstallResume' { $result=& $actions.InstallResume }
+        'RetryAcquisition' { $result=& $actions.RetryAcquisition }
+        'ImportOffline' {
+            if(-not $OfflinePackagePath){throw 'OfflinePackagePath is required for ImportOffline'}
+            $result=& $actions.ImportOffline $OfflinePackagePath
+        }
+        'Rollback' { $result=& $actions.Rollback }
+        default { throw ('Unsupported installer Action: '+$Action) }
+    }
+    Write-Host ('UNIVERSAL_INSTALLER_ACTION=PASS action='+$Action+' result='+[string]$result)
+    exit 0
 }
 
 & $wpfScript -State $state -Paths $paths -Actions $actions -Smoke:$GuiSmoke

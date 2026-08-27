@@ -1,0 +1,21 @@
+name: universal-engine-integration
+
+on:
+  push:
+    branches: [ safe-core ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-integration:
+    name: Engine Integration / Windows PowerShell 5.1
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Main entrypoint transaction engine integration
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EngineIntegrationSmoke.ps1

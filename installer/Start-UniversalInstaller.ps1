@@ -15,16 +15,19 @@ $stateModule=Join-Path $PSScriptRoot 'InstallerState.psm1'
 $acquisitionModule=Join-Path $PSScriptRoot 'Acquisition.psm1'
 $validationModule=Join-Path $PSScriptRoot 'PackageValidation.psm1'
 $activationModule=Join-Path $PSScriptRoot 'Activation.psm1'
+$evidenceModule=Join-Path $PSScriptRoot 'InstallerEvidence.psm1'
 if(-not(Test-Path -LiteralPath $pathsModule -PathType Leaf)){throw 'InstallerPaths.psm1 missing'}
 if(-not(Test-Path -LiteralPath $stateModule -PathType Leaf)){throw 'InstallerState.psm1 missing'}
 if(-not(Test-Path -LiteralPath $acquisitionModule -PathType Leaf)){throw 'Acquisition.psm1 missing'}
 if(-not(Test-Path -LiteralPath $validationModule -PathType Leaf)){throw 'PackageValidation.psm1 missing'}
 if(-not(Test-Path -LiteralPath $activationModule -PathType Leaf)){throw 'Activation.psm1 missing'}
+if(-not(Test-Path -LiteralPath $evidenceModule -PathType Leaf)){throw 'InstallerEvidence.psm1 missing'}
 Import-Module $pathsModule -Force -ErrorAction Stop
 Import-Module $stateModule -Force -ErrorAction Stop
 Import-Module $acquisitionModule -Force -ErrorAction Stop
 Import-Module $validationModule -Force -ErrorAction Stop
 Import-Module $activationModule -Force -ErrorAction Stop
+Import-Module $evidenceModule -Force -ErrorAction Stop
 
 $repoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if(-not $SourceManifestPath){$SourceManifestPath=Join-Path $repoRoot 'config\source-manifest.json'}
@@ -38,6 +41,9 @@ if($null -eq (Get-Command Test-MLLMStageContract -ErrorAction SilentlyContinue))
 if($null -eq (Get-Command Install-MLLMVersion -ErrorAction SilentlyContinue)){throw 'Version installation capability unavailable'}
 if($null -eq (Get-Command Set-MLLMActiveVersion -ErrorAction SilentlyContinue)){throw 'Version activation capability unavailable'}
 if($null -eq (Get-Command Invoke-MLLMRollback -ErrorAction SilentlyContinue)){throw 'Rollback capability unavailable'}
+if($null -eq (Get-Command Add-MLLMInstallerError -ErrorAction SilentlyContinue)){throw 'Structured installer error capability unavailable'}
+if($null -eq (Get-Command Write-MLLMInstallerSummary -ErrorAction SilentlyContinue)){throw 'Installer summary capability unavailable'}
+if($null -eq (Get-Command Export-MLLMInstallerEvidence -ErrorAction SilentlyContinue)){throw 'Installer evidence export capability unavailable'}
 
 if(-not $RunId){
     $RunId=(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+([guid]::NewGuid().ToString('N').Substring(0,8))
@@ -60,6 +66,7 @@ if($PathsOnly){
     Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provider_kinds).Count)"
     Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
     Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
+    Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
     exit 0
 }
 
@@ -114,6 +121,7 @@ $bootstrap=[ordered]@{
     package_validation='READY'
     activation='READY'
     rollback='READY'
+    evidence='READY'
     evidence_root=$paths.EvidencePreferredRoot
     status='BOOTSTRAP_READY'
     created_at=(Get-Date).ToString('o')
@@ -124,6 +132,7 @@ Write-Host "UNIVERSAL_INSTALLER_BOOTSTRAP=PASS run_id=$RunId bootstrap=$bootstra
 Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provider_kinds).Count)"
 Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
+Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
 if($elevated){
     Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'
 }else{

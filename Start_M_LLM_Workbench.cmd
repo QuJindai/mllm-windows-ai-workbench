@@ -1,5 +1,27 @@
 @echo off
 setlocal EnableExtensions
+
+set "MLLM_FORCE_LEGACY=0"
+if /I "%~1"=="--legacy" (
+  set "MLLM_FORCE_LEGACY=1"
+  shift
+)
+
+set "MLLM_DESKTOP_EXE=%~dp0desktop\MLLM.Workbench.Desktop.exe"
+if "%MLLM_FORCE_LEGACY%"=="0" if exist "%MLLM_DESKTOP_EXE%" (
+  if "%MLLM_LAUNCHER_TEST%"=="1" (
+    echo MLLM_LAUNCH_TARGET=DESKTOP
+    exit /b 0
+  )
+  "%MLLM_DESKTOP_EXE%" %*
+  exit /b %ERRORLEVEL%
+)
+
+if "%MLLM_LAUNCHER_TEST%"=="1" (
+  echo MLLM_LAUNCH_TARGET=LEGACY
+  exit /b 0
+)
+
 set "MLLM_ORIGINAL_ARGS=%*"
 set "PSARGS="
 :parse

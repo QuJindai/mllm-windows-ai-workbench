@@ -16,7 +16,7 @@ Primary supported platforms:
 - Windows 10 22H2 x64
 - Windows 11 x64
 - Windows PowerShell 5.1 remains supported for Safe Core backend execution
-- .NET 8 Desktop Runtime is the primary desktop runtime
+- desktop is published `win-x64` self-contained; target machines do not need a preinstalled .NET 8 Desktop Runtime
 
 ## 2. Product split
 
@@ -39,6 +39,8 @@ Existing `M_LLM_UNIVERSAL_INSTALLER_FULL.cmd` and `installer/*` remain responsib
 
 The desktop redesign must consume this installation state; it must not duplicate installer transaction logic.
 
+The Universal Installer may run elevated. The installed desktop application does not inherit a permanent administrator requirement from the installer.
+
 ### 2.2 Desktop application
 
 New project: `src/MLLM.Workbench.Desktop/`
@@ -57,10 +59,13 @@ Technology baseline:
 - .NET 8
 - WPF
 - MVVM
+- `win-x64` self-contained publish
 - Microsoft.Extensions.Hosting / DependencyInjection / Logging
 - Microsoft.Data.Sqlite for desktop history/metadata that is not authoritative installer state
 
 The desktop layer must not call `winget`, `msiexec`, `pnputil`, `dism`, registry mutation, firmware tools or direct package-install shell commands from ViewModels.
+
+Post-install Workbench launches as a normal user by default. Privileged install/repair work is delegated to the existing Universal Installer elevation path; the whole desktop application is not relaunched as Administrator just to install a component.
 
 ### 2.3 Contracts
 
@@ -88,11 +93,26 @@ Core contract groups:
 
 Every operation has a correlation ID and emits structured progress.
 
+Common component state is an explicit enum, not inferred from color or arbitrary text:
+
+- `Pass`
+- `Running`
+- `Stopped`
+- `Installed`
+- `ReadyToInstall`
+- `RepairAvailable`
+- `Blocked`
+- `NotFound`
+- `DetectionError`
+- `OperationFailed`
+
+`NotFound` means an expected optional component is absent. `DetectionError` means the product failed to determine state. These must never be merged into the same red failure state.
+
 ### 2.4 Safe Core backend bridge
 
 New entrypoint: `runtime/WorkbenchBackend.ps1`
 
-The bridge runs as a child process started by the desktop application and loads the existing PowerShell 5.1 modules. It exposes only approved commands through a local IPC boundary.
+The bridge runs as a normal-user child process started by the desktop application and loads the existing PowerShell 5.1 modules. It exposes only approved commands through a local IPC boundary.
 
 Transport design:
 
@@ -105,6 +125,8 @@ Transport design:
 - log stream is separate from request/response payloads
 
 The bridge is not a general-purpose PowerShell execution endpoint. There is no arbitrary `command`, `script`, `eval`, or shell tool exposed over IPC.
+
+If an operation requires elevation, the bridge returns a structured `ElevationRequired` result and the desktop delegates to the Universal Installer transaction/elevation path. The normal backend process itself is not silently elevated.
 
 ## 3. Source-of-truth rules
 
@@ -429,7 +451,7 @@ Existing Universal Installer remains the supported entry point during migration.
 
 A version package may contain both:
 
-- new desktop application
+- new self-contained desktop application
 - legacy PowerShell Workbench fallback
 
 Activation switches the whole version directory. If the desktop fails its post-install launch/bridge check, the new version is not activated or is rolled back.
@@ -453,6 +475,7 @@ Existing ProgramData installer state and evidence directories are retained. Desk
 - protocol version mismatch
 - cancellation/progress
 - malformed backend output
+- `ElevationRequired` round trip
 
 ### 11.3 WPF tests
 
@@ -467,13 +490,14 @@ Existing ProgramData installer state and evidence directories are retained. Desk
 
 Windows 2022 and Windows 2025 CI continue to validate Safe Core, plus:
 
-- desktop starts
+- self-contained desktop starts without preinstalled .NET Desktop Runtime
 - backend child process starts
 - named-pipe handshake passes
 - Dashboard snapshot loads
 - Doctor snapshot loads
 - installer state is read without mutation
 - offline mode works without external network
+- privileged operation returns `ElevationRequired` rather than silently elevating backend
 - activation/rollback still pass existing E2E
 
 ### 11.5 Physical-machine gates
@@ -499,6 +523,7 @@ The full product is too large to safely implement as one change. Development is 
 Scope:
 
 - solution/projects
+- self-contained publish configuration
 - dark Shell/navigation/theme
 - Contracts project
 - named-pipe Safe Core bridge
@@ -506,6 +531,7 @@ Scope:
 - Dashboard
 - Doctor
 - Installation Center
+- privilege delegation to Universal Installer
 - legacy fallback launch
 
 Exit gate:
@@ -513,6 +539,7 @@ Exit gate:
 - Windows CI starts desktop and backend
 - Dashboard/Doctor/Installer pages are live from real structured state
 - no placeholder data required for PASS
+- self-contained desktop starts on a runner without depending on a machine-installed Desktop Runtime
 - existing Universal Installer and Safe Core tests stay green
 
 ### Phase B — Models and Services

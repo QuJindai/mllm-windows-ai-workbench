@@ -182,12 +182,17 @@ def build_seed(output: Path, version: str) -> dict[str, str | int]:
     ]
     payload = build_zip(seed_entries)
     payload_sha = sha256(payload)
-    bootstrap = powershell_bootstrap()
-    encoded_bootstrap = base64.b64encode(bootstrap.encode("utf-16le")).decode("ascii")
-    if len(encoded_bootstrap) > 7300:
-        raise SystemExit(f"encoded bootstrap exceeds safe cmd command-line budget: {len(encoded_bootstrap)}")
+    bootstrap_b64 = base64.b64encode(powershell_bootstrap().encode("utf-8")).decode("ascii")
     payload_b64 = base64.b64encode(payload).decode("ascii")
+    bootstrap_lines = "\r\n".join(bootstrap_b64[i : i + 76] for i in range(0, len(bootstrap_b64), 76))
     payload_lines = "\r\n".join(payload_b64[i : i + 76] for i in range(0, len(payload_b64), 76))
+    bootstrap_reader = (
+        "$c=[IO.File]::ReadAllText($env:MLLM_SEED_SELF,[Text.Encoding]::ASCII);"
+        "$m='__MLLM_SEED_BOOTSTRAP__';$p='__MLLM_SEED_PAYLOAD__';"
+        "$a=$c.IndexOf($m);$b=$c.IndexOf($p);if($a -lt 0 -or $b -le $a){exit 90};"
+        "$x=($c.Substring($a+$m.Length,$b-$a-$m.Length) -replace '\\s','');"
+        "iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($x)))"
+    )
     header = f"""@echo off\r
 setlocal EnableExtensions\r
 title M-LLM Universal Installer - Single File\r
@@ -203,7 +208,7 @@ if not errorlevel 1 goto seed_run\r
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:MLLM_SEED_SELF -Verb RunAs"\r
 exit /b %ERRORLEVEL%\r
 :seed_run\r
-powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_bootstrap}\r
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "{bootstrap_reader}"\r
 set "MLLM_RC=%ERRORLEVEL%"\r
 if not "%MLLM_RC%"=="0" if not "%MLLM_SEED_SMOKE%"=="1" (\r
   echo.\r
@@ -212,9 +217,9 @@ if not "%MLLM_RC%"=="0" if not "%MLLM_SEED_SMOKE%"=="1" (\r
   pause ^>nul\r
 )\r
 exit /b %MLLM_RC%\r
-__MLLM_SEED_PAYLOAD__\r
+__MLLM_SEED_BOOTSTRAP__\r
 """
-    data = (header + payload_lines + "\r\n").encode("ascii")
+    data = (header + bootstrap_lines + "\r\n__MLLM_SEED_PAYLOAD__\r\n" + payload_lines + "\r\n").encode("ascii")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
     return {
@@ -235,7 +240,10 @@ def main() -> int:
     args = parser.parse_args()
     sha = os.environ.get("GITHUB_SHA", "")
     version = args.version or ("phase1-" + (sha[:12] if sha else "local"))
-    report = build_seed((ROOT / args.output).resolve() if not Path(args.output).is_absolute() else Path(args.output), version)
+    output = Path(args.output)
+    if not output.is_absolute():
+        output = (ROOT / output).resolve()
+    report = build_seed(output, version)
     print(json.dumps(report, sort_keys=True))
     return 0
 

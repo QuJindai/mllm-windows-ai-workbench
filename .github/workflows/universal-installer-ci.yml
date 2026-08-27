@@ -1,0 +1,37 @@
+name: universal-installer-ci
+
+on:
+  push:
+    branches: [ safe-core ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: universal-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-ps51:
+    name: Universal Installer / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell 5.1 identity
+        shell: powershell
+        run: |
+          if($PSVersionTable.PSVersion.Major -ne 5){throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"}
+          Write-Host "UNIVERSAL_PS51=PASS version=$($PSVersionTable.PSVersion)"
+      - name: Bootstrap paths and entrypoint
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-UniversalInstallerBootstrapSmoke.ps1
+      - name: Resumable installer state
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-InstallerStateSmoke.ps1

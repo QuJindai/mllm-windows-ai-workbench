@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 foreach($moduleName in @('InstallerState.psm1','Acquisition.psm1','PackageValidation.psm1','Activation.psm1','InstallerEvidence.psm1')){
     $modulePath=Join-Path $PSScriptRoot $moduleName
     if(-not(Test-Path -LiteralPath $modulePath -PathType Leaf)){throw ('Installer engine dependency missing: '+$modulePath)}
-    Import-Module $modulePath -Force -ErrorAction Stop
+    Import-Module $modulePath -ErrorAction Stop
 }
 
 function Get-MLLMEngineValue {

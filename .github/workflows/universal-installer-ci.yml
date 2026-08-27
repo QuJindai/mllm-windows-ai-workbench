@@ -41,3 +41,6 @@ jobs:
       - name: Package hash, extraction, and stage contract
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-PackageValidationSmoke.ps1
+      - name: Version activation and rollback
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-VersionActivationSmoke.ps1

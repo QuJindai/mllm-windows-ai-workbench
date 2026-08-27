@@ -44,3 +44,6 @@ jobs:
       - name: Version activation and rollback
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-VersionActivationSmoke.ps1
+      - name: Main entrypoint activation integration
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-ActivationIntegrationSmoke.ps1

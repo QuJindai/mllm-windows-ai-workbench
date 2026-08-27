@@ -53,3 +53,6 @@ jobs:
       - name: Main entrypoint evidence integration
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-EvidenceIntegrationSmoke.ps1
+      - name: Universal installer WPF contract
+        shell: powershell
+        run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ci\Invoke-UniversalInstallerWpfSmoke.ps1

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -18,8 +19,67 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        var runtime = WorkbenchRuntimeOptions.Resolve();
-        _host = Host.CreateDefaultBuilder()
+        var smoke = e.Args.Any(x => string.Equals(x, "--smoke", StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            var runtime = WorkbenchRuntimeOptions.Resolve();
+            _host = BuildHost(runtime);
+            await _host.StartAsync().ConfigureAwait(true);
+
+            var coordinator = _host.Services.GetRequiredService<WorkbenchCoordinator>();
+            await coordinator.StartAsync(CancellationToken.None).ConfigureAwait(true);
+
+            if (smoke)
+            {
+                var client = _host.Services.GetRequiredService<IWorkbenchBackendClient>();
+                var ping = await client.InvokeAsync<JsonElement>("system.ping", null, CancellationToken.None).ConfigureAwait(true);
+                if (!ping.TryGetProperty("status", out var status) || !string.Equals(status.GetString(), "PASS", StringComparison.Ordinal))
+                {
+                    throw new BackendRpcException("SMOKE_PING_FAILED", "Safe Core backend ping did not return PASS.");
+                }
+                Shutdown(0);
+                return;
+            }
+
+            var viewModel = _host.Services.GetRequiredService<MainWindowViewModel>();
+            viewModel.SetBackendStatus("Safe Core backend: connected");
+            await viewModel.Dashboard.RefreshAsync(CancellationToken.None).ConfigureAwait(true);
+
+            var window = _host.Services.GetRequiredService<MainWindow>();
+            MainWindow = window;
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            if (smoke)
+            {
+                try { Console.Error.WriteLine("DESKTOP_SMOKE=FAIL " + ex.Message); } catch { }
+                Shutdown(2);
+                return;
+            }
+
+            if (_host is not null)
+            {
+                var viewModel = _host.Services.GetService<MainWindowViewModel>();
+                if (viewModel is not null)
+                {
+                    viewModel.SetBackendStatus("Safe Core backend: unavailable - " + ex.Message);
+                    var window = _host.Services.GetService<MainWindow>();
+                    if (window is not null)
+                    {
+                        MainWindow = window;
+                        window.Show();
+                        return;
+                    }
+                }
+            }
+            MessageBox.Show(ex.Message, "M-LLM Workbench startup error", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(2);
+        }
+    }
+
+    private static IHost BuildHost(WorkbenchRuntimeOptions runtime) =>
+        Host.CreateDefaultBuilder()
             .ConfigureServices(services =>
             {
                 services.AddSingleton(runtime);
@@ -34,25 +94,6 @@ public partial class App : Application
                 services.AddSingleton<MainWindow>();
             })
             .Build();
-
-        await _host.StartAsync().ConfigureAwait(true);
-        var coordinator = _host.Services.GetRequiredService<WorkbenchCoordinator>();
-        var viewModel = _host.Services.GetRequiredService<MainWindowViewModel>();
-        try
-        {
-            await coordinator.StartAsync(CancellationToken.None).ConfigureAwait(true);
-            viewModel.SetBackendStatus("Safe Core backend: connected");
-            await viewModel.Dashboard.RefreshAsync(CancellationToken.None).ConfigureAwait(true);
-        }
-        catch (Exception ex)
-        {
-            viewModel.SetBackendStatus("Safe Core backend: unavailable - " + ex.Message);
-        }
-
-        var window = _host.Services.GetRequiredService<MainWindow>();
-        MainWindow = window;
-        window.Show();
-    }
 
     protected override async void OnExit(ExitEventArgs e)
     {

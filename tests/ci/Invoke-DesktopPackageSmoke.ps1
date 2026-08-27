@@ -26,6 +26,8 @@ try{
         'runtime\WorkbenchBackend.ps1',
         'Bootstrap_SafeCore.ps1',
         'ci\overlay\chunk01.b64',
+        'engine\Core.psm1',
+        'gui\GuiAdapter.psm1',
         'installer\Start-UniversalInstaller.ps1',
         'config\source-manifest.json',
         'Start_M_LLM_Workbench.cmd',
@@ -35,6 +37,8 @@ try{
         $full=Join-Path $extractRoot $relative
         if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "Desktop package required file missing: $relative"}
     }
+    $stamps=@(Get-ChildItem -LiteralPath $extractRoot -Force -File | Where-Object {$_.Name -like '.safe-core-materialized-*.stamp'})
+    if($stamps.Count -ne 1){throw "Packaged Safe Core materialization stamp missing or ambiguous: count=$($stamps.Count)"}
 
     $exe=Join-Path $extractRoot 'desktop\MLLM.Workbench.Desktop.exe'
     $process=Start-Process -FilePath $exe -ArgumentList @('--smoke') -PassThru
@@ -57,7 +61,7 @@ try{
     }
 
     $zipInfo=Get-Item -LiteralPath $zip
-    Write-Host "DESKTOP_PACKAGE_SMOKE=PASS bytes=$($zipInfo.Length) sha256=$actual self_contained=PASS backend=PASS launcher=DESKTOP"
+    Write-Host "DESKTOP_PACKAGE_SMOKE=PASS bytes=$($zipInfo.Length) sha256=$actual pre_materialized=PASS self_contained=PASS backend=PASS launcher=DESKTOP"
 }finally{
     Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $outputRoot -Recurse -Force -ErrorAction SilentlyContinue

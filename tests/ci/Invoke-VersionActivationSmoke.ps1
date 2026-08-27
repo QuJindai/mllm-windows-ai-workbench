@@ -65,7 +65,7 @@ try{
     if([string]$rolled.version_id -ne 'v1'){throw "rollback did not restore v1: $($rolled.version_id)"}
     if(-not(Test-Path -LiteralPath $i2.version_path -PathType Container)){throw 'rollback deleted v2 instead of only switching pointer'}
     Write-Host 'ROLLBACK_SMOKE=PASS active=v1'
-finally{
+}finally{
     $lock.Dispose()
 }
 

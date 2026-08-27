@@ -2,6 +2,7 @@
 param(
     [string]$RunId='',
     [string]$VersionId='phase1-bootstrap',
+    [string]$SourceManifestPath='',
     [switch]$NoElevate,
     [switch]$PathsOnly
 )
@@ -11,10 +12,17 @@ Set-StrictMode -Version 2
 
 $pathsModule=Join-Path $PSScriptRoot 'InstallerPaths.psm1'
 $stateModule=Join-Path $PSScriptRoot 'InstallerState.psm1'
+$acquisitionModule=Join-Path $PSScriptRoot 'Acquisition.psm1'
 if(-not(Test-Path -LiteralPath $pathsModule -PathType Leaf)){throw 'InstallerPaths.psm1 missing'}
 if(-not(Test-Path -LiteralPath $stateModule -PathType Leaf)){throw 'InstallerState.psm1 missing'}
+if(-not(Test-Path -LiteralPath $acquisitionModule -PathType Leaf)){throw 'Acquisition.psm1 missing'}
 Import-Module $pathsModule -Force -ErrorAction Stop
 Import-Module $stateModule -Force -ErrorAction Stop
+Import-Module $acquisitionModule -Force -ErrorAction Stop
+
+$repoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if(-not $SourceManifestPath){$SourceManifestPath=Join-Path $repoRoot 'config\source-manifest.json'}
+$sourceManifest=Get-MLLMSourceManifest -Path $SourceManifestPath
 
 if(-not $RunId){
     $RunId=(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+([guid]::NewGuid().ToString('N').Substring(0,8))
@@ -22,7 +30,7 @@ if(-not $RunId){
 
 $elevated=Test-MLLMElevated
 if((-not $elevated) -and (-not $NoElevate)){
-    $forward=@('-VersionId',$VersionId)
+    $forward=@('-VersionId',$VersionId,'-SourceManifestPath',$SourceManifestPath)
     if($PathsOnly){$forward+='-PathsOnly'}
     Restart-MLLMInstallerElevated -OriginalArgs $forward -RunId $RunId
     Write-Host "UNIVERSAL_INSTALLER_ELEVATION=REQUESTED run_id=$RunId"
@@ -34,6 +42,7 @@ $paths=Get-MLLMInstallerPaths -RunId $RunId -VersionId $VersionId
 if($PathsOnly){
     $paths | ConvertTo-Json -Depth 4
     Write-Host "UNIVERSAL_INSTALLER_PATHS=PASS run_id=$RunId elevated=$elevated"
+    Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provider_kinds).Count)"
     exit 0
 }
 
@@ -83,6 +92,8 @@ $bootstrap=[ordered]@{
     run_root=$paths.RunRoot
     state_path=$paths.StatePath
     state_stage=[string]$state.stage
+    source_manifest_path=[IO.Path]::GetFullPath($SourceManifestPath)
+    source_provider_kinds=@($sourceManifest.provider_kinds)
     evidence_root=$paths.EvidencePreferredRoot
     status='BOOTSTRAP_READY'
     created_at=(Get-Date).ToString('o')
@@ -90,6 +101,7 @@ $bootstrap=[ordered]@{
 $bootstrapPath=Join-Path $paths.RunRoot 'bootstrap.json'
 $bootstrap | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $bootstrapPath -Encoding UTF8
 Write-Host "UNIVERSAL_INSTALLER_BOOTSTRAP=PASS run_id=$RunId bootstrap=$bootstrapPath state=$($state.stage)"
+Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provider_kinds).Count)"
 if($elevated){
     Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'
 }else{

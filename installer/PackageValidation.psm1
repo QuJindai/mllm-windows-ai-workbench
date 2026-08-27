@@ -99,7 +99,7 @@ function Test-MLLMStageContract {
         $parseErrors=$null
         [void][Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$parseErrors)
         if(@($parseErrors).Count -gt 0){
-            $errors.Add("PS5.1 parse failed for $relative: "+((@($parseErrors)|ForEach-Object{$_.Message}) -join ' | '))
+            $errors.Add(('PS5.1 parse failed for '+$relative+': ')+((@($parseErrors)|ForEach-Object{$_.Message}) -join ' | '))
             continue
         }
         $parsed++

@@ -47,3 +47,6 @@ jobs:
       - name: Main entrypoint activation integration
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-ActivationIntegrationSmoke.ps1
+      - name: Evidence and deterministic failure bundle
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-InstallerEvidenceSmoke.ps1

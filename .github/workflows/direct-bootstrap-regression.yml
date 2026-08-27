@@ -23,6 +23,6 @@ jobs:
       - name: Reproduce direct raw Bootstrap invocation
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-DirectBootstrapSmoke.ps1
-      - name: Full user R3 GUI preflight entrypoint
+      - name: Full user R4 locale-safe GUI preflight entrypoint
         shell: cmd
-        run: M_LLM_WORKBENCH_FULL_TEST_R3.cmd --gui-preflight-only --refresh --no-pause
+        run: M_LLM_WORKBENCH_FULL_TEST_R4.cmd --gui-preflight-only --refresh --no-pause

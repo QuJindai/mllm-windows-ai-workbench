@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
 if($ProtocolVersion -ne '1.0'){throw 'ProtocolVersion must be 1.0'}
+$script:SafeCoreReady=$false
 
 function Test-SessionToken {
     param([string]$Actual,[string]$Expected)
@@ -24,6 +25,173 @@ function Test-SessionToken {
         $diff=$diff -bor ($av -bxor $bv)
     }
     return ($diff -eq 0)
+}
+
+function Get-ObjectValue {
+    param($Object,[Parameter(Mandatory=$true)][string]$Name,$Default=$null)
+    if($null -eq $Object){return $Default}
+    if($Object -is [Collections.IDictionary]){
+        if($Object.Contains($Name)){return $Object[$Name]}
+        return $Default
+    }
+    $property=$Object.PSObject.Properties[$Name]
+    if($null -ne $property){return $property.Value}
+    return $Default
+}
+
+function Initialize-SafeCore {
+    if($script:SafeCoreReady){return}
+    $bootstrap=Join-Path $ProjectRoot 'Bootstrap_SafeCore.ps1'
+    if(-not(Test-Path -LiteralPath $bootstrap -PathType Leaf)){throw 'Bootstrap_SafeCore.ps1 missing'}
+    & $bootstrap -ProjectRoot $ProjectRoot | Out-Null
+    $guiModule=Join-Path $ProjectRoot 'gui\GuiAdapter.psm1'
+    $pathsModule=Join-Path $ProjectRoot 'installer\InstallerPaths.psm1'
+    $stateModule=Join-Path $ProjectRoot 'installer\InstallerState.psm1'
+    $activationModule=Join-Path $ProjectRoot 'installer\Activation.psm1'
+    foreach($module in @($guiModule,$pathsModule,$stateModule,$activationModule)){
+        if(-not(Test-Path -LiteralPath $module -PathType Leaf)){throw ('Required backend module missing: '+$module)}
+        Import-Module $module -Force -ErrorAction Stop
+    }
+    $script:SafeCoreReady=$true
+}
+
+function Convert-ComponentHealth {
+    param([string]$Status,[string]$Summary)
+    switch(([string]$Status).ToUpperInvariant()){
+        'PASS' {return 'Pass'}
+        'RUNNING' {return 'Running'}
+        'READY_TO_INSTALL' {return 'ReadyToInstall'}
+        'REPAIR_AVAILABLE' {return 'RepairAvailable'}
+        'BLOCKED' {return 'Blocked'}
+        'NOT_FOUND' {return 'NotFound'}
+        'FAILED' {
+            if(([string]$Summary).StartsWith('Detection failed',[StringComparison]::OrdinalIgnoreCase)){return 'DetectionError'}
+            return 'OperationFailed'
+        }
+        default {return 'Unknown'}
+    }
+}
+
+function Get-SafeGuiSnapshot {
+    Initialize-SafeCore
+    $snapshot=Get-MLLMGuiSnapshot -ProjectRoot $ProjectRoot -DataRoot $DataRoot -NetworkMode $NetworkMode
+    $errors=@(Get-ObjectValue -Object $snapshot -Name 'errors' -Default @())
+    if($errors.Count -gt 0){
+        $messages=@($errors | ForEach-Object {[string](Get-ObjectValue -Object $_ -Name 'message' -Default ([string]$_))})
+        throw ('BACKEND_DETECTION_ERROR|'+($messages -join ' | '))
+    }
+    return $snapshot
+}
+
+function Convert-GuiComponents {
+    param($Snapshot)
+    $rows=New-Object Collections.Generic.List[object]
+    foreach($task in @(Get-ObjectValue -Object $Snapshot -Name 'tasks' -Default @())){
+        $status=[string](Get-ObjectValue -Object $task -Name 'status' -Default '')
+        $summary=[string](Get-ObjectValue -Object $task -Name 'summary' -Default '')
+        $repairTask=[string](Get-ObjectValue -Object $task -Name 'repair_task' -Default '')
+        $rows.Add([ordered]@{
+            id=[string](Get-ObjectValue -Object $task -Name 'id' -Default 'unknown')
+            health=Convert-ComponentHealth -Status $status -Summary $summary
+            summary=$summary
+            repairAvailable=[bool](Get-ObjectValue -Object $task -Name 'repair_available' -Default $false)
+            repairTask=if($repairTask){$repairTask}else{$null}
+        })
+    }
+    return @($rows)
+}
+
+function Get-MachineSnapshot {
+    $cpu=[string]$env:PROCESSOR_IDENTIFIER
+    [double]$ramGb=0
+    $gpus=@()
+    [double]$freeGb=0
+    try{
+        $processor=Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+        if($null -ne $processor -and $processor.Name){$cpu=[string]$processor.Name}
+    }catch{}
+    try{
+        $computer=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        if($null -ne $computer.TotalPhysicalMemory){$ramGb=[Math]::Round(([double]$computer.TotalPhysicalMemory/1GB),2)}
+    }catch{}
+    try{
+        $gpus=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object {[string]$_.Name} | Where-Object {$_})
+    }catch{$gpus=@()}
+    try{
+        $fixed=@(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop)
+        $sum=($fixed | Measure-Object -Property FreeSpace -Sum).Sum
+        if($null -ne $sum){$freeGb=[Math]::Round(([double]$sum/1GB),2)}
+    }catch{}
+    return [ordered]@{
+        os=[Environment]::OSVersion.VersionString
+        architecture=[string]$env:PROCESSOR_ARCHITECTURE
+        cpu=$cpu
+        ramGb=$ramGb
+        gpus=@($gpus)
+        fixedDiskFreeGb=$freeGb
+    }
+}
+
+function Get-DesktopDashboardSnapshot {
+    $snapshot=Get-SafeGuiSnapshot
+    return [ordered]@{
+        machine=Get-MachineSnapshot
+        networkMode=$NetworkMode
+        components=@(Convert-GuiComponents -Snapshot $snapshot)
+        currentModel=$null
+    }
+}
+
+function Get-DesktopDoctorSnapshot {
+    $snapshot=Get-SafeGuiSnapshot
+    return [ordered]@{
+        components=@(Convert-GuiComponents -Snapshot $snapshot)
+        errors=@()
+    }
+}
+
+function Get-LastInstallerErrorMessage {
+    param($State)
+    if($null -eq $State){return $null}
+    $errors=@(Get-ObjectValue -Object $State -Name 'errors' -Default @())
+    if($errors.Count -eq 0){return $null}
+    $last=$errors[$errors.Count-1]
+    $message=[string](Get-ObjectValue -Object $last -Name 'message' -Default '')
+    if($message){return $message}
+    return ([string]$last)
+}
+
+function Get-DesktopInstallerSnapshot {
+    Initialize-SafeCore
+    $basePaths=Get-MLLMInstallerPaths -RunId 'desktop-readonly' -VersionId 'desktop-readonly'
+    $state=Read-MLLMInstallerState -Path ([string]$basePaths.StatePath)
+    $active=Get-MLLMActiveVersion -PointerPath ([string]$basePaths.CurrentPointer)
+    $runId=$null
+    $versionId=$null
+    $stage='IDLE'
+    $canResume=$false
+    $evidenceRoot=Join-Path $env:USERPROFILE 'Downloads\M_LLM_EVIDENCE'
+    if($null -ne $state){
+        $runId=[string](Get-ObjectValue -Object $state -Name 'run_id' -Default '')
+        $versionId=[string](Get-ObjectValue -Object $state -Name 'version_id' -Default '')
+        $stage=[string](Get-ObjectValue -Object $state -Name 'stage' -Default 'UNKNOWN')
+        $canResume=($stage -ne 'COMPLETE')
+        if($runId -and $versionId){
+            $statePaths=Get-MLLMInstallerPaths -RunId $runId -VersionId $versionId
+            $evidenceRoot=[string]$statePaths.EvidencePreferredRoot
+        }
+    }
+    $activeVersion=$null
+    if($null -ne $active){$activeVersion=[string](Get-ObjectValue -Object $active -Name 'version_id' -Default '')}
+    return [ordered]@{
+        runId=if($runId){$runId}else{$null}
+        versionId=if($versionId){$versionId}else{$null}
+        stage=$stage
+        canResume=$canResume
+        activeVersion=if($activeVersion){$activeVersion}else{$null}
+        lastError=Get-LastInstallerErrorMessage -State $state
+        evidenceRoot=$evidenceRoot
+    }
 }
 
 function New-RpcError {
@@ -47,6 +215,9 @@ function Write-RpcResponse {
 
 $MethodTable=@{
     'system.ping' = { param($Payload) return [ordered]@{status='PASS';backendVersion='phase-a'} }
+    'dashboard.snapshot' = { param($Payload) return (Get-DesktopDashboardSnapshot) }
+    'doctor.snapshot' = { param($Payload) return (Get-DesktopDoctorSnapshot) }
+    'installer.snapshot' = { param($Payload) return (Get-DesktopInstallerSnapshot) }
 }
 
 $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -117,7 +288,13 @@ try{
             $result=& $MethodTable[$method] $payload
             Write-RpcResponse -Writer $writer -Id $id -Success $true -Payload $result -ErrorObject $null
         }catch{
-            Write-RpcResponse -Writer $writer -Id $id -Success $false -Payload $null -ErrorObject (New-RpcError 'BACKEND_OPERATION_FAILED' $_.Exception.Message $true)
+            $message=[string]$_.Exception.Message
+            $code='BACKEND_OPERATION_FAILED'
+            if($message.StartsWith('BACKEND_DETECTION_ERROR|',[StringComparison]::Ordinal)){
+                $code='BACKEND_DETECTION_ERROR'
+                $message=$message.Substring('BACKEND_DETECTION_ERROR|'.Length)
+            }
+            Write-RpcResponse -Writer $writer -Id $id -Success $false -Payload $null -ErrorObject (New-RpcError $code $message $true)
         }
     }
 }finally{

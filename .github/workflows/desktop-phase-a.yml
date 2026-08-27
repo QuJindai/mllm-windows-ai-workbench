@@ -47,3 +47,6 @@ jobs:
           $exe=Join-Path $out 'MLLM.Workbench.Desktop.exe'
           if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){throw "Desktop exe missing after self-contained publish: $exe"}
           Write-Host "DESKTOP_SELF_CONTAINED_PUBLISH=PASS exe=$exe"
+      - name: Dashboard ViewModel tests
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter DashboardViewModelTests

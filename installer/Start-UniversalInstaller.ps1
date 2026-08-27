@@ -4,7 +4,9 @@ param(
     [string]$VersionId='phase1-bootstrap',
     [string]$SourceManifestPath='',
     [switch]$NoElevate,
-    [switch]$PathsOnly
+    [switch]$PathsOnly,
+    [switch]$NoGui,
+    [switch]$GuiSmoke
 )
 
 $ErrorActionPreference='Stop'
@@ -16,12 +18,10 @@ $acquisitionModule=Join-Path $PSScriptRoot 'Acquisition.psm1'
 $validationModule=Join-Path $PSScriptRoot 'PackageValidation.psm1'
 $activationModule=Join-Path $PSScriptRoot 'Activation.psm1'
 $evidenceModule=Join-Path $PSScriptRoot 'InstallerEvidence.psm1'
-if(-not(Test-Path -LiteralPath $pathsModule -PathType Leaf)){throw 'InstallerPaths.psm1 missing'}
-if(-not(Test-Path -LiteralPath $stateModule -PathType Leaf)){throw 'InstallerState.psm1 missing'}
-if(-not(Test-Path -LiteralPath $acquisitionModule -PathType Leaf)){throw 'Acquisition.psm1 missing'}
-if(-not(Test-Path -LiteralPath $validationModule -PathType Leaf)){throw 'PackageValidation.psm1 missing'}
-if(-not(Test-Path -LiteralPath $activationModule -PathType Leaf)){throw 'Activation.psm1 missing'}
-if(-not(Test-Path -LiteralPath $evidenceModule -PathType Leaf)){throw 'InstallerEvidence.psm1 missing'}
+$wpfScript=Join-Path $PSScriptRoot 'UniversalInstaller.Wpf.ps1'
+foreach($required in @($pathsModule,$stateModule,$acquisitionModule,$validationModule,$activationModule,$evidenceModule,$wpfScript)){
+    if(-not(Test-Path -LiteralPath $required -PathType Leaf)){throw ('Universal installer dependency missing: '+$required)}
+}
 Import-Module $pathsModule -Force -ErrorAction Stop
 Import-Module $stateModule -Force -ErrorAction Stop
 Import-Module $acquisitionModule -Force -ErrorAction Stop
@@ -33,8 +33,7 @@ $repoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if(-not $SourceManifestPath){$SourceManifestPath=Join-Path $repoRoot 'config\source-manifest.json'}
 $sourceManifest=Get-MLLMSourceManifest -Path $SourceManifestPath
 
-# Force command resolution during bootstrap so missing/invalid safety capabilities
-# block the installer before any package can become installable or active.
+# Resolve all safety capabilities before a package can become installable or active.
 if($null -eq (Get-Command Test-MLLMPackageHash -ErrorAction SilentlyContinue)){throw 'Package hash validation capability unavailable'}
 if($null -eq (Get-Command Expand-MLLMSafeArchive -ErrorAction SilentlyContinue)){throw 'Safe archive extraction capability unavailable'}
 if($null -eq (Get-Command Test-MLLMStageContract -ErrorAction SilentlyContinue)){throw 'Stage contract validation capability unavailable'}
@@ -53,6 +52,8 @@ $elevated=Test-MLLMElevated
 if((-not $elevated) -and (-not $NoElevate)){
     $forward=@('-VersionId',$VersionId,'-SourceManifestPath',$SourceManifestPath)
     if($PathsOnly){$forward+='-PathsOnly'}
+    if($NoGui){$forward+='-NoGui'}
+    if($GuiSmoke){$forward+='-GuiSmoke'}
     Restart-MLLMInstallerElevated -OriginalArgs $forward -RunId $RunId
     Write-Host "UNIVERSAL_INSTALLER_ELEVATION=REQUESTED run_id=$RunId"
     exit 0
@@ -133,9 +134,37 @@ Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provi
 Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
-if($elevated){
-    Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'
-}else{
-    Write-Host 'UNIVERSAL_INSTALLER_NEXT=ELEVATED_REQUIRED'
+
+if($NoGui){
+    if($elevated){Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'}else{Write-Host 'UNIVERSAL_INSTALLER_NEXT=ELEVATED_REQUIRED'}
+    exit 0
 }
+
+$actions=[ordered]@{
+    InstallResume={
+        return 'Foundation engine ready; package execution is gated by the Phase 1 E2E release check.'
+    }
+    RetryAcquisition={
+        return 'Acquisition providers are ready; package selection is handled by the installer engine.'
+    }
+    ImportOffline={
+        param($PackagePath)
+        if(-not $PackagePath){return 'No offline package selected.'}
+        return ('Offline package selected: '+[IO.Path]::GetFullPath([string]$PackagePath))
+    }
+    OpenEvidence={
+        $folder=[string]$paths.EvidencePreferredRoot
+        if(-not(Test-Path -LiteralPath $folder -PathType Container)){$folder=[string]$paths.RunRoot}
+        if(Test-Path -LiteralPath $folder -PathType Container){Start-Process -FilePath 'explorer.exe' -ArgumentList @($folder) -ErrorAction SilentlyContinue | Out-Null}
+        return ('Evidence: '+$folder)
+    }
+    Rollback={
+        if(-not(Test-Path -LiteralPath $paths.CurrentPointer -PathType Leaf)){return 'No active version pointer is available for rollback.'}
+        $rolled=Invoke-MLLMRollback -PointerPath $paths.CurrentPointer
+        return ('Active version: '+[string]$rolled.version_id)
+    }
+}
+
+& $wpfScript -State $state -Paths $paths -Actions $actions -Smoke:$GuiSmoke
+if($GuiSmoke){Write-Host 'UNIVERSAL_INSTALLER_GUI_SMOKE=PASS'}
 exit 0

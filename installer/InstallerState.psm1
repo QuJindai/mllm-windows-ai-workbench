@@ -58,17 +58,21 @@ function Save-MLLMInstallerState {
     $State.updated_at=(Get-Date).ToString('o')
     $json=$State | ConvertTo-Json -Depth 20
     $tmp=$full+'.tmp'
+    $backup=$full+'.bak'
     $utf8=New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($tmp,$json,$utf8)
 
     try{
         if(Test-Path -LiteralPath $full -PathType Leaf){
-            [IO.File]::Replace($tmp,$full,$null)
+            if(Test-Path -LiteralPath $backup -PathType Leaf){Remove-Item -LiteralPath $backup -Force}
+            [IO.File]::Replace($tmp,$full,$backup,$true)
+            if(Test-Path -LiteralPath $backup -PathType Leaf){Remove-Item -LiteralPath $backup -Force}
         }else{
             Move-Item -LiteralPath $tmp -Destination $full -Force
         }
     }catch{
         if(Test-Path -LiteralPath $tmp -PathType Leaf){Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}
+        if(Test-Path -LiteralPath $backup -PathType Leaf){Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue}
         throw
     }
     return $full

@@ -18,8 +18,9 @@ $acquisitionModule=Join-Path $PSScriptRoot 'Acquisition.psm1'
 $validationModule=Join-Path $PSScriptRoot 'PackageValidation.psm1'
 $activationModule=Join-Path $PSScriptRoot 'Activation.psm1'
 $evidenceModule=Join-Path $PSScriptRoot 'InstallerEvidence.psm1'
+$engineModule=Join-Path $PSScriptRoot 'InstallerEngine.psm1'
 $wpfScript=Join-Path $PSScriptRoot 'UniversalInstaller.Wpf.ps1'
-foreach($required in @($pathsModule,$stateModule,$acquisitionModule,$validationModule,$activationModule,$evidenceModule,$wpfScript)){
+foreach($required in @($pathsModule,$stateModule,$acquisitionModule,$validationModule,$activationModule,$evidenceModule,$engineModule,$wpfScript)){
     if(-not(Test-Path -LiteralPath $required -PathType Leaf)){throw ('Universal installer dependency missing: '+$required)}
 }
 Import-Module $pathsModule -Force -ErrorAction Stop
@@ -28,10 +29,28 @@ Import-Module $acquisitionModule -Force -ErrorAction Stop
 Import-Module $validationModule -Force -ErrorAction Stop
 Import-Module $activationModule -Force -ErrorAction Stop
 Import-Module $evidenceModule -Force -ErrorAction Stop
+Import-Module $engineModule -ErrorAction Stop
 
 $repoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if(-not $SourceManifestPath){$SourceManifestPath=Join-Path $repoRoot 'config\source-manifest.json'}
 $sourceManifest=Get-MLLMSourceManifest -Path $SourceManifestPath
+
+function Get-DefaultFoundationPackage {
+    $packages=@($sourceManifest.packages)
+    if($packages.Count -lt 1){return $null}
+    $package=@($packages | Where-Object { $null -ne $_.PSObject.Properties['role'] -and [string]$_.role -eq 'workbench-foundation' } | Select-Object -First 1)
+    if($package.Count -gt 0){return $package[0]}
+    return @($packages | Select-Object -First 1)[0]
+}
+
+function Format-FoundationResult {
+    param($Result)
+    if($null -eq $Result){return 'Installer engine returned no result.'}
+    $text=('Status='+[string]$Result.status+' Stage='+[string]$Result.stage)
+    if([string]$Result.evidence){$text+=' Evidence='+[string]$Result.evidence}
+    if([string]$Result.error){$text+=' Error='+[string]$Result.error}
+    return $text
+}
 
 # Resolve all safety capabilities before a package can become installable or active.
 if($null -eq (Get-Command Test-MLLMPackageHash -ErrorAction SilentlyContinue)){throw 'Package hash validation capability unavailable'}
@@ -43,6 +62,7 @@ if($null -eq (Get-Command Invoke-MLLMRollback -ErrorAction SilentlyContinue)){th
 if($null -eq (Get-Command Add-MLLMInstallerError -ErrorAction SilentlyContinue)){throw 'Structured installer error capability unavailable'}
 if($null -eq (Get-Command Write-MLLMInstallerSummary -ErrorAction SilentlyContinue)){throw 'Installer summary capability unavailable'}
 if($null -eq (Get-Command Export-MLLMInstallerEvidence -ErrorAction SilentlyContinue)){throw 'Installer evidence export capability unavailable'}
+if($null -eq (Get-Command Invoke-MLLMFoundationInstall -ErrorAction SilentlyContinue)){throw 'Foundation installer transaction engine unavailable'}
 
 if(-not $RunId){
     $RunId=(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+([guid]::NewGuid().ToString('N').Substring(0,8))
@@ -68,6 +88,7 @@ if($PathsOnly){
     Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
     Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
     Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
+    Write-Host 'UNIVERSAL_INSTALLER_ENGINE=PASS'
     exit 0
 }
 
@@ -123,6 +144,7 @@ $bootstrap=[ordered]@{
     activation='READY'
     rollback='READY'
     evidence='READY'
+    engine='READY'
     evidence_root=$paths.EvidencePreferredRoot
     status='BOOTSTRAP_READY'
     created_at=(Get-Date).ToString('o')
@@ -134,6 +156,7 @@ Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provi
 Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
+Write-Host 'UNIVERSAL_INSTALLER_ENGINE=PASS'
 
 if($NoGui){
     if($elevated){Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'}else{Write-Host 'UNIVERSAL_INSTALLER_NEXT=ELEVATED_REQUIRED'}
@@ -142,15 +165,43 @@ if($NoGui){
 
 $actions=[ordered]@{
     InstallResume={
-        return 'Foundation engine ready; package execution is gated by the Phase 1 E2E release check.'
+        $package=Get-DefaultFoundationPackage
+        if($null -eq $package){return 'No workbench foundation package is configured in the source manifest.'}
+        $result=Invoke-MLLMFoundationInstall -Package $package -Paths $paths -State $state -StatePath $paths.StatePath -PreferredEvidenceRoot $paths.EvidencePreferredRoot
+        return (Format-FoundationResult -Result $result)
     }
     RetryAcquisition={
-        return 'Acquisition providers are ready; package selection is handled by the installer engine.'
+        $package=Get-DefaultFoundationPackage
+        if($null -eq $package){return 'No workbench foundation package is configured in the source manifest.'}
+        if(Test-MLLMStageComplete -State $state -Stage 'ACQUIRE'){
+            return 'Acquisition is already checkpointed; use Install / Resume to continue the verified transaction.'
+        }
+        $result=Invoke-MLLMFoundationInstall -Package $package -Paths $paths -State $state -StatePath $paths.StatePath -PreferredEvidenceRoot $paths.EvidencePreferredRoot
+        return (Format-FoundationResult -Result $result)
     }
     ImportOffline={
         param($PackagePath)
         if(-not $PackagePath){return 'No offline package selected.'}
-        return ('Offline package selected: '+[IO.Path]::GetFullPath([string]$PackagePath))
+        $full=[IO.Path]::GetFullPath([string]$PackagePath)
+        if(-not(Test-Path -LiteralPath $full -PathType Leaf)){return ('Offline package does not exist: '+$full)}
+        if(Test-MLLMStageComplete -State $state -Stage 'ACQUIRE'){
+            return 'Acquisition is already checkpointed; start a new installer run before replacing the acquired package.'
+        }
+        $default=Get-DefaultFoundationPackage
+        $sha=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+        $packageId=if($null -ne $default -and [string]$default.id){[string]$default.id}else{'workbench-offline'}
+        $packageVersion=if($null -ne $default -and [string]$default.version){[string]$default.version}else{$VersionId}
+        $expectedSha=if($null -ne $default -and [string]$default.sha256){[string]$default.sha256}else{$sha}
+        $offline=[pscustomobject]@{
+            id=$packageId
+            role='workbench-foundation'
+            version=$packageVersion
+            file_name=[IO.Path]::GetFileName($full)
+            sha256=$expectedSha
+            sources=@([pscustomobject]@{id='offline-selected';kind='local_file';path=$full})
+        }
+        $result=Invoke-MLLMFoundationInstall -Package $offline -Paths $paths -State $state -StatePath $paths.StatePath -PreferredEvidenceRoot $paths.EvidencePreferredRoot
+        return (Format-FoundationResult -Result $result)
     }
     OpenEvidence={
         $folder=[string]$paths.EvidencePreferredRoot

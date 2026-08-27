@@ -10,9 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  phase-a-foundation:
-    name: Desktop Phase A Foundation / Windows 2022
-    runs-on: windows-2022
+  phase-a:
+    name: Desktop Phase A / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,36 +39,24 @@ jobs:
       - name: Backend live snapshot smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendSnapshotSmoke.ps1
+      - name: Desktop ViewModel tests
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release
       - name: WPF shell load smoke
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter ShellContractTests
-      - name: Desktop self-contained publish smoke
-        shell: powershell
-        run: |
-          $out=Join-Path $env:RUNNER_TEMP 'mllm-phase-a-publish'
-          dotnet publish src/MLLM.Workbench.Desktop/MLLM.Workbench.Desktop.csproj -c Release -r win-x64 --self-contained true -o $out
-          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
-          $exe=Join-Path $out 'MLLM.Workbench.Desktop.exe'
-          if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){throw "Desktop exe missing after self-contained publish: $exe"}
-          Write-Host "DESKTOP_SELF_CONTAINED_PUBLISH=PASS exe=$exe"
-      - name: Dashboard ViewModel tests
-        shell: powershell
-        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter DashboardViewModelTests
-      - name: Doctor ViewModel tests
-        shell: powershell
-        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter DoctorViewModelTests
       - name: Installer CLI action regression
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-UniversalInstallerCliActionSmoke.ps1
       - name: Installer delegation tests
         shell: powershell
         run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter PrivilegedInstallerInvokerTests
-      - name: Installation Center ViewModel tests
-        shell: powershell
-        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter InstallationViewModelTests
       - name: Desktop launcher fallback smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopLauncherFallbackSmoke.ps1
       - name: Self-contained package smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopPackageSmoke.ps1
+      - name: Phase A end-to-end smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopPhaseASmoke.ps1

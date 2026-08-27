@@ -1,0 +1,7 @@
+<UserControl x:Class="MLLM.Workbench.Desktop.Pages.Doctor.DoctorPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel>
+    <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+    <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,20" Foreground="{StaticResource MutedTextBrush}" />
+    <Border Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="Doctor 实时状态" FontSize="16" FontWeight="SemiBold" Foreground="White"/><TextBlock Text="正在读取 typed DoctorSnapshot；未安装组件不会被当作程序崩溃。" Margin="0,14,0,0" Foreground="{StaticResource MutedTextBrush}"/></StackPanel></Border>
+  </StackPanel>
+</UserControl>

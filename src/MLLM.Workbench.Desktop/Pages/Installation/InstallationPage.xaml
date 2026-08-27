@@ -1,0 +1,7 @@
+<UserControl x:Class="MLLM.Workbench.Desktop.Pages.Installation.InstallationPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel>
+    <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+    <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,20" Foreground="{StaticResource MutedTextBrush}" />
+    <Border Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="Universal Installer 状态" FontSize="16" FontWeight="SemiBold" Foreground="White"/><TextBlock Text="正在读取只读 InstallerSnapshot；本页当前不会直接执行系统安装命令。" Margin="0,14,0,0" Foreground="{StaticResource MutedTextBrush}"/></StackPanel></Border>
+  </StackPanel>
+</UserControl>

@@ -1,3 +1,5 @@
+using System.IO;
+using System.Linq;
 using System.Xml.Linq;
 
 namespace MLLM.Workbench.Desktop.Tests;
@@ -13,25 +15,15 @@ public sealed class ShellContractTests
 
         var document = XDocument.Load(path, LoadOptions.PreserveWhitespace);
         XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
-        var names = document.Descendants()
-            .Select(e => (string?)e.Attribute(x + "Name"))
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .ToHashSet(StringComparer.Ordinal);
-        var automationIds = document.Descendants()
-            .Select(e => e.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationId")?.Value)
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .ToHashSet(StringComparer.Ordinal);
+        var names = document.Descendants().Select(e => (string?)e.Attribute(x + "Name")).Where(v => !string.IsNullOrWhiteSpace(v)).ToHashSet(StringComparer.Ordinal);
+        var automationIds = document.Descendants().Select(e => e.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationId")?.Value).Where(v => !string.IsNullOrWhiteSpace(v)).ToHashSet(StringComparer.Ordinal);
 
         foreach (var required in new[] { "MainNavigation", "BackendStatus", "NetworkModeStatus", "ContentHost", "DashboardNavigation", "DoctorNavigation", "InstallationNavigation" })
-        {
             Assert.True(names.Contains(required) || automationIds.Contains(required), $"Missing shell contract element: {required}");
-        }
 
         var xml = File.ReadAllText(path);
         foreach (var forbidden in new[] { "ModelNavigation", "ServicesNavigation", "ConversationNavigation", "RagNavigation", "BenchmarkNavigation", "EvidenceNavigation", "SettingsNavigation", "AboutNavigation" })
-        {
             Assert.DoesNotContain(forbidden, xml, StringComparison.Ordinal);
-        }
     }
 
     [Fact]

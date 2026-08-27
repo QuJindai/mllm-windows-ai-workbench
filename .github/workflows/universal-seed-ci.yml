@@ -28,10 +28,3 @@ jobs:
       - name: Single-file offline smoke with narrowed PATH
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-SingleFileSeedSmoke.ps1 -SeedPath .\dist\M_LLM_UNIVERSAL_INSTALLER_FULL.cmd
-      - name: Publish seed artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: M_LLM_UNIVERSAL_INSTALLER_FULL
-          path: dist/M_LLM_UNIVERSAL_INSTALLER_FULL.cmd
-          if-no-files-found: error
-          retention-days: 7

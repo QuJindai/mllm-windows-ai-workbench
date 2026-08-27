@@ -1,5 +1,6 @@
 Set-StrictMode -Version 2
 $ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
 
 $stateModule=Join-Path $PSScriptRoot 'InstallerState.psm1'
 if(-not(Get-Command Save-MLLMInstallerState -ErrorAction SilentlyContinue)){
@@ -70,10 +71,13 @@ function Invoke-MLLMHttpClientDownload {
         [string]$ProxyUri=''
     )
 
+    $parsed=New-Object Uri($Uri)
     $handler=New-Object Net.Http.HttpClientHandler
     if($ProxyUri){
         $handler.Proxy=New-Object Net.WebProxy($ProxyUri,$true)
         $handler.UseProxy=$true
+    }elseif($parsed.IsLoopback){
+        $handler.UseProxy=$false
     }
     $client=New-Object Net.Http.HttpClient($handler)
     $client.Timeout=[TimeSpan]::FromSeconds([Math]::Max(1,$TimeoutSeconds))
@@ -81,7 +85,7 @@ function Invoke-MLLMHttpClientDownload {
     $input=$null
     $output=$null
     try{
-        $response=$client.GetAsync($Uri,[Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        $response=$client.GetAsync($parsed,[Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
         if(-not $response.IsSuccessStatusCode){throw "HTTP_STATUS_$([int]$response.StatusCode) $($response.ReasonPhrase)"}
         $input=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         $output=New-Object IO.FileStream($DestinationPartial,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
@@ -148,7 +152,8 @@ function Invoke-MLLMAcquirePackage {
     if($expected -notmatch '^[0-9a-f]{64}$'){throw "Package SHA256 is invalid: $($Package.id)"}
     if(-not @($Package.sources).Count){throw "Package has no sources: $($Package.id)"}
 
-    $fileName=[string]$Package.file_name
+    $fileName=''
+    if($null -ne $Package.PSObject.Properties['file_name']){$fileName=[string]$Package.file_name}
     if(-not $fileName){$fileName=([string]$Package.id)+'-'+([string]$Package.version)+'.pkg'}
     $packageDir=Join-Path ([IO.Path]::GetFullPath($CacheRoot)) (([string]$Package.id)+'\'+([string]$Package.version))
     if(-not(Test-Path -LiteralPath $packageDir -PathType Container)){New-Item -ItemType Directory -Force -Path $packageDir | Out-Null}
@@ -171,12 +176,14 @@ function Invoke-MLLMAcquirePackage {
             if($allowed -notcontains $kind){throw "Unsupported source kind: $kind"}
             switch($kind){
                 'local_file' {
-                    $src=[string]$source.path
+                    $src=''
+                    if($null -ne $source.PSObject.Properties['path']){$src=[string]$source.path}
                     if(-not(Test-Path -LiteralPath $src -PathType Leaf)){throw "Local source missing: $src"}
                     Copy-Item -LiteralPath $src -Destination $partial -Force -ErrorAction Stop
                 }
                 'local_cache' {
-                    $src=[string]$source.path
+                    $src=''
+                    if($null -ne $source.PSObject.Properties['path']){$src=[string]$source.path}
                     if(-not $src){$src=$final}
                     if(-not(Test-Path -LiteralPath $src -PathType Leaf)){throw "Cache source missing: $src"}
                     $cachedSha=Get-MLLMFileSha256 -Path $src
@@ -184,11 +191,12 @@ function Invoke-MLLMAcquirePackage {
                     if([IO.Path]::GetFullPath($src) -ne [IO.Path]::GetFullPath($final)){Copy-Item -LiteralPath $src -Destination $partial -Force -ErrorAction Stop}else{$partial=$src}
                 }
                 default {
-                    $uri=[string]$source.uri
+                    $uri=''
+                    if($null -ne $source.PSObject.Properties['uri']){$uri=[string]$source.uri}
                     if(-not $uri){throw "Network source URI missing: $sourceId"}
                     $timeout=20
                     if($null -ne $source.PSObject.Properties['timeout_seconds']){$timeout=[int]$source.timeout_seconds}
-                    $preferBits=$true
+                    $preferBits=$false
                     if($null -ne $source.PSObject.Properties['prefer_bits']){$preferBits=[bool]$source.prefer_bits}
                     $proxy=''
                     if($kind -eq 'custom_proxy' -and $null -ne $source.PSObject.Properties['proxy_uri']){$proxy=[string]$source.proxy_uri}

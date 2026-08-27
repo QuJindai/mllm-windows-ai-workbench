@@ -37,6 +37,37 @@ function Get-MLLMInstallerPaths {
     }
 }
 
+function New-MLLMElevationArguments {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$EntryPath,
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$RunId,
+        [string[]]$OriginalArgs=@()
+    )
+
+    $payloadObject=[ordered]@{
+        entry=[IO.Path]::GetFullPath($EntryPath)
+        run_id=$RunId
+        args=@($OriginalArgs | ForEach-Object {[string]$_})
+    }
+    $json=$payloadObject | ConvertTo-Json -Depth 6 -Compress
+    $payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+    $script=@'
+$payload='__PAYLOAD__'
+$json=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload))
+$o=$json | ConvertFrom-Json
+$forward=@('-RunId',[string]$o.run_id)+@($o.args | ForEach-Object {[string]$_})
+& ([string]$o.entry) @forward
+exit $LASTEXITCODE
+'@
+    $script=$script.Replace('__PAYLOAD__',$payload)
+    $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    return [pscustomobject]@{
+        ArgumentList=@('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded)
+        PayloadJson=$json
+    }
+}
+
 function Restart-MLLMInstallerElevated {
     [CmdletBinding()]
     param(
@@ -46,14 +77,8 @@ function Restart-MLLMInstallerElevated {
 
     $entry=Join-Path $PSScriptRoot 'Start-UniversalInstaller.ps1'
     if(-not(Test-Path -LiteralPath $entry -PathType Leaf)){throw "Universal installer entrypoint missing: $entry"}
-
-    $args=@('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$entry+'"'),'-RunId',('"'+$RunId+'"'))
-    foreach($arg in @($OriginalArgs)){
-        if($null -eq $arg){continue}
-        $escaped=([string]$arg).Replace('"','\"')
-        $args+=('"'+$escaped+'"')
-    }
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList ($args -join ' ')
+    $elevation=New-MLLMElevationArguments -EntryPath $entry -RunId $RunId -OriginalArgs $OriginalArgs
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @($elevation.ArgumentList)
 }
 
-Export-ModuleMember -Function Test-MLLMElevated,Get-MLLMInstallerPaths,Restart-MLLMInstallerElevated
+Export-ModuleMember -Function Test-MLLMElevated,Get-MLLMInstallerPaths,New-MLLMElevationArguments,Restart-MLLMInstallerElevated

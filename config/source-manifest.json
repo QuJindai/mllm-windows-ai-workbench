@@ -1,0 +1,17 @@
+{
+  "schema": "mllm.universal-installer.sources.v1",
+  "provider_kinds": [
+    "local_file",
+    "local_cache",
+    "http",
+    "github",
+    "custom_proxy"
+  ],
+  "policy": {
+    "prefer_local_before_network": true,
+    "verify_sha256_before_use": true,
+    "continue_after_source_failure": true,
+    "allow_unverified_mirror": false
+  },
+  "packages": []
+}

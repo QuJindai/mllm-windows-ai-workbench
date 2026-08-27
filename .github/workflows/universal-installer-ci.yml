@@ -21,7 +21,7 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - name: PowerShell 5.1 identity
@@ -35,3 +35,6 @@ jobs:
       - name: Resumable installer state
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-InstallerStateSmoke.ps1
+      - name: Provider acquisition failover
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-AcquisitionFailoverSmoke.ps1

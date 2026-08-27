@@ -65,3 +65,6 @@ jobs:
       - name: Desktop launcher fallback smoke
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopLauncherFallbackSmoke.ps1
+      - name: Self-contained package smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopPackageSmoke.ps1

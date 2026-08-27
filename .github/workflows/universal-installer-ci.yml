@@ -38,3 +38,6 @@ jobs:
       - name: Provider acquisition failover
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-AcquisitionFailoverSmoke.ps1
+      - name: Package hash, extraction, and stage contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-PackageValidationSmoke.ps1

@@ -1,42 +1,50 @@
 # Safe Core status
 
-## Checkpoint — 2026-08-26
+## Checkpoint — 2026-08-27
 
-Safe Core public Windows CI is active on the `safe-core` branch. The latest verified R3 code checkpoint is commit `dfd0b54e8a2a7738fe4496d2caf85cf668e9168b`.
+Safe Core public Windows CI is active on the `safe-core` branch. R3 is retired for physical-machine GUI testing after a real Chinese Windows PowerShell 5.1 locale/encoding failure. The current safe test launcher is `M_LLM_WORKBENCH_FULL_TEST_R4.cmd`.
 
-Fresh verification at this checkpoint:
+### Real-machine R3 finding
 
-- main `safe-core-ci` run `32956060797`: all jobs and all relevant steps PASS;
-- exact user R3 entrypoint run `32956060836`: `M_LLM_WORKBENCH_FULL_TEST_R3.cmd --gui-preflight-only --refresh --no-pause` PASS;
-- standalone GUI preflight run `32956060773`: PASS;
-- R3 downloaded exact pinned source commit `229ab18a01e2c13afe4eb3169222e48f843db9b9`, bootstrapped it, ran physical preflight, then ran real GUI Dashboard preflight with `tasks=8`, `snapshot_errors=0`, `network_mode=OFFLINE_CACHE`, and `core_install_authorized=false`.
+A physical Windows 11 host running Windows PowerShell `5.1.26100.9168` passed Safe Core bootstrap and the non-installing physical preflight, then failed while parsing `M_LLM_GUI_PREFLIGHT.ps1`. The failure was caused by a literal Chinese diagnostic regex in a raw GitHub UTF-8 file without BOM. Windows PowerShell 5.1 can decode such files using the active Windows ANSI code page, so the hosted English Windows CI did not reproduce the same tokenizer failure.
 
-Verified behavior and regression coverage:
+This was a CI coverage gap rather than a return of the earlier Dashboard module-scope bug.
+
+### R4 locale-safe remediation
+
+The R4 source checkpoint is commit `b576c87b541ad95474e2ce89a4dc12af29e66325`. The R4 launcher itself was added at commit `2027edb7faea8c1ed7e695f31bb8b96936feea26`.
+
+Changes and hard gates:
+
+- `M_LLM_GUI_PREFLIGHT.ps1` is ASCII-only; its Chinese CommandNotFound diagnostic match is represented with Unicode regex escapes rather than literal non-ASCII source text;
+- `tests/ci/Invoke-GuiPreflightEntrypointSmoke.ps1` constructs the Chinese diagnostic form from Unicode character codes and requires the ASCII regex to match it (`unicode_regex=PASS`);
+- repository contract now requires all raw Windows PowerShell 5.1 direct entrypoints to be ASCII-only: `Bootstrap_SafeCore.ps1`, `M_LLM_PHYSICAL_PREFLIGHT.ps1`, `M_LLM_GUI_PREFLIGHT.ps1`, and `Start_M_LLM_Workbench.ps1`;
+- `M_LLM_WORKBENCH_FULL_TEST_R4.cmd` adds a pre-bootstrap locale/encoding gate. It prints current culture and ANSI code page, rejects non-ASCII bytes in all four direct entrypoints, and invokes the Windows PowerShell parser on each file before any preflight or GUI execution;
+- if this locale/encoding gate fails, R4 stops safely and does not authorize Core installation.
+
+Fresh R4 verification:
+
+- final R4 user-entry run `33032782989`: PASS on Windows Server 2022 / Windows PowerShell 5.1;
+- its log shows all four `locale-safe parse` checks PASS, Safe Core bootstrap PASS, physical preflight PASS, and `GUI_PREFLIGHT=PASS tasks=8 snapshot_errors=0 network_mode=OFFLINE_CACHE core_install_authorized=false`;
+- main `safe-core-ci` run `33032782994`: all jobs PASS, including Windows PowerShell 5.1 on Windows Server 2022 and 2025, repository contract, static/safety policy, Doctor, Core, raw checkout bootstrap, WPF load/binding, Dashboard snapshot, initial NetworkMode, physical preflight, backend tests, and billing guard;
+- standalone GUI-preflight run `33032782955`: PASS with `tasks=8`, `snapshot_errors=0`, and `unicode_regex=PASS`.
+
+### Existing verified behavior
 
 - raw checkout can bootstrap Safe Core without Python by validating and materializing the embedded overlay with SHA-256 `6a2e73091b27df0b711346df0b3abc39c78838a9764e03e1ec8c696cbfde3c6a`;
-- direct `Bootstrap_SafeCore.ps1` invocation now resolves its project root correctly on Windows PowerShell 5.1; the original empty `Path` parameter-binding regression has a dedicated Windows test;
-- raw checkout CLI startup passes;
 - raw checkout Doctor executes to completion, preserves diagnostic exit semantics, and creates evidence;
 - raw checkout Core in an isolated empty offline environment fails closed as `BLOCKED` and does not create executable payloads;
-- Windows PowerShell 5.1 parse/import/config/task-registry tests pass on Windows Server 2022 and Windows Server 2025;
-- Safe Core offline-install smoke, Normal Doctor, Emergency Doctor, XAML load, WPF load, backend tests, static safety policy, and billing guard pass;
-- WPF semantic binding gates verify `DoctorButton -> Doctor` and `InstallCoreButton -> Core -> Preset`, including the per-button `Tag` routing that prevents preset-loop capture errors;
-- real GUI Dashboard snapshot regression executes task detection instead of only loading XAML. It requires zero internal snapshot exceptions and rejects `CommandNotFoundException`/command-visibility errors;
-- the GUI module-scope bug that caused `Resolve-MLLMLlamaRuntime`, `Get-MLLMState`, and `Find-MLLMPython` to become invisible to task handlers is fixed by exposing shared engine dependencies to the global session while keeping Core local to the GUI adapter;
-- WPF startup now honors the requested `NetworkMode`; an `OFFLINE_CACHE` launch is tested to select and report `OFFLINE_CACHE` rather than silently displaying `AUTO_CN_FIRST`;
-- both real Dashboard snapshot and initial NetworkMode tests run on materialized Windows 2022/2025 paths and raw-checkout bootstrap paths;
-- `M_LLM_GUI_PREFLIGHT.ps1` is a non-installing user-entry gate. It performs raw bootstrap plus a real Dashboard snapshot, writes `gui_preflight.json`, requires `snapshot_errors=0`, records `install_actions_executed=0` and `network_actions_executed=0`, and always records `core_install_authorized=false`;
-- `M_LLM_WORKBENCH_FULL_TEST_R3.cmd` performs exact-source download/reuse -> raw bootstrap -> non-installing physical preflight -> non-installing GUI Dashboard preflight -> GUI. CI exercises the exact CMD itself before it is delivered to a user;
-- WPF code is gated against direct `winget install`, MSI, driver/DISM, Scheduled Task creation, and registry add/delete actions;
-- `M_LLM_PHYSICAL_PREFLIGHT.ps1` passes a raw-checkout Windows Server 2022 contract test in `NON_INSTALLING` mode;
-- physical preflight statically rejects direct installer/driver/registry/scheduled-task/download actions, records install/network action counts as zero, performs raw bootstrap + CLI + Doctor, and always reports `core_install_authorized=false` with `release_gate=BLOCKED_PENDING_EVIDENCE_REVIEW`;
-- the preflight contract requires at least one Doctor evidence archive, a copied `doctor_evidence.zip`, and a real non-empty `M_LLM_PHYSICAL_PREFLIGHT_*.zip` evidence bundle. Bundle creation failure is a hard preflight failure rather than a warning.
+- real GUI Dashboard snapshot regression executes task detection and requires zero internal snapshot exceptions;
+- the GUI module-scope fix keeps `Resolve-MLLMLlamaRuntime`, `Get-MLLMState`, and `Find-MLLMPython` visible to task handlers;
+- WPF startup honors requested `NetworkMode`; `OFFLINE_CACHE` no longer silently displays `AUTO_CN_FIRST`;
+- `M_LLM_GUI_PREFLIGHT.ps1` and `M_LLM_PHYSICAL_PREFLIGHT.ps1` remain non-installing gates with `core_install_authorized=false`;
+- WPF code remains gated against direct system installer/driver/DISM/Scheduled Task/registry mutation routes.
 
 ## Physical-machine release gate
 
-Physical-machine Core installation remains **blocked**. The previously reported physical Windows BSOD has not been reproduced or causally attributed in an isolated hardware environment. A green hosted CI run is therefore not evidence that the historical BSOD root cause is resolved.
+Physical-machine Core installation remains **blocked**. The previously reported physical Windows BSOD has not been reproduced or causally attributed in an isolated hardware environment. Hosted CI and successful non-installing preflights do not prove that historical BSOD root cause is resolved.
 
-The current permitted physical-machine path is R3 safe testing only: `M_LLM_WORKBENCH_FULL_TEST_R3.cmd` performs the non-installing physical and GUI preflights before opening the isolated GUI. It does not authorize Core installation.
+The current permitted physical-machine path is **R4 safe testing only**. `M_LLM_WORKBENCH_FULL_TEST_R4.cmd` performs the locale/encoding gate, raw bootstrap, non-installing physical preflight, and non-installing GUI Dashboard preflight before opening the isolated GUI in `OFFLINE_CACHE` mode. It does not authorize Core installation.
 
 Do not use **Install Core** on the primary Windows machine until the real-machine physical-preflight evidence bundle has been reviewed and a separate release decision is recorded.
 

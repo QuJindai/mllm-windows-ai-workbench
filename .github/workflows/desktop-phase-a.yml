@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  contracts:
-    name: Contracts RED/GREEN / Windows 2022
+  phase-a-foundation:
+    name: Desktop Phase A Foundation / Windows 2022
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -26,3 +26,9 @@ jobs:
       - name: Contracts tests
         shell: powershell
         run: dotnet test tests/contracts/MLLM.Workbench.Contracts.Tests/MLLM.Workbench.Contracts.Tests.csproj -c Release
+      - name: Infrastructure pipe tests
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter NamedPipeHandshakeTests
+      - name: Backend PS5.1 contract smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendContractSmoke.ps1

@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace MLLM.Workbench.Desktop.Services;
 
 public sealed record WorkbenchRuntimeOptions(string ProjectRoot, string DataRoot, string NetworkMode)

@@ -17,9 +17,9 @@ $actual=@($actionAttributes[0].ValidValues)
 if(($actual -join '|') -ne ($expected -join '|')){throw ('Unexpected Action values: '+($actual -join ','))}
 
 $content=Get-Content -LiteralPath $script -Raw
-if($content -notmatch "if\(\$NoGui\s+-and\s+\$Action\s+-eq\s+'None'\)"){throw 'NoGui early exit is not Action-aware'}
-if($content -notmatch "\$forward.+-Action"){throw 'UAC forwarding does not preserve Action'}
-if($content -notmatch "\$forward.+-OfflinePackagePath"){throw 'UAC forwarding does not preserve OfflinePackagePath'}
+if($content -notmatch 'if\(\$NoGui\s+-and\s+\$Action\s+-eq\s+''None''\)'){throw 'NoGui early exit is not Action-aware'}
+if($content -notmatch '\$forward.+-Action'){throw 'UAC forwarding does not preserve Action'}
+if($content -notmatch '\$forward.+-OfflinePackagePath'){throw 'UAC forwarding does not preserve OfflinePackagePath'}
 
 function Invoke-InstallerProcess {
     param([string[]]$Arguments)

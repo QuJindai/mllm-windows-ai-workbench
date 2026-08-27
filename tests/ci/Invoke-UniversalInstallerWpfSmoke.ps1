@@ -59,3 +59,12 @@ Write-Host 'UNIVERSAL_INSTALLER_WPF_BINDINGS=PASS'
 $tokens=$null;$errors=$null
 [void][Management.Automation.Language.Parser]::ParseFile($wpfPath,[ref]$tokens,[ref]$errors)
 if(@($errors).Count -gt 0){throw "Universal installer WPF script parse failed: $((@($errors)|ForEach-Object{$_.Message}) -join ' | ')"}
+
+$out=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File $wpfPath -Smoke 2>&1)
+$rc=$LASTEXITCODE
+$text=($out -join "`n")
+Write-Host $text
+if($rc -ne 0){throw "Universal installer WPF runtime smoke failed rc=$rc"}
+if($text -notmatch 'UNIVERSAL_INSTALLER_WPF_RUNTIME=PASS'){throw "WPF runtime PASS marker missing: $text"}
+if($text -notmatch 'stage=INIT'){throw "WPF runtime did not render INIT state: $text"}
+Write-Host 'UNIVERSAL_INSTALLER_WPF_RUNTIME_GATE=PASS'

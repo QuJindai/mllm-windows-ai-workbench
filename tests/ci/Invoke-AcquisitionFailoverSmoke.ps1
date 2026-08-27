@@ -31,6 +31,8 @@ function New-TestState {
 }
 
 # Case 1: unreachable HTTP must fall through to a valid local file.
+# BITS is deliberately disabled here so this test isolates provider failover;
+# BITS boundedness is tested separately before it can be enabled by default.
 $c1=New-TestState -Suffix 'local'
 $package1=[pscustomobject]@{
     id='safe-core-payload'
@@ -38,7 +40,7 @@ $package1=[pscustomobject]@{
     file_name='safe-core-ci.zip'
     sha256=$sha
     sources=@(
-        [pscustomobject]@{id='dead-http';kind='http';uri='http://127.0.0.1:9/never.zip';timeout_seconds=2},
+        [pscustomobject]@{id='dead-http';kind='http';uri='http://127.0.0.1:9/never.zip';timeout_seconds=2;prefer_bits=$false},
         [pscustomobject]@{id='offline-local';kind='local_file';path=$payload}
     )
 }
@@ -84,7 +86,7 @@ try{
         file_name='safe-core-http-ci.zip'
         sha256=$sha
         sources=@(
-            [pscustomobject]@{id='dead-http-2';kind='http';uri='http://127.0.0.1:9/never-again.zip';timeout_seconds=2},
+            [pscustomobject]@{id='dead-http-2';kind='http';uri='http://127.0.0.1:9/never-again.zip';timeout_seconds=2;prefer_bits=$false},
             [pscustomobject]@{id='http-good';kind='http';uri=('http://127.0.0.1:'+[string]$port+'/payload.zip');timeout_seconds=5;prefer_bits=$false}
         )
     }

@@ -14,24 +14,30 @@ $pathsModule=Join-Path $PSScriptRoot 'InstallerPaths.psm1'
 $stateModule=Join-Path $PSScriptRoot 'InstallerState.psm1'
 $acquisitionModule=Join-Path $PSScriptRoot 'Acquisition.psm1'
 $validationModule=Join-Path $PSScriptRoot 'PackageValidation.psm1'
+$activationModule=Join-Path $PSScriptRoot 'Activation.psm1'
 if(-not(Test-Path -LiteralPath $pathsModule -PathType Leaf)){throw 'InstallerPaths.psm1 missing'}
 if(-not(Test-Path -LiteralPath $stateModule -PathType Leaf)){throw 'InstallerState.psm1 missing'}
 if(-not(Test-Path -LiteralPath $acquisitionModule -PathType Leaf)){throw 'Acquisition.psm1 missing'}
 if(-not(Test-Path -LiteralPath $validationModule -PathType Leaf)){throw 'PackageValidation.psm1 missing'}
+if(-not(Test-Path -LiteralPath $activationModule -PathType Leaf)){throw 'Activation.psm1 missing'}
 Import-Module $pathsModule -Force -ErrorAction Stop
 Import-Module $stateModule -Force -ErrorAction Stop
 Import-Module $acquisitionModule -Force -ErrorAction Stop
 Import-Module $validationModule -Force -ErrorAction Stop
+Import-Module $activationModule -Force -ErrorAction Stop
 
 $repoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if(-not $SourceManifestPath){$SourceManifestPath=Join-Path $repoRoot 'config\source-manifest.json'}
 $sourceManifest=Get-MLLMSourceManifest -Path $SourceManifestPath
 
-# Force command resolution during bootstrap so missing/invalid validation support
-# blocks the installer before any package can become installable.
+# Force command resolution during bootstrap so missing/invalid safety capabilities
+# block the installer before any package can become installable or active.
 if($null -eq (Get-Command Test-MLLMPackageHash -ErrorAction SilentlyContinue)){throw 'Package hash validation capability unavailable'}
 if($null -eq (Get-Command Expand-MLLMSafeArchive -ErrorAction SilentlyContinue)){throw 'Safe archive extraction capability unavailable'}
 if($null -eq (Get-Command Test-MLLMStageContract -ErrorAction SilentlyContinue)){throw 'Stage contract validation capability unavailable'}
+if($null -eq (Get-Command Install-MLLMVersion -ErrorAction SilentlyContinue)){throw 'Version installation capability unavailable'}
+if($null -eq (Get-Command Set-MLLMActiveVersion -ErrorAction SilentlyContinue)){throw 'Version activation capability unavailable'}
+if($null -eq (Get-Command Invoke-MLLMRollback -ErrorAction SilentlyContinue)){throw 'Rollback capability unavailable'}
 
 if(-not $RunId){
     $RunId=(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+([guid]::NewGuid().ToString('N').Substring(0,8))
@@ -53,6 +59,7 @@ if($PathsOnly){
     Write-Host "UNIVERSAL_INSTALLER_PATHS=PASS run_id=$RunId elevated=$elevated"
     Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provider_kinds).Count)"
     Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
+    Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
     exit 0
 }
 
@@ -105,6 +112,8 @@ $bootstrap=[ordered]@{
     source_manifest_path=[IO.Path]::GetFullPath($SourceManifestPath)
     source_provider_kinds=@($sourceManifest.provider_kinds)
     package_validation='READY'
+    activation='READY'
+    rollback='READY'
     evidence_root=$paths.EvidencePreferredRoot
     status='BOOTSTRAP_READY'
     created_at=(Get-Date).ToString('o')
@@ -114,6 +123,7 @@ $bootstrap | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $bootstrapPath -
 Write-Host "UNIVERSAL_INSTALLER_BOOTSTRAP=PASS run_id=$RunId bootstrap=$bootstrapPath state=$($state.stage)"
 Write-Host "UNIVERSAL_INSTALLER_SOURCES=PASS providers=$(@($sourceManifest.provider_kinds).Count)"
 Write-Host 'UNIVERSAL_INSTALLER_PACKAGE_VALIDATION=PASS'
+Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
 if($elevated){
     Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'
 }else{

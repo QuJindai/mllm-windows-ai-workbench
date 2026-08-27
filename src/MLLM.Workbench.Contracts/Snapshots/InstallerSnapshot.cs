@@ -7,4 +7,5 @@ public sealed record InstallerSnapshot(
     bool CanResume,
     string? ActiveVersion,
     string? LastError,
-    string EvidenceRoot);
+    string EvidenceRoot,
+    bool CanRollback = false);

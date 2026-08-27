@@ -1,7 +1,41 @@
-<UserControl x:Class="MLLM.Workbench.Desktop.Pages.Installation.InstallationPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<UserControl x:Class="MLLM.Workbench.Desktop.Pages.Installation.InstallationPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <StackPanel>
-    <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-    <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,20" Foreground="{StaticResource MutedTextBrush}" />
-    <Border Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="Universal Installer 状态" FontSize="16" FontWeight="SemiBold" Foreground="White"/><TextBlock Text="正在读取只读 InstallerSnapshot；本页当前不会直接执行系统安装命令。" Margin="0,14,0,0" Foreground="{StaticResource MutedTextBrush}"/></StackPanel></Border>
+    <Grid Margin="0,0,0,20">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel><TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/><TextBlock Text="{Binding Subtitle}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/></StackPanel>
+      <Button Grid.Column="1" Content="刷新状态" Style="{StaticResource ActionButtonStyle}" Command="{Binding RefreshCommand}" VerticalAlignment="Center"/>
+    </Grid>
+
+    <Grid Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,10,0"><StackPanel><TextBlock Text="事务阶段" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding Stage}" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,8,0,0"/></StackPanel></Border>
+      <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="0,0,10,0"><StackPanel><TextBlock Text="当前活动版本" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding ActiveVersion}" FontSize="20" FontWeight="SemiBold" Foreground="White" Margin="0,8,0,0"/></StackPanel></Border>
+      <Border Grid.Column="2" Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="证据目录" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding EvidenceRoot}" TextWrapping="Wrap" Foreground="White" Margin="0,8,0,0"/></StackPanel></Border>
+    </Grid>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+      <StackPanel>
+        <TextBlock Text="组件与依赖" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+        <Grid Margin="0,12,0,7"><Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.8*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions><TextBlock Text="组件" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Grid.Column="1" Text="状态" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Grid.Column="2" Text="详情" Foreground="{StaticResource MutedTextBrush}"/></Grid>
+        <ItemsControl ItemsSource="{Binding Components}"><ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,9"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.8*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Id}" Foreground="White"/><TextBlock Grid.Column="1" Text="{Binding Health}" Foreground="{StaticResource AccentBrush}"/><TextBlock Grid.Column="2" Text="{Binding Summary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Grid></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+      <StackPanel>
+        <TextBlock Text="操作" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+        <WrapPanel Margin="0,14,0,0">
+          <Button Content="安装 / 恢复" Style="{StaticResource ActionButtonStyle}" Command="{Binding InstallResumeCommand}" IsEnabled="{Binding CanInstallResume}"/>
+          <Button Content="重试获取" Style="{StaticResource ActionButtonStyle}" Command="{Binding RetryAcquisitionCommand}" IsEnabled="{Binding CanRetryAcquisition}"/>
+          <Button x:Name="ImportOfflineButton" AutomationProperties.AutomationId="ImportOfflineButton" Content="导入离线包" Style="{StaticResource ActionButtonStyle}" Click="ImportOfflineButton_OnClick" IsEnabled="{Binding CanImportOffline}"/>
+          <Button Content="回滚" Style="{StaticResource ActionButtonStyle}" Command="{Binding RollbackCommand}" IsEnabled="{Binding CanRollback}"/>
+        </WrapPanel>
+        <TextBlock Text="{Binding OperationMessage}" Margin="0,12,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+        <TextBlock Text="{Binding LastError, StringFormat=最近错误：{0}}" Margin="0,6,0,0" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"/>
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource SafeGateCardStyle}"><TextBlock Text="Desktop 不直接执行 winget / msiexec / DISM / PNPUTIL。需要管理员权限时，由 Universal Installer 自己发起 UAC，并继续使用现有断点、SHA256、安全解压和回滚事务。" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Border>
   </StackPanel>
 </UserControl>

@@ -7,6 +7,7 @@ using MLLM.Workbench.Desktop.Pages.Installation;
 using MLLM.Workbench.Desktop.Services;
 using MLLM.Workbench.Desktop.Shell;
 using MLLM.Workbench.Infrastructure.Backend;
+using MLLM.Workbench.Infrastructure.Installer;
 
 namespace MLLM.Workbench.Desktop;
 
@@ -24,6 +25,7 @@ public partial class App : Application
                 services.AddSingleton(runtime);
                 services.AddSingleton(_ => new BackendProcessHost(runtime.ProjectRoot, runtime.DataRoot, runtime.NetworkMode));
                 services.AddSingleton<IWorkbenchBackendClient>(sp => new NamedPipeBackendClient(sp.GetRequiredService<BackendProcessHost>().Options));
+                services.AddSingleton<IPrivilegedInstallerInvoker>(_ => new PrivilegedInstallerInvoker(runtime.ProjectRoot));
                 services.AddSingleton<WorkbenchCoordinator>();
                 services.AddSingleton<DashboardPageViewModel>();
                 services.AddSingleton<DoctorPageViewModel>();

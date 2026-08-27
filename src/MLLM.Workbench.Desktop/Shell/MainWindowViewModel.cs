@@ -52,5 +52,6 @@ public sealed class MainWindowViewModel : ObservableObject
             _ => Dashboard
         };
         if (route == "doctor") Doctor.RefreshCommand.Execute(null);
+        if (route == "installation") Installation.RefreshCommand.Execute(null);
     }
 }

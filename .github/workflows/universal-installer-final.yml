@@ -1,0 +1,86 @@
+name: universal-installer-final
+
+on:
+  push:
+    branches: [ universal-installer-v1 ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: universal-installer-final-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-foundation:
+    name: Final Foundation / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize Safe Core
+        shell: powershell
+        run: python ci/materialize.py
+      - name: Universal installer module matrix
+        shell: powershell
+        run: |
+          $tests=@(
+            'Invoke-UniversalInstallerBootstrapSmoke.ps1',
+            'Invoke-InstallerStateSmoke.ps1',
+            'Invoke-AcquisitionFailoverSmoke.ps1',
+            'Invoke-PackageValidationSmoke.ps1',
+            'Invoke-VersionActivationSmoke.ps1',
+            'Invoke-ActivationIntegrationSmoke.ps1',
+            'Invoke-InstallerEvidenceSmoke.ps1',
+            'Invoke-EvidenceIntegrationSmoke.ps1',
+            'Invoke-UniversalInstallerWpfSmoke.ps1',
+            'Invoke-WpfIntegrationSmoke.ps1',
+            'Invoke-EngineIntegrationSmoke.ps1',
+            'Invoke-ElevationArgumentsSmoke.ps1'
+          )
+          foreach($name in $tests){
+            Write-Host "=== $name ==="
+            $args=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path '.\tests\ci' $name))
+            if($name -eq 'Invoke-UniversalInstallerWpfSmoke.ps1'){$args=@('-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',(Join-Path '.\tests\ci' $name))}
+            & powershell.exe @args
+            if($LASTEXITCODE -ne 0){throw "$name failed rc=$LASTEXITCODE"}
+          }
+      - name: Full isolated transaction E2E
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-UniversalInstallerE2E.ps1
+
+  single-file-seed:
+    name: Final Single-file Seed / Windows 2022
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize Safe Core
+        shell: powershell
+        run: python ci/materialize.py
+      - name: Build final self-contained seed
+        shell: powershell
+        run: python ci/build_universal_seed_v2.py --output dist\M_LLM_UNIVERSAL_INSTALLER_FULL.cmd
+      - name: Smoke final single file with no Git or Python on PATH
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Invoke-SingleFileSeedSmoke.ps1 -SeedPath .\dist\M_LLM_UNIVERSAL_INSTALLER_FULL.cmd
+      - name: Reproducibility rebuild
+        shell: powershell
+        run: |
+          Copy-Item .\dist\M_LLM_UNIVERSAL_INSTALLER_FULL.cmd $env:RUNNER_TEMP\seed-first.cmd
+          python ci/build_universal_seed_v2.py --output dist\M_LLM_UNIVERSAL_INSTALLER_FULL.cmd
+          $a=(Get-FileHash $env:RUNNER_TEMP\seed-first.cmd -Algorithm SHA256).Hash
+          $b=(Get-FileHash .\dist\M_LLM_UNIVERSAL_INSTALLER_FULL.cmd -Algorithm SHA256).Hash
+          if($a -ne $b){throw "Seed rebuild is not deterministic: $a != $b"}
+          Write-Host "UNIVERSAL_SEED_REPRODUCIBLE=PASS sha256=$($b.ToLowerInvariant())"

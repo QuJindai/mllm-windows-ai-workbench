@@ -10,7 +10,9 @@ public enum InstallerAction
 
 public sealed record InstallerProcessRequest(
     InstallerAction Action,
-    string? OfflinePackagePath = null);
+    string? OfflinePackagePath = null,
+    string? RunId = null,
+    string? VersionId = null);
 
 public sealed record InstallerProcessResult(
     int ExitCode,

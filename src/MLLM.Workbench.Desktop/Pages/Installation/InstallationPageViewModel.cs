@@ -17,6 +17,8 @@ public sealed class InstallationPageViewModel : ObservableObject
     private string _evidenceRoot = "-";
     private string? _lastError;
     private string? _operationMessage;
+    private string? _runId;
+    private string? _versionId;
     private bool _canInstallResume;
     private bool _canRetryAcquisition;
     private bool _canImportOffline = true;
@@ -81,8 +83,12 @@ public sealed class InstallationPageViewModel : ObservableObject
         }
     }
 
-    public Task InstallResumeAsync(CancellationToken cancellationToken) => RunInstallerActionAsync(new InstallerProcessRequest(InstallerAction.InstallResume), cancellationToken);
-    public Task RetryAcquisitionAsync(CancellationToken cancellationToken) => RunInstallerActionAsync(new InstallerProcessRequest(InstallerAction.RetryAcquisition), cancellationToken);
+    public Task InstallResumeAsync(CancellationToken cancellationToken) =>
+        RunInstallerActionAsync(new InstallerProcessRequest(InstallerAction.InstallResume, RunId: _runId, VersionId: _versionId), cancellationToken);
+
+    public Task RetryAcquisitionAsync(CancellationToken cancellationToken) =>
+        RunInstallerActionAsync(new InstallerProcessRequest(InstallerAction.RetryAcquisition, RunId: _runId, VersionId: _versionId), cancellationToken);
+
     public Task RollbackAsync(CancellationToken cancellationToken) => RunInstallerActionAsync(new InstallerProcessRequest(InstallerAction.Rollback), cancellationToken);
 
     public async Task ImportOfflineAsync(string packagePath, CancellationToken cancellationToken)
@@ -137,11 +143,15 @@ public sealed class InstallationPageViewModel : ObservableObject
         EvidenceRoot = installer.EvidenceRoot;
         LastError = installer.LastError;
 
+        var hasCheckpoint = !string.IsNullOrWhiteSpace(installer.RunId) && !string.IsNullOrWhiteSpace(installer.VersionId);
+        _runId = hasCheckpoint ? installer.RunId : null;
+        _versionId = hasCheckpoint ? installer.VersionId : null;
+
         Components.Clear();
         foreach (var component in doctor.Components) Components.Add(component);
         var installable = doctor.Components.Any(x => x.Health is ComponentHealth.ReadyToInstall or ComponentHealth.RepairAvailable);
-        CanInstallResume = installer.CanResume || installable;
-        CanRetryAcquisition = Stage.Equals("ACQUIRE", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(installer.LastError);
+        CanInstallResume = (installer.CanResume && hasCheckpoint) || installable;
+        CanRetryAcquisition = hasCheckpoint && Stage.Equals("ACQUIRE", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(installer.LastError);
         CanImportOffline = Stage.Equals("IDLE", StringComparison.OrdinalIgnoreCase) || Stage.Equals("COMPLETE", StringComparison.OrdinalIgnoreCase);
         CanRollback = installer.CanRollback;
         RaiseCommandStates();

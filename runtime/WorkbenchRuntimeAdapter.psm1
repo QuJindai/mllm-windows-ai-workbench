@@ -1,17 +1,52 @@
 Set-StrictMode -Version 2
 $ErrorActionPreference='Stop'
 
+function Get-MLLMPropertyValue {
+    param($Object,[Parameter(Mandatory=$true)][string]$Name,$Default=$null)
+    if($null -eq $Object){return $Default}
+    if($Object -is [Collections.IDictionary]){
+        if($Object.Contains($Name)){return $Object[$Name]}
+        return $Default
+    }
+    $property=$Object.PSObject.Properties[$Name]
+    if($null -ne $property){return $property.Value}
+    return $Default
+}
+
 function Read-MLLMJsonFile {
     param([Parameter(Mandatory=$true)][string]$Path)
     if(-not(Test-Path -LiteralPath $Path -PathType Leaf)){return $null}
     return (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
 }
 
+function Write-MLLMJsonAtomic {
+    param([Parameter(Mandatory=$true)][string]$Path,[Parameter(Mandatory=$true)]$Value)
+    $full=[IO.Path]::GetFullPath($Path)
+    $parent=Split-Path -Parent $full
+    if(-not(Test-Path -LiteralPath $parent -PathType Container)){New-Item -ItemType Directory -Force -Path $parent | Out-Null}
+    $token=[guid]::NewGuid().ToString('N')
+    $tmp=$full+'.tmp.'+$token
+    $backup=$full+'.bak.'+$token
+    $utf8=New-Object System.Text.UTF8Encoding -ArgumentList $false
+    try{
+        [IO.File]::WriteAllText($tmp,($Value | ConvertTo-Json -Depth 20),$utf8)
+        if(Test-Path -LiteralPath $full -PathType Leaf){
+            [IO.File]::Replace($tmp,$full,$backup)
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }else{
+            [IO.File]::Move($tmp,$full)
+        }
+    }finally{
+        Remove-Item -LiteralPath $tmp,$backup -Force -ErrorAction SilentlyContinue
+    }
+    return $full
+}
+
 function Get-MLLMModelCatalog {
     param([Parameter(Mandatory=$true)][string]$ProjectRoot)
     $manifestPath=Join-Path ([IO.Path]::GetFullPath($ProjectRoot)) 'config\models.json'
     $manifest=Read-MLLMJsonFile -Path $manifestPath
-    if($null -eq $manifest -or $null -eq $manifest.models){throw ('MODEL_CATALOG_INVALID|'+$manifestPath)}
+    if($null -eq $manifest -or $null -eq (Get-MLLMPropertyValue -Object $manifest -Name 'models' -Default $null)){throw ('MODEL_CATALOG_INVALID|'+$manifestPath)}
     return @($manifest.models)
 }
 
@@ -64,13 +99,14 @@ function Get-MLLMBuiltInModelPath {
 function Get-MLLMManagedModelDefinition {
     param([Parameter(Mandatory=$true)][string]$DataRoot,[Parameter(Mandatory=$true)][string]$ModelId)
     foreach($sidecar in @(Get-MLLMManagedModelSidecars -DataRoot $DataRoot)){
-        if([string]$sidecar.id -ne $ModelId){continue}
-        $fileName=[string]$sidecar.file_name
+        if([string](Get-MLLMPropertyValue -Object $sidecar -Name 'id' -Default '') -ne $ModelId){continue}
+        $fileName=[string](Get-MLLMPropertyValue -Object $sidecar -Name 'file_name' -Default '')
+        if(-not $fileName){continue}
         $modelRoot=Join-Path ([IO.Path]::GetFullPath($DataRoot)) ('models\managed\'+$ModelId)
         return [pscustomobject]@{
             id=$ModelId
-            role=if($sidecar.role){[string]$sidecar.role}else{'imported'}
-            display_name=if($sidecar.display_name){[string]$sidecar.display_name}else{$ModelId}
+            role=[string](Get-MLLMPropertyValue -Object $sidecar -Name 'role' -Default 'imported')
+            display_name=[string](Get-MLLMPropertyValue -Object $sidecar -Name 'display_name' -Default $ModelId)
             canonical_filename=$fileName
             format='gguf'
             minimum_bytes=4
@@ -93,11 +129,11 @@ function Resolve-MLLMModelDefinition {
         return [pscustomobject]@{
             id=[string]$item.id
             role=[string]$item.role
-            display_name=if($item.PSObject.Properties['display_name'] -and [string]$item.display_name){[string]$item.display_name}else{[string]$item.id}
+            display_name=[string](Get-MLLMPropertyValue -Object $item -Name 'display_name' -Default ([string]$item.id))
             canonical_filename=[string]$item.canonical_filename
-            format=if([string]$item.format){[string]$item.format}else{'gguf'}
-            minimum_bytes=[long]$item.minimum_bytes
-            sha256=if($item.PSObject.Properties['sha256']){$item.sha256}else{$null}
+            format=[string](Get-MLLMPropertyValue -Object $item -Name 'format' -Default 'gguf')
+            minimum_bytes=[long](Get-MLLMPropertyValue -Object $item -Name 'minimum_bytes' -Default 4)
+            sha256=(Get-MLLMPropertyValue -Object $item -Name 'sha256' -Default $null)
             source_kind='BuiltIn'
             resolved_path=(Get-MLLMBuiltInModelPath -Definition $item -DataRoot $DataRoot)
         }
@@ -160,11 +196,7 @@ function Test-MLLMWorkbenchModel {
 
     $active=Get-MLLMActiveModel -DataRoot $DataRoot
     $activeId=$null
-    if($null -ne $active){
-        if($active.PSObject.Properties['modelId']){$activeId=[string]$active.modelId}
-        elseif($active.PSObject.Properties['model_id']){$activeId=[string]$active.model_id}
-        elseif($active.PSObject.Properties['id']){$activeId=[string]$active.id}
-    }
+    if($null -ne $active){$activeId=[string](Get-MLLMPropertyValue -Object $active -Name 'modelId' -Default (Get-MLLMPropertyValue -Object $active -Name 'model_id' -Default (Get-MLLMPropertyValue -Object $active -Name 'id' -Default '')))}
     $quantization=$null
     if($fileName -match '(?i)(Q[0-9]+_[A-Z0-9_]+)'){$quantization=$Matches[1].ToUpperInvariant()}
     $blocked=$null
@@ -203,7 +235,7 @@ function Get-MLLMModelInventory {
         if($id -and -not $ids.Contains($id)){$ids.Add($id)}
     }
     foreach($sidecar in @(Get-MLLMManagedModelSidecars -DataRoot $DataRoot)){
-        $id=[string]$sidecar.id
+        $id=[string](Get-MLLMPropertyValue -Object $sidecar -Name 'id' -Default '')
         if($id -and -not $ids.Contains($id)){$ids.Add($id)}
     }
     $rows=New-Object Collections.Generic.List[object]
@@ -211,4 +243,121 @@ function Get-MLLMModelInventory {
     return $rows.ToArray()
 }
 
-Export-ModuleMember -Function Get-MLLMModelInventory,Test-MLLMWorkbenchModel,Get-MLLMActiveModel
+function Import-MLLMManagedModel {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$ProjectRoot,
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$DataRoot,
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$SourcePath,
+        [string]$DisplayName=''
+    )
+
+    $source=[IO.Path]::GetFullPath($SourcePath)
+    if($source.StartsWith('\\',[StringComparison]::Ordinal)){throw 'MODEL_IMPORT_SOURCE_NOT_LOCAL|UNC paths are not accepted for managed model import'}
+    if(-not(Test-Path -LiteralPath $source -PathType Leaf)){throw ('MODEL_NOT_FOUND|'+$source)}
+    if([IO.Path]::GetExtension($source) -ne '.gguf'){throw 'MODEL_FORMAT_INVALID|Managed import accepts .gguf files only'}
+    if(-not(Test-MLLMGgufMagic -Path $source)){throw 'MODEL_FORMAT_INVALID|GGUF magic is missing'}
+
+    $dataFull=[IO.Path]::GetFullPath($DataRoot)
+    $modelsRoot=Join-Path $dataFull 'models'
+    $stagingRoot=Join-Path $modelsRoot '.staging'
+    $managedRoot=Join-Path $modelsRoot 'managed'
+    New-Item -ItemType Directory -Force -Path $stagingRoot,$managedRoot | Out-Null
+    $stageDir=Join-Path $stagingRoot ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+    try{
+        $staged=Join-Path $stageDir 'model.gguf'
+        Copy-Item -LiteralPath $source -Destination $staged -Force -ErrorAction Stop
+        if(-not(Test-MLLMGgufMagic -Path $staged)){throw 'MODEL_FORMAT_INVALID|Staged GGUF magic is invalid'}
+        $sha=Get-MLLMFileSha256 -Path $staged
+        $modelId='imported-'+$sha.Substring(0,12)
+        $finalDir=Join-Path $managedRoot $modelId
+        $finalName=[IO.Path]::GetFileName($source)
+        if(-not $finalName.ToLowerInvariant().EndsWith('.gguf')){$finalName='model.gguf'}
+
+        if(Test-Path -LiteralPath $finalDir -PathType Container){
+            $existingSidecar=Read-MLLMJsonFile -Path (Join-Path $finalDir 'model.mllm.json')
+            $existingHash=[string](Get-MLLMPropertyValue -Object $existingSidecar -Name 'actual_sha256' -Default '')
+            $existingName=[string](Get-MLLMPropertyValue -Object $existingSidecar -Name 'file_name' -Default '')
+            $existingFile=if($existingName){Join-Path $finalDir $existingName}else{$null}
+            if($existingHash -eq $sha -and $existingFile -and (Test-Path -LiteralPath $existingFile -PathType Leaf) -and (Get-MLLMFileSha256 -Path $existingFile) -eq $sha){
+                return (Test-MLLMWorkbenchModel -ProjectRoot $ProjectRoot -DataRoot $DataRoot -ModelId $modelId)
+            }
+            throw ('MODEL_ID_COLLISION|'+$modelId)
+        }
+
+        $renamed=Join-Path $stageDir $finalName
+        Move-Item -LiteralPath $staged -Destination $renamed -Force -ErrorAction Stop
+        if(-not $DisplayName){$DisplayName=[IO.Path]::GetFileNameWithoutExtension($finalName)}
+        $sidecar=[ordered]@{
+            schema='mllm.model.v1'
+            id=$modelId
+            role='imported'
+            display_name=$DisplayName
+            file_name=$finalName
+            actual_sha256=$sha
+            imported_at=(Get-Date).ToString('o')
+        }
+        $sidecar | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stageDir 'model.mllm.json') -Encoding UTF8
+        Move-Item -LiteralPath $stageDir -Destination $finalDir -ErrorAction Stop
+        return (Test-MLLMWorkbenchModel -ProjectRoot $ProjectRoot -DataRoot $DataRoot -ModelId $modelId)
+    }finally{
+        if(Test-Path -LiteralPath $stageDir -PathType Container){Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue}
+    }
+}
+
+function Import-MLLMRuntimeOwnershipProvider {
+    param([Parameter(Mandatory=$true)][string]$ProjectRoot)
+    if($null -ne (Get-Command Test-MLLMRecordedProcess -ErrorAction SilentlyContinue)){return}
+    $runtimeModule=Join-Path ([IO.Path]::GetFullPath($ProjectRoot)) 'engine\Runtime.psm1'
+    if(Test-Path -LiteralPath $runtimeModule -PathType Leaf){Import-Module $runtimeModule -Force -ErrorAction Stop}
+}
+
+function Test-MLLMLocalModelServiceRunning {
+    param([Parameter(Mandatory=$true)][string]$ProjectRoot,[Parameter(Mandatory=$true)][string]$DataRoot)
+    $statePath=Join-Path ([IO.Path]::GetFullPath($DataRoot)) 'state\services\local-model-api.json'
+    if(-not(Test-Path -LiteralPath $statePath -PathType Leaf)){return $false}
+    $record=Read-MLLMJsonFile -Path $statePath
+    $recordedState=[string](Get-MLLMPropertyValue -Object $record -Name 'state' -Default '')
+    $recordedPid=[int](Get-MLLMPropertyValue -Object $record -Name 'pid' -Default 0)
+    if($recordedPid -le 0 -or $recordedState -notin @('Running','Starting','Degraded')){return $false}
+    Import-MLLMRuntimeOwnershipProvider -ProjectRoot $ProjectRoot
+    $checker=Get-Command Test-MLLMRecordedProcess -ErrorAction SilentlyContinue
+    if($null -eq $checker){throw 'MODEL_SERVICE_OWNERSHIP_UNAVAILABLE|Cannot safely determine local model service ownership'}
+    return [bool](Test-MLLMRecordedProcess -ProcessId $recordedPid)
+}
+
+function Set-MLLMActiveModel {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$ProjectRoot,
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$DataRoot,
+        [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$ModelId
+    )
+
+    $candidate=Test-MLLMWorkbenchModel -ProjectRoot $ProjectRoot -DataRoot $DataRoot -ModelId $ModelId
+    if([string]$candidate.integrityState -eq 'Missing'){throw ('MODEL_NOT_FOUND|'+$ModelId)}
+    if([string]$candidate.integrityState -eq 'Failed'){
+        $code=[string]$candidate.errorCode
+        if(-not $code){$code='MODEL_FORMAT_INVALID'}
+        throw ($code+'|'+$ModelId)
+    }
+    if(Test-MLLMLocalModelServiceRunning -ProjectRoot $ProjectRoot -DataRoot $DataRoot){throw 'MODEL_ACTIVE_SERVICE_RUNNING|Stop local-model-api before switching the active model'}
+
+    $previous=Get-MLLMActiveModel -DataRoot $DataRoot
+    $previousId=$null
+    if($null -ne $previous){$previousId=[string](Get-MLLMPropertyValue -Object $previous -Name 'modelId' -Default '')}
+    $pointer=[ordered]@{
+        schema='mllm.active-model.v1'
+        modelId=$ModelId
+        modelPath=[string]$candidate.filePath
+        actualSha256=[string]$candidate.actualSha256
+        previousModelId=if($previousId){$previousId}else{$null}
+        activatedAt=(Get-Date).ToString('o')
+    }
+    $path=Join-Path ([IO.Path]::GetFullPath($DataRoot)) 'state\active_model.json'
+    Write-MLLMJsonAtomic -Path $path -Value $pointer | Out-Null
+    return (Get-MLLMActiveModel -DataRoot $DataRoot)
+}
+
+Export-ModuleMember -Function Get-MLLMModelInventory,Test-MLLMWorkbenchModel,Get-MLLMActiveModel,Import-MLLMManagedModel,Set-MLLMActiveModel

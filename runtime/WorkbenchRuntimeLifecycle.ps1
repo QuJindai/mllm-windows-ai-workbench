@@ -18,8 +18,13 @@ function Get-MLLMRuntimeConfig {
 }
 
 function Invoke-MLLMLocalModelStartCore {
-    param([Parameter(Mandatory=$true)][string]$ProjectRoot,[Parameter(Mandatory=$true)][string]$DataRoot,[Parameter(Mandatory=$true)][string]$ModelPath,[int]$ContextSize=8192)
+    param([Parameter(Mandatory=$true)][string]$ProjectRoot,[Parameter(Mandatory=$true)][string]$DataRoot,[Parameter(Mandatory=$true)][string]$ModelPath,[int]$ContextSize=0)
     Initialize-MLLMRuntimeCore -ProjectRoot $ProjectRoot
+    if($ContextSize -le 0){
+        $config=Get-MLLMRuntimeConfig -ProjectRoot $ProjectRoot
+        $api=Get-MLLMPropertyValue -Object $config -Name 'api' -Default $null
+        $ContextSize=[int](Get-MLLMPropertyValue -Object $api -Name 'context_size' -Default 8192)
+    }
     if($null -eq (Get-Command Start-MLLMLocalModelService -ErrorAction SilentlyContinue)){throw 'SERVICE_RUNTIME_MISSING|Local model runtime is unavailable'}
     try{return (Start-MLLMLocalModelService -DataRoot $DataRoot -ModelPath $ModelPath -ContextSize $ContextSize)}catch{
         $message=[string]$_.Exception.Message
@@ -196,10 +201,7 @@ function Start-MLLMWorkbenchService {
 
     if($ServiceId -eq 'local-model-api'){
         $model=Resolve-MLLMServiceModel -ProjectRoot $ProjectRoot -DataRoot $DataRoot
-        $config=Get-MLLMRuntimeConfig -ProjectRoot $ProjectRoot
-        $api=Get-MLLMPropertyValue -Object $config -Name 'api' -Default $null
-        $context=[int](Get-MLLMPropertyValue -Object $api -Name 'context_size' -Default 8192)
-        $result=Invoke-MLLMLocalModelStartCore -ProjectRoot $ProjectRoot -DataRoot $DataRoot -ModelPath ([string]$model.filePath) -ContextSize $context
+        $result=Invoke-MLLMLocalModelStartCore -ProjectRoot $ProjectRoot -DataRoot $DataRoot -ModelPath ([string]$model.filePath)
         $pid=[int](Get-MLLMServiceResultValue -Result $result -Names @('pid','processId','process_id') -Default 0)
         if($pid -le 0){throw 'SERVICE_EXITED_EARLY|Local model service did not return an owned process id'}
         Write-MLLMServiceRuntimeRecord -DataRoot $DataRoot -ServiceId $ServiceId -State 'Running' -Result $result -Model $model -HealthSummary 'Local model service running.' | Out-Null

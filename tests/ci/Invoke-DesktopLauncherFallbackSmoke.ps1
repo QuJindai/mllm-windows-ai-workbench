@@ -31,11 +31,33 @@ function Invoke-LauncherDryRun {
     }
 }
 
-$desktop=Invoke-LauncherDryRun -WithDesktop $true
-if($desktop.ExitCode -ne 0 -or $desktop.Output -notmatch 'MLLM_LAUNCH_TARGET=DESKTOP'){throw ('Desktop route failed: '+$desktop.Output)}
-$legacyMissing=Invoke-LauncherDryRun -WithDesktop $false
-if($legacyMissing.ExitCode -ne 0 -or $legacyMissing.Output -notmatch 'MLLM_LAUNCH_TARGET=LEGACY'){throw ('Missing desktop fallback failed: '+$legacyMissing.Output)}
-$legacyForced=Invoke-LauncherDryRun -WithDesktop $true -Arguments @('--legacy')
-if($legacyForced.ExitCode -ne 0 -or $legacyForced.Output -notmatch 'MLLM_LAUNCH_TARGET=LEGACY'){throw ('Forced legacy route failed: '+$legacyForced.Output)}
+function Assert-Route {
+    param([string]$Name,[string]$Expected,[string[]]$Arguments=@(),[bool]$WithDesktop=$true)
+    $result=Invoke-LauncherDryRun -WithDesktop $WithDesktop -Arguments $Arguments
+    if($result.ExitCode -ne 0 -or $result.Output -notmatch ('MLLM_LAUNCH_TARGET='+$Expected)){
+        throw ("Launcher route failed case=$Name expected=$Expected output="+$result.Output)
+    }
+}
 
-Write-Host 'DESKTOP_LAUNCHER_FALLBACK=PASS desktop=PASS missing=LEGACY forced=LEGACY'
+Assert-Route -Name 'default desktop' -Expected 'DESKTOP'
+Assert-Route -Name 'explicit gui stays desktop' -Expected 'DESKTOP' -Arguments @('--gui')
+Assert-Route -Name 'missing desktop' -Expected 'LEGACY' -WithDesktop $false
+Assert-Route -Name 'forced legacy' -Expected 'LEGACY' -Arguments @('--legacy')
+
+# These switches existed before the native Desktop shell. They are operational
+# commands, not Desktop UI arguments, and must keep reaching the legacy
+# PowerShell entrypoint after the Desktop executable is shipped.
+foreach($case in @(
+    [pscustomobject]@{Name='cli';Args=@('--cli')},
+    [pscustomobject]@{Name='doctor';Args=@('--doctor')},
+    [pscustomobject]@{Name='start service';Args=@('--start-service')},
+    [pscustomobject]@{Name='stop service';Args=@('--stop-service')},
+    [pscustomobject]@{Name='start web';Args=@('--start-web')},
+    [pscustomobject]@{Name='stop web';Args=@('--stop-web')},
+    [pscustomobject]@{Name='preset';Args=@('--preset','Core')},
+    [pscustomobject]@{Name='network mode';Args=@('--network-mode','ONLINE_GLOBAL')}
+)){
+    Assert-Route -Name $case.Name -Expected 'LEGACY' -Arguments @($case.Args)
+}
+
+Write-Host 'DESKTOP_LAUNCHER_FALLBACK=PASS desktop=PASS gui=DESKTOP missing=LEGACY forced=LEGACY legacy_commands=PASS'

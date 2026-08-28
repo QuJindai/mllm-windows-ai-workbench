@@ -39,6 +39,9 @@ jobs:
       - name: Phase B service lifecycle
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterLifecycleSmoke.ps1
+      - name: Phase B typed backend client
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter PhaseBBackendClientTests
       - name: Phase B backend allowlist
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendPhaseBContractSmoke.ps1

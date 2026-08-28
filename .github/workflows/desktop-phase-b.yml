@@ -30,3 +30,6 @@ jobs:
       - name: Phase B contracts
         shell: powershell
         run: dotnet test tests/contracts/MLLM.Workbench.Contracts.Tests/MLLM.Workbench.Contracts.Tests.csproj -c Release --filter PhaseBContractSerializationTests
+      - name: Phase B model adapter
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterModelSmoke.ps1

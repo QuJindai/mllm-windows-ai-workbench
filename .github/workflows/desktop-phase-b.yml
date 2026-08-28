@@ -36,3 +36,6 @@ jobs:
       - name: Phase B service adapter
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterServiceSmoke.ps1
+      - name: Phase B service lifecycle
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterLifecycleSmoke.ps1

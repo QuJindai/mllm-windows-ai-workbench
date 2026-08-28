@@ -34,6 +34,37 @@ public sealed class PrivilegedInstallerInvokerTests
         Assert.DoesNotContain("-OfflinePackagePath", start.ArgumentList);
     }
 
+    [Fact]
+    public void BuildStartInfo_preserves_resume_checkpoint_identity_as_distinct_arguments()
+    {
+        var root = FindRepositoryRoot();
+        var invoker = new PrivilegedInstallerInvoker(root);
+        var request = new InstallerProcessRequest(
+            InstallerAction.InstallResume,
+            RunId: "run id 42",
+            VersionId: "version 2");
+
+        var start = invoker.BuildStartInfo(request);
+        var args = start.ArgumentList.ToArray();
+
+        var runIndex = Array.IndexOf(args, "-RunId");
+        var versionIndex = Array.IndexOf(args, "-VersionId");
+        Assert.True(runIndex >= 0);
+        Assert.True(versionIndex >= 0);
+        Assert.Equal("run id 42", args[runIndex + 1]);
+        Assert.Equal("version 2", args[versionIndex + 1]);
+    }
+
+    [Fact]
+    public void RetryAcquisition_requires_a_complete_checkpoint_identity()
+    {
+        var root = FindRepositoryRoot();
+        var invoker = new PrivilegedInstallerInvoker(root);
+
+        Assert.Throws<ArgumentException>(() => invoker.BuildStartInfo(new InstallerProcessRequest(InstallerAction.RetryAcquisition)));
+        Assert.Throws<ArgumentException>(() => invoker.BuildStartInfo(new InstallerProcessRequest(InstallerAction.RetryAcquisition, RunId: "run-1")));
+    }
+
     private static string FindRepositoryRoot()
     {
         var cursor = new DirectoryInfo(AppContext.BaseDirectory);

@@ -196,10 +196,22 @@ try{
         try{$backendProcess.Kill()}catch{}
         throw 'Packaged backend did not stop after pipe disconnect'
     }
-    if($backendProcess.ExitCode -ne 0){
+    # With redirected output, Windows PowerShell's Start-Process Process object
+    # can require the parameterless WaitForExit plus Refresh before ExitCode is
+    # populated. Do not treat a null exit code as success.
+    $backendProcess.WaitForExit()
+    $backendProcess.Refresh()
+    $backendExitCode=$null
+    try{$backendExitCode=$backendProcess.ExitCode}catch{}
+    if($null -eq $backendExitCode){
         $outText=Get-Content -LiteralPath $backendOut -Raw -ErrorAction SilentlyContinue
         $errText=Get-Content -LiteralPath $backendErr -Raw -ErrorAction SilentlyContinue
-        throw "Packaged backend exited rc=$($backendProcess.ExitCode) output=$outText error=$errText"
+        throw "Packaged backend exit code unavailable after refresh output=$outText error=$errText"
+    }
+    if([int]$backendExitCode -ne 0){
+        $outText=Get-Content -LiteralPath $backendOut -Raw -ErrorAction SilentlyContinue
+        $errText=Get-Content -LiteralPath $backendErr -Raw -ErrorAction SilentlyContinue
+        throw "Packaged backend exited rc=$backendExitCode output=$outText error=$errText"
     }
     $backendProcess=$null
 

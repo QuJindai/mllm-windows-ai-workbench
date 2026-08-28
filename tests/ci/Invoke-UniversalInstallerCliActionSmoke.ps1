@@ -44,4 +44,42 @@ if($missing.Text -notmatch 'OfflinePackagePath is required'){throw ('Missing off
 $invalid=Invoke-InstallerProcess -Arguments @('-NoElevate','-NoGui','-Action','NotARealAction','-RunId',('cli_invalid_'+[guid]::NewGuid().ToString('N').Substring(0,8)))
 if($invalid.ExitCode -eq 0){throw 'Invalid Action unexpectedly passed parameter validation'}
 
-Write-Host 'UNIVERSAL_INSTALLER_CLI_ACTION=PASS none=PASS missing_offline=PASS invalid=PASS forwarding=PASS'
+# Action mode is consumed by the Desktop Installation Center, which decides
+# success from the child process exit code. Exercise known negative states in
+# isolated roots so a user-visible action can never print PASS and exit 0 when
+# no operation was actually possible.
+$oldProgramData=$env:ProgramData
+$oldProgramFiles=$env:ProgramFiles
+$oldUserProfile=$env:USERPROFILE
+$isolation=Join-Path $env:RUNNER_TEMP ('mllm-cli-isolated-'+[guid]::NewGuid().ToString('N'))
+try{
+    $env:ProgramData=Join-Path $isolation 'ProgramData'
+    $env:ProgramFiles=Join-Path $isolation 'ProgramFiles'
+    $env:USERPROFILE=Join-Path $isolation 'UserProfile'
+    foreach($dir in @($env:ProgramData,$env:ProgramFiles,$env:USERPROFILE)){New-Item -ItemType Directory -Force -Path $dir | Out-Null}
+
+    $noPackage=Invoke-InstallerProcess -Arguments @(
+        '-NoElevate','-NoGui','-Action','InstallResume',
+        '-RunId',('cli_no_package_'+[guid]::NewGuid().ToString('N').Substring(0,8)),
+        '-VersionId','phase-a-cli-no-package',
+        '-SourceManifestPath',(Join-Path $root 'config\source-manifest.json')
+    )
+    if($noPackage.ExitCode -eq 0){throw ('InstallResume without a foundation package incorrectly succeeded: '+$noPackage.Text)}
+    if($noPackage.Text -notmatch 'No workbench foundation package'){throw ('InstallResume no-package failure is not explicit: '+$noPackage.Text)}
+
+    $noRollback=Invoke-InstallerProcess -Arguments @(
+        '-NoElevate','-NoGui','-Action','Rollback',
+        '-RunId',('cli_no_rollback_'+[guid]::NewGuid().ToString('N').Substring(0,8)),
+        '-VersionId','phase-a-cli-no-rollback',
+        '-SourceManifestPath',(Join-Path $root 'config\source-manifest.json')
+    )
+    if($noRollback.ExitCode -eq 0){throw ('Rollback without an active pointer incorrectly succeeded: '+$noRollback.Text)}
+    if($noRollback.Text -notmatch 'No active version pointer'){throw ('Rollback no-pointer failure is not explicit: '+$noRollback.Text)}
+}finally{
+    $env:ProgramData=$oldProgramData
+    $env:ProgramFiles=$oldProgramFiles
+    $env:USERPROFILE=$oldUserProfile
+    Remove-Item -LiteralPath $isolation -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host 'UNIVERSAL_INSTALLER_CLI_ACTION=PASS none=PASS missing_offline=PASS invalid=PASS fail_closed=PASS forwarding=PASS'

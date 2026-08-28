@@ -1,0 +1,32 @@
+name: desktop-phase-b
+
+on:
+  push:
+    branches:
+      - feature/desktop-phase-b
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  phase-b:
+    name: Desktop Phase B / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: .NET 8 identity
+        shell: powershell
+        run: dotnet --info
+      - name: Phase B contracts
+        shell: powershell
+        run: dotnet test tests/contracts/MLLM.Workbench.Contracts.Tests/MLLM.Workbench.Contracts.Tests.csproj -c Release --filter PhaseBContractSerializationTests

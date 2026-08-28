@@ -67,9 +67,32 @@ public sealed class InstallationViewModelTests
 
         Assert.Equal(2, actions.Requests.Count);
         Assert.Equal(InstallerAction.InstallResume, actions.Requests[0].Action);
+        Assert.Null(actions.Requests[0].RunId);
+        Assert.Null(actions.Requests[0].VersionId);
         Assert.Equal(InstallerAction.ImportOffline, actions.Requests[1].Action);
         Assert.Equal(@"C:\Users\Test User\Downloads\M LLM offline.zip", actions.Requests[1].OfflinePackagePath);
         Assert.True(backend.InstallerReads >= 3);
+    }
+
+    [Fact]
+    public async Task Resume_and_retry_reuse_the_checkpoint_run_and_version_from_snapshot()
+    {
+        var installer = new InstallerSnapshot("resume-run-42", "release-v2", "ACQUIRE", true, "v1", "source unavailable", @"C:\Evidence", false);
+        var doctor = new DoctorSnapshot([new ComponentSnapshot("python", ComponentHealth.ReadyToInstall, "missing", true, "python")], []);
+        await using var backend = new FakeBackendClient(installer, doctor);
+        var actions = new FakeInstallerInvoker();
+        var vm = new InstallationPageViewModel(backend, actions);
+
+        await vm.RefreshAsync(CancellationToken.None);
+        await vm.InstallResumeAsync(CancellationToken.None);
+        await vm.RetryAcquisitionAsync(CancellationToken.None);
+
+        Assert.Equal(2, actions.Requests.Count);
+        foreach (var request in actions.Requests)
+        {
+            Assert.Equal("resume-run-42", request.RunId);
+            Assert.Equal("release-v2", request.VersionId);
+        }
     }
 
     private sealed class FakeInstallerInvoker : IPrivilegedInstallerInvoker

@@ -58,6 +58,17 @@ public sealed class BackendSnapshotTests
 
     private static string FindRepositoryRoot()
     {
+        var packagedRoot = Environment.GetEnvironmentVariable("MLLM_BACKEND_TEST_PROJECT_ROOT");
+        if (!string.IsNullOrWhiteSpace(packagedRoot))
+        {
+            var full = Path.GetFullPath(packagedRoot);
+            if (!File.Exists(Path.Combine(full, "Bootstrap_SafeCore.ps1")))
+            {
+                throw new DirectoryNotFoundException($"MLLM_BACKEND_TEST_PROJECT_ROOT is not a valid packaged workbench root: {full}");
+            }
+            return full;
+        }
+
         var cursor = new DirectoryInfo(AppContext.BaseDirectory);
         while (cursor is not null)
         {

@@ -6,7 +6,9 @@ Set-StrictMode -Version 2
 
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $packageScript=Join-Path $root 'ci\package_desktop_phase_a.ps1'
+$backendTestProject=Join-Path $root 'tests\infrastructure\MLLM.Workbench.Infrastructure.Tests\MLLM.Workbench.Infrastructure.Tests.csproj'
 if(-not(Test-Path -LiteralPath $packageScript -PathType Leaf)){throw "Desktop package script missing: $packageScript"}
+if(-not(Test-Path -LiteralPath $backendTestProject -PathType Leaf)){throw "Backend test project missing: $backendTestProject"}
 
 function Get-FileFingerprint {
     param([Parameter(Mandatory=$true)][string]$Path)
@@ -24,56 +26,14 @@ function Assert-FingerprintUnchanged {
     if([string]$Before.sha256 -ne [string]$After.sha256){throw "$Name SHA256 changed during non-installing E2E"}
 }
 
-function ConvertTo-NativeArgument {
-    param([Parameter(Mandatory=$true)][string]$Value)
-    if($Value.Contains('"')){throw 'E2E native argument unexpectedly contains a quote character'}
-    return ('"'+$Value+'"')
-}
-
-function Invoke-RpcRequest {
-    param(
-        [Parameter(Mandatory=$true)]$Writer,
-        [Parameter(Mandatory=$true)]$Reader,
-        [Parameter(Mandatory=$true)][string]$Token,
-        [Parameter(Mandatory=$true)][string]$Method
-    )
-    $id=[guid]::NewGuid().ToString('N')
-    $request=[ordered]@{
-        protocol='1.0'
-        type='request'
-        id=$id
-        sessionToken=$Token
-        method=$Method
-        payload=$null
-    }
-    $Writer.WriteLine(($request | ConvertTo-Json -Depth 8 -Compress))
-    $Writer.Flush()
-    $line=$Reader.ReadLine()
-    if(-not $line){throw "RPC response missing for method: $Method"}
-    $response=$line | ConvertFrom-Json
-    if([string]$response.id -ne $id){throw "RPC response id mismatch for method: $Method"}
-    if(-not [bool]$response.success){
-        $message=if($null -ne $response.error){[string]$response.error.message}else{'unknown backend error'}
-        throw "RPC method failed method=$Method error=$message"
-    }
-    return $response.payload
-}
-
 $outputRoot=Join-Path $env:RUNNER_TEMP ('mllm phase a e2e package '+[guid]::NewGuid().ToString('N'))
 $extractRoot=Join-Path $env:RUNNER_TEMP ('mllm phase a e2e extract '+[guid]::NewGuid().ToString('N'))
-$dataRoot=Join-Path $env:RUNNER_TEMP ('mllm phase a e2e data '+[guid]::NewGuid().ToString('N'))
 $guiDataRoot=Join-Path $env:RUNNER_TEMP ('mllm phase a gui preflight '+[guid]::NewGuid().ToString('N'))
-$backendOut=Join-Path $env:RUNNER_TEMP ('mllm-phase-a-backend-'+[guid]::NewGuid().ToString('N')+'.out.txt')
-$backendErr=Join-Path $env:RUNNER_TEMP ('mllm-phase-a-backend-'+[guid]::NewGuid().ToString('N')+'.err.txt')
 
 $installerStatePath=Join-Path $env:ProgramData 'M-LLM\Installer\state\installer_state.json'
 $currentPointerPath=Join-Path $env:ProgramData 'M-LLM\Workbench\current.json'
 $stateBefore=Get-FileFingerprint -Path $installerStatePath
 $pointerBefore=Get-FileFingerprint -Path $currentPointerPath
-$backendProcess=$null
-$client=$null
-$reader=$null
-$writer=$null
 
 try{
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript -OutputRoot $outputRoot
@@ -90,7 +50,8 @@ try{
     Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
 
     # Recreate a raw Safe Core foundation inside the extracted package. The
-    # bootstrap must be able to restore engine/gui from the signed overlay.
+    # bootstrap must restore engine/gui from the verified overlay even when
+    # the workbench is installed under a path containing spaces.
     Get-ChildItem -LiteralPath $extractRoot -Force -File -ErrorAction SilentlyContinue |
         Where-Object {$_.Name -like '.safe-core-materialized-*.stamp'} |
         Remove-Item -Force -ErrorAction Stop
@@ -108,8 +69,8 @@ try{
     $stamps=@(Get-ChildItem -LiteralPath $extractRoot -Force -File | Where-Object {$_.Name -like '.safe-core-materialized-*.stamp'})
     if($stamps.Count -ne 1){throw "Bootstrap materialization stamp count is invalid: $($stamps.Count)"}
 
-    # Start the packaged desktop without creating a window. --smoke performs
-    # a real backend launch, authenticated pipe handshake and system.ping.
+    # Packaged Desktop smoke uses the same BackendProcessHost path as the real
+    # application and performs a real authenticated backend ping without a UI.
     $desktopExe=Join-Path $extractRoot 'desktop\MLLM.Workbench.Desktop.exe'
     if(-not(Test-Path -LiteralPath $desktopExe -PathType Leaf)){throw "Packaged desktop executable missing: $desktopExe"}
     $desktop=Start-Process -FilePath $desktopExe -ArgumentList @('--smoke') -PassThru
@@ -119,7 +80,7 @@ try{
     }
     if($desktop.ExitCode -ne 0){throw "Packaged Desktop --smoke failed rc=$($desktop.ExitCode)"}
 
-    # Run the non-installing GUI preflight from the extracted package.
+    # Non-installing preflight must remain read-only and offline.
     $guiPreflight=Join-Path $extractRoot 'M_LLM_GUI_PREFLIGHT.ps1'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $guiPreflight -DataRoot $guiDataRoot -NetworkMode OFFLINE_CACHE
     if($LASTEXITCODE -ne 0){throw "Packaged GUI preflight failed rc=$LASTEXITCODE"}
@@ -131,89 +92,18 @@ try{
     if([int]$guiReport.install_actions_executed -ne 0){throw 'GUI preflight executed installation actions'}
     if([int]$guiReport.network_actions_executed -ne 0){throw 'GUI preflight executed network actions'}
 
-    # Start the packaged backend directly and exercise all Phase A read-only
-    # snapshot methods over the authenticated named pipe.
-    $pipeName='mllm-phase-a-e2e-'+[guid]::NewGuid().ToString('N')
-    $token=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
-    $backend=Join-Path $extractRoot 'runtime\WorkbenchBackend.ps1'
-    $backendArgs=@(
-        '-NoProfile','-ExecutionPolicy','Bypass','-File',$backend,
-        '-PipeName',$pipeName,
-        '-SessionToken',$token,
-        '-ProtocolVersion','1.0',
-        '-ProjectRoot',$extractRoot,
-        '-DataRoot',$dataRoot,
-        '-NetworkMode','OFFLINE_CACHE'
-    )
-    # Windows PowerShell 5.1 Start-Process flattens string[] ArgumentList values.
-    # Quote each internally-generated argument before flattening so paths with
-    # spaces preserve exactly the same boundaries as BackendProcessHost.
-    $backendArgumentString=($backendArgs | ForEach-Object {ConvertTo-NativeArgument -Value ([string]$_)}) -join ' '
-    $backendProcess=Start-Process -FilePath 'powershell.exe' -ArgumentList $backendArgumentString -PassThru -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
-
-    $client=New-Object System.IO.Pipes.NamedPipeClientStream -ArgumentList @('.', $pipeName, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
+    # Exercise dashboard/doctor/installer snapshots against the EXTRACTED
+    # package using the same BackendProcessHost + NamedPipeBackendClient that
+    # the Desktop application uses. Do not maintain a second hand-written
+    # process/pipe implementation in the E2E test.
+    $oldBackendRoot=$env:MLLM_BACKEND_TEST_PROJECT_ROOT
+    $env:MLLM_BACKEND_TEST_PROJECT_ROOT=$extractRoot
     try{
-        $client.Connect(15000)
-    }catch{
-        $hasExited=$false
-        $exitCode='RUNNING'
-        try{$hasExited=[bool]$backendProcess.HasExited}catch{}
-        if($hasExited){try{$exitCode=[string]$backendProcess.ExitCode}catch{}}
-        $outText=Get-Content -LiteralPath $backendOut -Raw -ErrorAction SilentlyContinue
-        $errText=Get-Content -LiteralPath $backendErr -Raw -ErrorAction SilentlyContinue
-        throw "Backend pipe connect failed hasExited=$hasExited exitCode=$exitCode output=$outText error=$errText cause=$($_.Exception.Message)"
+        & dotnet test $backendTestProject -c Release --no-restore --filter BackendSnapshotTests
+        if($LASTEXITCODE -ne 0){throw "Packaged backend snapshot test failed rc=$LASTEXITCODE"}
+    }finally{
+        if($null -eq $oldBackendRoot){Remove-Item Env:MLLM_BACKEND_TEST_PROJECT_ROOT -ErrorAction SilentlyContinue}else{$env:MLLM_BACKEND_TEST_PROJECT_ROOT=$oldBackendRoot}
     }
-    $utf8=New-Object System.Text.UTF8Encoding($false)
-    $reader=New-Object System.IO.StreamReader -ArgumentList @($client,$utf8,$false,4096,$true)
-    $writer=New-Object System.IO.StreamWriter -ArgumentList @($client,$utf8,4096,$true)
-    $writer.AutoFlush=$true
-
-    $handshakeId=[guid]::NewGuid().ToString('N')
-    $handshake=[ordered]@{protocol='1.0';type='handshake';id=$handshakeId;sessionToken=$token}
-    $writer.WriteLine(($handshake | ConvertTo-Json -Depth 6 -Compress))
-    $writer.Flush()
-    $handshakeLine=$reader.ReadLine()
-    if(-not $handshakeLine){throw 'Backend handshake response missing'}
-    $handshakeResponse=$handshakeLine | ConvertFrom-Json
-    if(-not [bool]$handshakeResponse.success){throw 'Backend handshake RPC failed'}
-    if(-not [bool]$handshakeResponse.payload.accepted){throw "Backend handshake rejected: $($handshakeResponse.payload.error)"}
-
-    $dashboard=Invoke-RpcRequest -Writer $writer -Reader $reader -Token $token -Method 'dashboard.snapshot'
-    if([string]$dashboard.networkMode -ne 'OFFLINE_CACHE'){throw "Dashboard network mode mismatch: $($dashboard.networkMode)"}
-    if(@($dashboard.components).Count -lt 6){throw "Dashboard component count is too small: $(@($dashboard.components).Count)"}
-
-    $doctor=Invoke-RpcRequest -Writer $writer -Reader $reader -Token $token -Method 'doctor.snapshot'
-    if(@($doctor.components).Count -lt 6){throw "Doctor component count is too small: $(@($doctor.components).Count)"}
-
-    $installer=Invoke-RpcRequest -Writer $writer -Reader $reader -Token $token -Method 'installer.snapshot'
-    if([string]::IsNullOrWhiteSpace([string]$installer.stage)){throw 'Installer snapshot stage is empty'}
-    if([string]::IsNullOrWhiteSpace([string]$installer.evidenceRoot)){throw 'Installer snapshot evidenceRoot is empty'}
-
-    $writer.Dispose();$writer=$null
-    $reader.Dispose();$reader=$null
-    $client.Dispose();$client=$null
-    if(-not $backendProcess.WaitForExit(15000)){
-        try{$backendProcess.Kill()}catch{}
-        throw 'Packaged backend did not stop after pipe disconnect'
-    }
-    # With redirected output, Windows PowerShell's Start-Process Process object
-    # can require the parameterless WaitForExit plus Refresh before ExitCode is
-    # populated. Do not treat a null exit code as success.
-    $backendProcess.WaitForExit()
-    $backendProcess.Refresh()
-    $backendExitCode=$null
-    try{$backendExitCode=$backendProcess.ExitCode}catch{}
-    if($null -eq $backendExitCode){
-        $outText=Get-Content -LiteralPath $backendOut -Raw -ErrorAction SilentlyContinue
-        $errText=Get-Content -LiteralPath $backendErr -Raw -ErrorAction SilentlyContinue
-        throw "Packaged backend exit code unavailable after refresh output=$outText error=$errText"
-    }
-    if([int]$backendExitCode -ne 0){
-        $outText=Get-Content -LiteralPath $backendOut -Raw -ErrorAction SilentlyContinue
-        $errText=Get-Content -LiteralPath $backendErr -Raw -ErrorAction SilentlyContinue
-        throw "Packaged backend exited rc=$backendExitCode output=$outText error=$errText"
-    }
-    $backendProcess=$null
 
     # Verify desktop-first and explicit legacy launch selection from the same
     # extracted package without starting a user-facing window.
@@ -236,10 +126,5 @@ try{
 
     Write-Host "DESKTOP_PHASE_A_E2E=PASS package_sha256=$actual bootstrap=PASS desktop_smoke=PASS gui_preflight=PASS snapshots=PASS launcher=PASS installer_state_readonly=PASS"
 }finally{
-    if($null -ne $writer){try{$writer.Dispose()}catch{}}
-    if($null -ne $reader){try{$reader.Dispose()}catch{}}
-    if($null -ne $client){try{$client.Dispose()}catch{}}
-    if($null -ne $backendProcess){try{if(-not $backendProcess.HasExited){$backendProcess.Kill()}}catch{}}
-    Remove-Item -LiteralPath $backendOut,$backendErr -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $guiDataRoot,$dataRoot,$extractRoot,$outputRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $guiDataRoot,$extractRoot,$outputRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

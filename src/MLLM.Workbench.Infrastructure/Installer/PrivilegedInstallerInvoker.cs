@@ -22,6 +22,17 @@ public sealed class PrivilegedInstallerInvoker : IPrivilegedInstallerInvoker
             throw new ArgumentException("OfflinePackagePath is required for ImportOffline.", nameof(request));
         }
 
+        var hasRunId = !string.IsNullOrWhiteSpace(request.RunId);
+        var hasVersionId = !string.IsNullOrWhiteSpace(request.VersionId);
+        if (hasRunId != hasVersionId)
+        {
+            throw new ArgumentException("RunId and VersionId must be supplied together.", nameof(request));
+        }
+        if (request.Action == InstallerAction.RetryAcquisition && !hasRunId)
+        {
+            throw new ArgumentException("RetryAcquisition requires an existing RunId and VersionId checkpoint.", nameof(request));
+        }
+
         var script = Path.Combine(_projectRoot, "installer", "Start-UniversalInstaller.ps1");
         if (!File.Exists(script))
         {
@@ -44,6 +55,13 @@ public sealed class PrivilegedInstallerInvoker : IPrivilegedInstallerInvoker
         })
         {
             start.ArgumentList.Add(value);
+        }
+        if (hasRunId)
+        {
+            start.ArgumentList.Add("-RunId");
+            start.ArgumentList.Add(request.RunId!);
+            start.ArgumentList.Add("-VersionId");
+            start.ArgumentList.Add(request.VersionId!);
         }
         if (request.Action == InstallerAction.ImportOffline)
         {

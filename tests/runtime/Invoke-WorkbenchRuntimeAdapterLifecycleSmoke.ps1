@@ -56,25 +56,26 @@ $adapter=Get-Module WorkbenchRuntimeAdapter -ErrorAction Stop
     $script:WebStartMode='ok'
     $script:FixtureStdout=$null
     $script:FixtureStderr=$null
-    function Invoke-MLLMLocalModelStartCore {
-        param([string]$ProjectRoot,[string]$DataRoot,[string]$ModelPath,[int]$ContextSize)
+
+    Set-Item -Path Function:script:Invoke-MLLMLocalModelStartCore -Force -Value {
+        param([string]$ProjectRoot,[string]$DataRoot,[string]$ModelPath,[int]$ContextSize=0)
         $script:LifecycleCalls.Add('local-start')
         if($script:LocalStartMode -eq 'missing'){throw 'SERVICE_RUNTIME_MISSING|llama.cpp runtime missing'}
         return [pscustomobject]@{pid=$PID;port=8123;base_url='http://127.0.0.1:8123';stdoutLog=$script:FixtureStdout;stderrLog=$script:FixtureStderr}
     }
-    function Invoke-MLLMLocalModelStopCore {
-        param([string]$DataRoot)
+    Set-Item -Path Function:script:Invoke-MLLMLocalModelStopCore -Force -Value {
+        param([string]$ProjectRoot,[string]$DataRoot)
         $script:LifecycleCalls.Add('local-stop')
         return [pscustomobject]@{stopped=$true}
     }
-    function Invoke-MLLMWebStartCore {
+    Set-Item -Path Function:script:Invoke-MLLMWebStartCore -Force -Value {
         param([string]$ProjectRoot,[string]$DataRoot,[string]$NetworkMode)
         $script:LifecycleCalls.Add('web-start')
         if($script:WebStartMode -eq 'early'){throw 'SERVICE_EXITED_EARLY|web fixture exited'}
         if($script:WebStartMode -eq 'timeout'){throw 'SERVICE_HEALTH_TIMEOUT|web fixture health timeout'}
         return [pscustomobject]@{pid=$PID;port=8765;base_url='http://127.0.0.1:8765';stdoutLog=$script:FixtureStdout;stderrLog=$script:FixtureStderr}
     }
-    function Invoke-MLLMWebStopCore {
+    Set-Item -Path Function:script:Invoke-MLLMWebStopCore -Force -Value {
         param([string]$ProjectRoot,[string]$DataRoot)
         $script:LifecycleCalls.Add('web-stop')
         return [pscustomobject]@{stopped=$true}

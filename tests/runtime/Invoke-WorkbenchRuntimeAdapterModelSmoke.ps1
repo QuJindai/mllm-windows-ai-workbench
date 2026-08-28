@@ -8,7 +8,7 @@ $module=Join-Path $root 'runtime\WorkbenchRuntimeAdapter.psm1'
 if(-not(Test-Path -LiteralPath $module -PathType Leaf)){throw "WorkbenchRuntimeAdapter.psm1 missing: $module"}
 Import-Module $module -Force -ErrorAction Stop
 
-foreach($commandName in @('Get-MLLMModelInventory','Test-MLLMWorkbenchModel','Get-MLLMActiveModel')){
+foreach($commandName in @('Get-MLLMModelInventory','Test-MLLMWorkbenchModel','Get-MLLMActiveModel','Import-MLLMManagedModel','Set-MLLMActiveModel')){
     if($null -eq (Get-Command $commandName -ErrorAction SilentlyContinue)){throw "Runtime adapter command missing: $commandName"}
 }
 
@@ -20,8 +20,17 @@ $testRoot=Join-Path $env:RUNNER_TEMP ('mllm phase b model adapter '+[guid]::NewG
 $project=Join-Path $testRoot 'project'
 $data=Join-Path $testRoot 'data'
 $configDir=Join-Path $project 'config'
+$engineDir=Join-Path $project 'engine'
 $modelDir=Join-Path $data 'models\Qwen3.5-4B'
-New-Item -ItemType Directory -Force -Path $configDir,$modelDir | Out-Null
+New-Item -ItemType Directory -Force -Path $configDir,$engineDir,$modelDir | Out-Null
+
+@'
+function Test-MLLMRecordedProcess {
+    param([int]$ProcessId)
+    return ($ProcessId -eq $PID)
+}
+Export-ModuleMember -Function Test-MLLMRecordedProcess
+'@ | Set-Content -LiteralPath (Join-Path $engineDir 'Runtime.psm1') -Encoding ASCII
 
 function Set-TestManifest {
     param([string]$FileName='fixture.gguf',[long]$MinimumBytes=4,[AllowNull()][string]$ExpectedSha256=$null)
@@ -43,7 +52,19 @@ function Set-TestManifest {
 
 function Write-Bytes {
     param([string]$Path,[byte[]]$Bytes)
+    $parent=Split-Path -Parent $Path
+    if(-not(Test-Path -LiteralPath $parent -PathType Container)){New-Item -ItemType Directory -Force -Path $parent | Out-Null}
     [IO.File]::WriteAllBytes($Path,$Bytes)
+}
+
+function Assert-ThrowsCode {
+    param([scriptblock]$Action,[string]$Code)
+    $threw=$false
+    try{& $Action}catch{
+        $threw=$true
+        if($_.Exception.Message -notmatch [regex]::Escape($Code)){throw "Expected error code $Code, got: $($_.Exception.Message)"}
+    }
+    if(-not $threw){throw "Expected operation to throw $Code"}
 }
 
 try{
@@ -92,7 +113,60 @@ try{
     $active=Get-MLLMActiveModel -DataRoot $data
     if($null -ne $active){throw 'Fresh DataRoot unexpectedly has an active model pointer'}
 
-    Write-Host 'PHASE_B_MODEL_ADAPTER=PASS missing=PASS magic=PASS size=PASS unanchored=PASS sha_match=PASS sha_mismatch=PASS inventory=PASS active_empty=PASS'
+    $sourceDir=Join-Path $testRoot 'source models'
+    New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
+    $source=Join-Path $sourceDir 'managed model.gguf'
+    Write-Bytes -Path $source -Bytes ([Text.Encoding]::ASCII.GetBytes('GGUFmanaged-content-v1'))
+    $sourceSha=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedId='imported-'+$sourceSha.Substring(0,12)
+
+    $imported=Import-MLLMManagedModel -ProjectRoot $project -DataRoot $data -SourcePath $source -DisplayName 'Managed Fixture'
+    if([string]$imported.id -ne $expectedId){throw "Imported model id mismatch: $($imported.id)"}
+    if([string]$imported.sourceKind -ne 'Imported'){throw "Imported source kind mismatch: $($imported.sourceKind)"}
+    if([string]$imported.actualSha256 -ne $sourceSha){throw 'Imported model SHA mismatch'}
+    if(-not(Test-Path -LiteralPath ([string]$imported.filePath) -PathType Leaf)){throw 'Imported managed GGUF missing'}
+    $sidecar=Join-Path (Split-Path -Parent ([string]$imported.filePath)) 'model.mllm.json'
+    if(-not(Test-Path -LiteralPath $sidecar -PathType Leaf)){throw 'Managed model sidecar missing'}
+    if($null -ne (Get-MLLMActiveModel -DataRoot $data)){throw 'Import must never auto-activate a model'}
+
+    $same=Import-MLLMManagedModel -ProjectRoot $project -DataRoot $data -SourcePath $source -DisplayName 'Managed Fixture'
+    if([string]$same.id -ne $expectedId -or [string]$same.actualSha256 -ne $sourceSha){throw 'Same-content import was not idempotent'}
+
+    $activated=Set-MLLMActiveModel -ProjectRoot $project -DataRoot $data -ModelId $expectedId
+    if([string]$activated.modelId -ne $expectedId){throw "Active pointer did not switch to imported model: $($activated.modelId)"}
+    $pointerBefore=(Get-Content -LiteralPath (Join-Path $data 'state\active_model.json') -Raw)
+
+    $badImport=Join-Path $sourceDir 'bad.gguf'
+    Write-Bytes -Path $badImport -Bytes ([Text.Encoding]::ASCII.GetBytes('NOPEbad-import'))
+    Assert-ThrowsCode -Code 'MODEL_FORMAT_INVALID' -Action { Import-MLLMManagedModel -ProjectRoot $project -DataRoot $data -SourcePath $badImport | Out-Null }
+    if((Get-Content -LiteralPath (Join-Path $data 'state\active_model.json') -Raw) -ne $pointerBefore){throw 'Failed import changed active model pointer'}
+
+    $collisionSource=Join-Path $sourceDir 'collision.gguf'
+    Write-Bytes -Path $collisionSource -Bytes ([Text.Encoding]::ASCII.GetBytes('GGUFcollision-source'))
+    $collisionSha=(Get-FileHash -LiteralPath $collisionSource -Algorithm SHA256).Hash.ToLowerInvariant()
+    $collisionId='imported-'+$collisionSha.Substring(0,12)
+    $collisionDir=Join-Path $data ('models\managed\'+$collisionId)
+    New-Item -ItemType Directory -Force -Path $collisionDir | Out-Null
+    [ordered]@{schema='mllm.model.v1';id=$collisionId;role='imported';display_name='collision';file_name='existing.gguf';actual_sha256=('f'*64);imported_at=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $collisionDir 'model.mllm.json') -Encoding UTF8
+    Write-Bytes -Path (Join-Path $collisionDir 'existing.gguf') -Bytes ([Text.Encoding]::ASCII.GetBytes('GGUFexisting'))
+    Assert-ThrowsCode -Code 'MODEL_ID_COLLISION' -Action { Import-MLLMManagedModel -ProjectRoot $project -DataRoot $data -SourcePath $collisionSource | Out-Null }
+    if((Get-Content -LiteralPath (Join-Path $collisionDir 'model.mllm.json') -Raw) -notmatch ('f'*64)){throw 'Collision import overwrote existing model'}
+
+    $invalidId='manual-invalid'
+    $invalidDir=Join-Path $data ('models\managed\'+$invalidId)
+    New-Item -ItemType Directory -Force -Path $invalidDir | Out-Null
+    Write-Bytes -Path (Join-Path $invalidDir 'invalid.gguf') -Bytes ([Text.Encoding]::ASCII.GetBytes('NOPEinvalid'))
+    [ordered]@{schema='mllm.model.v1';id=$invalidId;role='imported';display_name='invalid';file_name='invalid.gguf';actual_sha256=('1'*64);imported_at=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $invalidDir 'model.mllm.json') -Encoding UTF8
+    Assert-ThrowsCode -Code 'MODEL_FORMAT_INVALID' -Action { Set-MLLMActiveModel -ProjectRoot $project -DataRoot $data -ModelId $invalidId | Out-Null }
+    if([string](Get-MLLMActiveModel -DataRoot $data).modelId -ne $expectedId){throw 'Failed activation changed previous active pointer'}
+
+    $serviceStateDir=Join-Path $data 'state\services'
+    New-Item -ItemType Directory -Force -Path $serviceStateDir | Out-Null
+    [ordered]@{serviceId='local-model-api';pid=$PID;state='Running'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $serviceStateDir 'local-model-api.json') -Encoding UTF8
+    Assert-ThrowsCode -Code 'MODEL_ACTIVE_SERVICE_RUNNING' -Action { Set-MLLMActiveModel -ProjectRoot $project -DataRoot $data -ModelId 'fixture-built-in' | Out-Null }
+    if([string](Get-MLLMActiveModel -DataRoot $data).modelId -ne $expectedId){throw 'Running-service activation guard changed active pointer'}
+
+    Write-Host 'PHASE_B_MODEL_ADAPTER=PASS missing=PASS magic=PASS size=PASS unanchored=PASS sha_match=PASS sha_mismatch=PASS inventory=PASS import=PASS idempotent=PASS collision=PASS activate=PASS preserve=PASS running_guard=PASS'
 }finally{
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

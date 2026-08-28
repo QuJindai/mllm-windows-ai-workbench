@@ -496,4 +496,6 @@ function Get-MLLMWorkbenchServiceLogs {
     }
 }
 
-Export-ModuleMember -Function Get-MLLMModelInventory,Test-MLLMWorkbenchModel,Get-MLLMActiveModel,Import-MLLMManagedModel,Set-MLLMActiveModel,Get-MLLMWorkbenchServices,Get-MLLMWorkbenchServiceLogs
+. (Join-Path $PSScriptRoot 'WorkbenchRuntimeLifecycle.ps1')
+
+Export-ModuleMember -Function Get-MLLMModelInventory,Test-MLLMWorkbenchModel,Get-MLLMActiveModel,Import-MLLMManagedModel,Set-MLLMActiveModel,Get-MLLMWorkbenchServices,Get-MLLMWorkbenchServiceLogs,Start-MLLMWorkbenchService,Stop-MLLMWorkbenchService,Restart-MLLMWorkbenchService

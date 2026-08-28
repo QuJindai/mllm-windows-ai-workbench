@@ -6,7 +6,9 @@ param(
     [switch]$NoElevate,
     [switch]$PathsOnly,
     [switch]$NoGui,
-    [switch]$GuiSmoke
+    [switch]$GuiSmoke,
+    [ValidateSet('None','InstallResume','RetryAcquisition','ImportOffline','Rollback')][string]$Action='None',
+    [string]$OfflinePackagePath=''
 )
 
 $ErrorActionPreference='Stop'
@@ -52,6 +54,21 @@ function Format-FoundationResult {
     return $text
 }
 
+function Complete-FoundationAction {
+    param(
+        [Parameter(Mandatory=$true)]$Result,
+        [Parameter(Mandatory=$true)][string]$ActionName
+    )
+    $status=[string]$Result.status
+    if($status -ne 'PASS'){
+        $message=[string]$Result.error
+        if(-not $message){$message=($ActionName+' failed with status='+$status+' stage='+[string]$Result.stage)}
+        if([string]$Result.evidence){$message+=' Evidence='+[string]$Result.evidence}
+        throw $message
+    }
+    return (Format-FoundationResult -Result $Result)
+}
+
 # Resolve all safety capabilities before a package can become installable or active.
 if($null -eq (Get-Command Test-MLLMPackageHash -ErrorAction SilentlyContinue)){throw 'Package hash validation capability unavailable'}
 if($null -eq (Get-Command Expand-MLLMSafeArchive -ErrorAction SilentlyContinue)){throw 'Safe archive extraction capability unavailable'}
@@ -74,6 +91,8 @@ if((-not $elevated) -and (-not $NoElevate)){
     if($PathsOnly){$forward+='-PathsOnly'}
     if($NoGui){$forward+='-NoGui'}
     if($GuiSmoke){$forward+='-GuiSmoke'}
+    if($Action -ne 'None'){$forward+=@('-Action',$Action)}
+    if($OfflinePackagePath){$forward+=@('-OfflinePackagePath',$OfflinePackagePath)}
     Restart-MLLMInstallerElevated -OriginalArgs $forward -RunId $RunId
     Write-Host "UNIVERSAL_INSTALLER_ELEVATION=REQUESTED run_id=$RunId"
     exit 0
@@ -158,7 +177,7 @@ Write-Host 'UNIVERSAL_INSTALLER_ACTIVATION=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_EVIDENCE=PASS'
 Write-Host 'UNIVERSAL_INSTALLER_ENGINE=PASS'
 
-if($NoGui){
+if($NoGui -and $Action -eq 'None'){
     if($elevated){Write-Host 'UNIVERSAL_INSTALLER_NEXT=PREFLIGHT'}else{Write-Host 'UNIVERSAL_INSTALLER_NEXT=ELEVATED_REQUIRED'}
     exit 0
 }
@@ -166,26 +185,26 @@ if($NoGui){
 $actions=[ordered]@{
     InstallResume={
         $package=Get-DefaultFoundationPackage
-        if($null -eq $package){return 'No workbench foundation package is configured in the source manifest.'}
+        if($null -eq $package){throw 'No workbench foundation package is configured in the source manifest.'}
         $result=Invoke-MLLMFoundationInstall -Package $package -Paths $paths -State $state -StatePath $paths.StatePath -PreferredEvidenceRoot $paths.EvidencePreferredRoot
-        return (Format-FoundationResult -Result $result)
+        return (Complete-FoundationAction -Result $result -ActionName 'InstallResume')
     }
     RetryAcquisition={
         $package=Get-DefaultFoundationPackage
-        if($null -eq $package){return 'No workbench foundation package is configured in the source manifest.'}
+        if($null -eq $package){throw 'No workbench foundation package is configured in the source manifest.'}
         if(Test-MLLMStageComplete -State $state -Stage 'ACQUIRE'){
-            return 'Acquisition is already checkpointed; use Install / Resume to continue the verified transaction.'
+            throw 'Acquisition is already checkpointed; use Install / Resume to continue the verified transaction.'
         }
         $result=Invoke-MLLMFoundationInstall -Package $package -Paths $paths -State $state -StatePath $paths.StatePath -PreferredEvidenceRoot $paths.EvidencePreferredRoot
-        return (Format-FoundationResult -Result $result)
+        return (Complete-FoundationAction -Result $result -ActionName 'RetryAcquisition')
     }
     ImportOffline={
         param($PackagePath)
-        if(-not $PackagePath){return 'No offline package selected.'}
+        if(-not $PackagePath){throw 'No offline package selected.'}
         $full=[IO.Path]::GetFullPath([string]$PackagePath)
-        if(-not(Test-Path -LiteralPath $full -PathType Leaf)){return ('Offline package does not exist: '+$full)}
+        if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw ('Offline package does not exist: '+$full)}
         if(Test-MLLMStageComplete -State $state -Stage 'ACQUIRE'){
-            return 'Acquisition is already checkpointed; start a new installer run before replacing the acquired package.'
+            throw 'Acquisition is already checkpointed; start a new installer run before replacing the acquired package.'
         }
         $default=Get-DefaultFoundationPackage
         $sha=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -201,7 +220,7 @@ $actions=[ordered]@{
             sources=@([pscustomobject]@{id='offline-selected';kind='local_file';path=$full})
         }
         $result=Invoke-MLLMFoundationInstall -Package $offline -Paths $paths -State $state -StatePath $paths.StatePath -PreferredEvidenceRoot $paths.EvidencePreferredRoot
-        return (Format-FoundationResult -Result $result)
+        return (Complete-FoundationAction -Result $result -ActionName 'ImportOffline')
     }
     OpenEvidence={
         $folder=[string]$paths.EvidencePreferredRoot
@@ -210,10 +229,25 @@ $actions=[ordered]@{
         return ('Evidence: '+$folder)
     }
     Rollback={
-        if(-not(Test-Path -LiteralPath $paths.CurrentPointer -PathType Leaf)){return 'No active version pointer is available for rollback.'}
+        if(-not(Test-Path -LiteralPath $paths.CurrentPointer -PathType Leaf)){throw 'No active version pointer is available for rollback.'}
         $rolled=Invoke-MLLMRollback -PointerPath $paths.CurrentPointer
         return ('Active version: '+[string]$rolled.version_id)
     }
+}
+
+if($Action -ne 'None'){
+    switch($Action){
+        'InstallResume' { $result=& $actions.InstallResume }
+        'RetryAcquisition' { $result=& $actions.RetryAcquisition }
+        'ImportOffline' {
+            if(-not $OfflinePackagePath){throw 'OfflinePackagePath is required for ImportOffline'}
+            $result=& $actions.ImportOffline $OfflinePackagePath
+        }
+        'Rollback' { $result=& $actions.Rollback }
+        default { throw ('Unsupported installer Action: '+$Action) }
+    }
+    Write-Host ('UNIVERSAL_INSTALLER_ACTION=PASS action='+$Action+' result='+[string]$result)
+    exit 0
 }
 
 & $wpfScript -State $state -Paths $paths -Actions $actions -Smoke:$GuiSmoke

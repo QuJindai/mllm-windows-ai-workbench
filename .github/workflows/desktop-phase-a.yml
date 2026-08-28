@@ -1,0 +1,62 @@
+name: desktop-phase-a
+
+on:
+  push:
+    branches:
+      - feature/desktop-phase-a
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  phase-a:
+    name: Desktop Phase A / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: .NET 8 identity
+        shell: powershell
+        run: dotnet --info
+      - name: Contracts tests
+        shell: powershell
+        run: dotnet test tests/contracts/MLLM.Workbench.Contracts.Tests/MLLM.Workbench.Contracts.Tests.csproj -c Release
+      - name: Infrastructure pipe tests
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter NamedPipeHandshakeTests
+      - name: Backend PS5.1 contract smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendContractSmoke.ps1
+      - name: Backend live snapshot smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendSnapshotSmoke.ps1
+      - name: Desktop ViewModel tests
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release
+      - name: WPF shell load smoke
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter ShellContractTests
+      - name: Installer CLI action regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-UniversalInstallerCliActionSmoke.ps1
+      - name: Installer delegation tests
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter PrivilegedInstallerInvokerTests
+      - name: Desktop launcher fallback smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopLauncherFallbackSmoke.ps1
+      - name: Self-contained package smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopPackageSmoke.ps1
+      - name: Phase A end-to-end smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-DesktopPhaseASmoke.ps1

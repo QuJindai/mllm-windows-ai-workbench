@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>MLLM.Workbench.Contracts</RootNamespace>
+    <AssemblyName>MLLM.Workbench.Contracts</AssemblyName>
+  </PropertyGroup>
+</Project>

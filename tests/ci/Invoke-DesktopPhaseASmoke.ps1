@@ -24,6 +24,12 @@ function Assert-FingerprintUnchanged {
     if([string]$Before.sha256 -ne [string]$After.sha256){throw "$Name SHA256 changed during non-installing E2E"}
 }
 
+function ConvertTo-NativeArgument {
+    param([Parameter(Mandatory=$true)][string]$Value)
+    if($Value.Contains('"')){throw 'E2E native argument unexpectedly contains a quote character'}
+    return ('"'+$Value+'"')
+}
+
 function Invoke-RpcRequest {
     param(
         [Parameter(Mandatory=$true)]$Writer,
@@ -139,10 +145,24 @@ try{
         '-DataRoot',$dataRoot,
         '-NetworkMode','OFFLINE_CACHE'
     )
-    $backendProcess=Start-Process -FilePath 'powershell.exe' -ArgumentList $backendArgs -PassThru -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
+    # Windows PowerShell 5.1 Start-Process flattens string[] ArgumentList values.
+    # Quote each internally-generated argument before flattening so paths with
+    # spaces preserve exactly the same boundaries as BackendProcessHost.
+    $backendArgumentString=($backendArgs | ForEach-Object {ConvertTo-NativeArgument -Value ([string]$_)}) -join ' '
+    $backendProcess=Start-Process -FilePath 'powershell.exe' -ArgumentList $backendArgumentString -PassThru -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
 
     $client=New-Object System.IO.Pipes.NamedPipeClientStream -ArgumentList @('.', $pipeName, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
-    $client.Connect(15000)
+    try{
+        $client.Connect(15000)
+    }catch{
+        $hasExited=$false
+        $exitCode='RUNNING'
+        try{$hasExited=[bool]$backendProcess.HasExited}catch{}
+        if($hasExited){try{$exitCode=[string]$backendProcess.ExitCode}catch{}}
+        $outText=Get-Content -LiteralPath $backendOut -Raw -ErrorAction SilentlyContinue
+        $errText=Get-Content -LiteralPath $backendErr -Raw -ErrorAction SilentlyContinue
+        throw "Backend pipe connect failed hasExited=$hasExited exitCode=$exitCode output=$outText error=$errText cause=$($_.Exception.Message)"
+    }
     $utf8=New-Object System.Text.UTF8Encoding($false)
     $reader=New-Object System.IO.StreamReader -ArgumentList @($client,$utf8,$false,4096,$true)
     $writer=New-Object System.IO.StreamWriter -ArgumentList @($client,$utf8,4096,$true)

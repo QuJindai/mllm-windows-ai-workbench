@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  knowledge-c1:
-    name: Knowledge Phase C1 / ${{ matrix.os }}
+  knowledge:
+    name: Knowledge Phase C / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -24,6 +24,6 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: FTS5 evidence persistence
+      - name: Knowledge core tests
         shell: powershell
-        run: dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release --filter KnowledgeStoreTests
+        run: dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release

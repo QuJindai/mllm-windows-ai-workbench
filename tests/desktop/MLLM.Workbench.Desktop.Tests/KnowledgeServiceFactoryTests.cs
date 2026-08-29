@@ -1,3 +1,4 @@
+using System.IO;
 using MLLM.Workbench.Desktop.Services.Knowledge;
 using MLLM.Workbench.Knowledge.Embeddings;
 

@@ -53,6 +53,70 @@ public sealed class EmbeddingStoreTests
     }
 
     [Fact]
+    public async Task Incremental_backfill_indexes_pending_chunks_reports_progress_and_survives_reopen()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "mllm-embedding-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var databasePath = Path.Combine(root, "knowledge.db");
+
+        try
+        {
+            var provider = new DeterministicEmbeddingProvider();
+            var progressEvents = new List<EmbeddingIndexProgress>();
+
+            await using (var store = new KnowledgeStore(new KnowledgeStoreOptions(databasePath)))
+            {
+                await store.InitializeAsync(CancellationToken.None);
+                await store.UpsertDocumentAsync(
+                    new KnowledgeDocument(
+                        "doc-backfill",
+                        "backfill.md",
+                        "backfill",
+                        [
+                            new KnowledgeChunk("backfill-vehicle", 0, "整车车辆制造"),
+                            new KnowledgeChunk("backfill-fruit", 1, "香蕉苹果")
+                        ]),
+                    CancellationToken.None);
+
+                var before = await store.GetEmbeddingIndexStatusAsync(provider, CancellationToken.None);
+                Assert.Equal(2, before.TotalChunks);
+                Assert.Equal(0, before.IndexedChunks);
+                Assert.Equal(2, before.PendingChunks);
+
+                var after = await store.IndexMissingEmbeddingsAsync(
+                    provider,
+                    new InlineProgress<EmbeddingIndexProgress>(progressEvents.Add),
+                    CancellationToken.None);
+
+                Assert.Equal(2, after.TotalChunks);
+                Assert.Equal(2, after.IndexedChunks);
+                Assert.Equal(0, after.PendingChunks);
+                Assert.Equal(2, provider.CallCount);
+                Assert.Equal([1, 2], progressEvents.Select(x => x.CompletedChunks).ToArray());
+                Assert.All(progressEvents, x => Assert.Equal(2, x.TotalChunks));
+                Assert.All(progressEvents, x => Assert.False(string.IsNullOrWhiteSpace(x.ChunkId)));
+
+                var secondPass = await store.IndexMissingEmbeddingsAsync(provider, null, CancellationToken.None);
+                Assert.Equal(2, secondPass.IndexedChunks);
+                Assert.Equal(2, provider.CallCount);
+            }
+
+            await using (var reopened = new KnowledgeStore(new KnowledgeStoreOptions(databasePath)))
+            {
+                await reopened.InitializeAsync(CancellationToken.None);
+                var status = await reopened.GetEmbeddingIndexStatusAsync(provider, CancellationToken.None);
+                Assert.Equal(2, status.TotalChunks);
+                Assert.Equal(2, status.IndexedChunks);
+                Assert.Equal(0, status.PendingChunks);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task Reimport_invalidates_old_vectors_until_document_is_reembedded()
     {
         await using var fixture = new TempKnowledgeStore();
@@ -121,6 +185,11 @@ public sealed class EmbeddingStoreTests
         public int Dimension => 3;
         public Task<ReadOnlyMemory<float>> EmbedAsync(string text, CancellationToken cancellationToken) =>
             Task.FromResult<ReadOnlyMemory<float>>(new float[] { 1f, 0f });
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     private sealed class TempKnowledgeStore : IAsyncDisposable

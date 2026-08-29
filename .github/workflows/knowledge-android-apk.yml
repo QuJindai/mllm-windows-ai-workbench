@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   android:
-    name: Android APK / repository emulator gate
+    name: Android APK / full device gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,10 +35,23 @@ jobs:
       - name: Core unit tests
         working-directory: android/knowledge-workbench
         run: gradle --no-daemon testDebugUnitTest
-      - name: Compile instrumentation tests
+      - name: Android lint
         working-directory: android/knowledge-workbench
-        run: gradle --no-daemon assembleDebugAndroidTest
-      - name: Repository persistence emulator acceptance
+        run: gradle --no-daemon lintDebug
+      - name: Compile app and instrumentation APKs
+        working-directory: android/knowledge-workbench
+        run: gradle --no-daemon assembleDebug assembleDebugAndroidTest
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            ls -l /dev/kvm
+          else
+            echo "KVM_DEVICE_MISSING"
+            exit 1
+          fi
+      - name: Repository and UI emulator acceptance
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -48,4 +61,4 @@ jobs:
           disable-animations: true
           script: |
             cd android/knowledge-workbench
-            gradle --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.mllm.knowledgeworkbench.data.KnowledgeRepositoryInstrumentedTest
+            gradle --no-daemon connectedDebugAndroidTest

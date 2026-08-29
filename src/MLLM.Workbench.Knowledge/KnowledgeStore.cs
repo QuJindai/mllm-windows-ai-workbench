@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using MLLM.Workbench.Knowledge.Embeddings;
 
 namespace MLLM.Workbench.Knowledge;
 
@@ -61,6 +62,21 @@ public sealed class KnowledgeStore : IAsyncDisposable
 
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
                 USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
+
+            CREATE TABLE IF NOT EXISTS embeddings (
+                chunk_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                dimension INTEGER NOT NULL,
+                vector BLOB NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL,
+                PRIMARY KEY(chunk_id, provider_id, model_id),
+                FOREIGN KEY(chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_embeddings_provider_model
+                ON embeddings(provider_id, model_id, dimension);
             """;
 
         await ExecuteAsync(connection, null, schema, cancellationToken).ConfigureAwait(false);
@@ -171,6 +187,97 @@ public sealed class KnowledgeStore : IAsyncDisposable
         }
     }
 
+    public async Task IndexEmbeddingsAsync(
+        string documentId,
+        IEmbeddingProvider provider,
+        CancellationToken cancellationToken)
+    {
+        EnsureReady();
+        if (string.IsNullOrWhiteSpace(documentId)) throw new ArgumentException("Document id is required.", nameof(documentId));
+        ValidateProvider(provider);
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            var pending = new List<PendingEmbedding>();
+
+            await using (var readChunks = connection.CreateCommand())
+            {
+                readChunks.CommandText = """
+                    SELECT chunk_id, content, content_sha256
+                    FROM chunks
+                    WHERE document_id = $documentId
+                    ORDER BY ordinal ASC, chunk_id ASC;
+                    """;
+                readChunks.Parameters.AddWithValue("$documentId", documentId);
+
+                await using var reader = await readChunks.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    pending.Add(new PendingEmbedding(
+                        ChunkId: reader.GetString(0),
+                        Content: reader.GetString(1),
+                        ContentSha256: reader.GetString(2),
+                        Vector: Array.Empty<float>()));
+                }
+            }
+
+            if (pending.Count == 0)
+                throw new KeyNotFoundException($"Knowledge document was not found or contains no chunks: {documentId}");
+
+            for (var i = 0; i < pending.Count; i++)
+            {
+                var memory = await provider.EmbedAsync(pending[i].Content, cancellationToken).ConfigureAwait(false);
+                var vector = memory.ToArray();
+                ValidateVector(provider, vector);
+                pending[i] = pending[i] with { Vector = vector };
+            }
+
+            using var transaction = connection.BeginTransaction();
+            await using (var removeExisting = connection.CreateCommand())
+            {
+                removeExisting.Transaction = transaction;
+                removeExisting.CommandText = """
+                    DELETE FROM embeddings
+                    WHERE provider_id = $providerId
+                      AND model_id = $modelId
+                      AND chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = $documentId);
+                    """;
+                removeExisting.Parameters.AddWithValue("$providerId", provider.ProviderId);
+                removeExisting.Parameters.AddWithValue("$modelId", provider.ModelId);
+                removeExisting.Parameters.AddWithValue("$documentId", documentId);
+                await removeExisting.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (var row in pending)
+            {
+                await using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO embeddings(
+                        chunk_id, provider_id, model_id, dimension, vector, content_sha256, updated_at_utc)
+                    VALUES(
+                        $chunkId, $providerId, $modelId, $dimension, $vector, $contentSha256, $updatedAtUtc);
+                    """;
+                insert.Parameters.AddWithValue("$chunkId", row.ChunkId);
+                insert.Parameters.AddWithValue("$providerId", provider.ProviderId);
+                insert.Parameters.AddWithValue("$modelId", provider.ModelId);
+                insert.Parameters.AddWithValue("$dimension", provider.Dimension);
+                insert.Parameters.Add("$vector", SqliteType.Blob).Value = VectorCodec.Encode(row.Vector);
+                insert.Parameters.AddWithValue("$contentSha256", row.ContentSha256);
+                insert.Parameters.AddWithValue("$updatedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
+                await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            transaction.Commit();
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<KnowledgeSearchHit>> SearchFtsAsync(
         string query,
         int limit,
@@ -178,7 +285,7 @@ public sealed class KnowledgeStore : IAsyncDisposable
     {
         EnsureReady();
         if (string.IsNullOrWhiteSpace(query)) return Array.Empty<KnowledgeSearchHit>();
-        if (limit < 1 || limit > 100) throw new ArgumentOutOfRangeException(nameof(limit));
+        ValidateLimit(limit);
 
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
@@ -216,6 +323,70 @@ public sealed class KnowledgeStore : IAsyncDisposable
         }
 
         return hits;
+    }
+
+    public async Task<IReadOnlyList<KnowledgeSearchHit>> SearchVectorAsync(
+        string query,
+        IEmbeddingProvider provider,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        EnsureReady();
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<KnowledgeSearchHit>();
+        ValidateProvider(provider);
+        ValidateLimit(limit);
+
+        var queryMemory = await provider.EmbedAsync(query, cancellationToken).ConfigureAwait(false);
+        var queryVector = queryMemory.ToArray();
+        ValidateVector(provider, queryVector);
+
+        await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT d.document_id,
+                   c.chunk_id,
+                   d.source_uri,
+                   d.title,
+                   c.ordinal,
+                   c.content,
+                   e.vector,
+                   e.dimension
+            FROM embeddings e
+            JOIN chunks c ON c.chunk_id = e.chunk_id
+            JOIN documents d ON d.document_id = c.document_id
+            WHERE e.provider_id = $providerId
+              AND e.model_id = $modelId
+              AND e.dimension = $dimension
+              AND e.content_sha256 = c.content_sha256;
+            """;
+        command.Parameters.AddWithValue("$providerId", provider.ProviderId);
+        command.Parameters.AddWithValue("$modelId", provider.ModelId);
+        command.Parameters.AddWithValue("$dimension", provider.Dimension);
+
+        var hits = new List<KnowledgeSearchHit>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var stored = VectorCodec.Decode((byte[])reader.GetValue(6), reader.GetInt32(7));
+            var score = CosineSimilarity(queryVector, stored);
+            if (score <= 0d) continue;
+
+            hits.Add(new KnowledgeSearchHit(
+                DocumentId: reader.GetString(0),
+                ChunkId: reader.GetString(1),
+                SourceUri: reader.GetString(2),
+                Title: reader.GetString(3),
+                Ordinal: reader.GetInt32(4),
+                Excerpt: reader.GetString(5),
+                Score: score));
+        }
+
+        return hits
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Ordinal)
+            .ThenBy(x => x.ChunkId, StringComparer.Ordinal)
+            .Take(limit)
+            .ToArray();
     }
 
     public ValueTask DisposeAsync()
@@ -272,6 +443,47 @@ public sealed class KnowledgeStore : IAsyncDisposable
         }
     }
 
+    private static void ValidateProvider(IEmbeddingProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        if (string.IsNullOrWhiteSpace(provider.ProviderId)) throw new ArgumentException("Embedding provider id is required.", nameof(provider));
+        if (string.IsNullOrWhiteSpace(provider.ModelId)) throw new ArgumentException("Embedding model id is required.", nameof(provider));
+        if (provider.Dimension < 1) throw new ArgumentOutOfRangeException(nameof(provider), "Embedding dimension must be positive.");
+    }
+
+    private static void ValidateVector(IEmbeddingProvider provider, float[] vector)
+    {
+        if (vector.Length != provider.Dimension)
+            throw new InvalidOperationException($"Embedding dimension mismatch. expected={provider.Dimension} actual={vector.Length}");
+        if (vector.Any(x => !float.IsFinite(x)))
+            throw new InvalidOperationException("Embedding vector contains a non-finite value.");
+        if (vector.All(x => x == 0f))
+            throw new InvalidOperationException("Embedding vector must have non-zero magnitude.");
+    }
+
+    private static void ValidateLimit(int limit)
+    {
+        if (limit < 1 || limit > 100) throw new ArgumentOutOfRangeException(nameof(limit));
+    }
+
+    private static double CosineSimilarity(ReadOnlySpan<float> left, ReadOnlySpan<float> right)
+    {
+        if (left.Length != right.Length) throw new InvalidDataException("Vector dimensions do not match.");
+
+        double dot = 0d;
+        double leftNorm = 0d;
+        double rightNorm = 0d;
+        for (var i = 0; i < left.Length; i++)
+        {
+            dot += left[i] * right[i];
+            leftNorm += left[i] * left[i];
+            rightNorm += right[i] * right[i];
+        }
+
+        if (leftNorm <= 0d || rightNorm <= 0d) return 0d;
+        return dot / (Math.Sqrt(leftNorm) * Math.Sqrt(rightNorm));
+    }
+
     private static string HashDocument(KnowledgeDocument document)
     {
         var builder = new StringBuilder();
@@ -297,4 +509,10 @@ public sealed class KnowledgeStore : IAsyncDisposable
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KnowledgeStore));
     }
+
+    private sealed record PendingEmbedding(
+        string ChunkId,
+        string Content,
+        string ContentSha256,
+        float[] Vector);
 }

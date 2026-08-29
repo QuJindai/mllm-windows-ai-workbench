@@ -98,6 +98,72 @@ public sealed class KnowledgeWorkbenchServiceTests
     }
 
     [Fact]
+    public async Task Fts_only_content_can_be_backfilled_after_provider_is_configured()
+    {
+        var root = NewTempRoot();
+        var source = Path.Combine(root, "legacy.md");
+        await File.WriteAllTextAsync(source, "整车车辆制造软件追溯", CancellationToken.None);
+
+        try
+        {
+            using (var ftsOnly = new KnowledgeWorkbenchService(root))
+                await ftsOnly.ImportFileAsync(source, CancellationToken.None);
+
+            var progressEvents = new List<KnowledgeEmbeddingProgress>();
+            using var configured = new KnowledgeWorkbenchService(root, new VehicleEmbeddingProvider());
+
+            var before = await configured.GetSnapshotAsync(CancellationToken.None);
+            Assert.True(before.EmbeddingConfigured);
+            Assert.Equal(1, before.EmbeddingTotalChunks);
+            Assert.Equal(0, before.EmbeddingIndexedChunks);
+            Assert.False(before.HybridReady);
+
+            var after = await configured.BuildEmbeddingIndexAsync(
+                new InlineProgress<KnowledgeEmbeddingProgress>(progressEvents.Add),
+                CancellationToken.None);
+
+            Assert.Equal(1, after.EmbeddingTotalChunks);
+            Assert.Equal(1, after.EmbeddingIndexedChunks);
+            Assert.True(after.HybridReady);
+            var progress = Assert.Single(progressEvents);
+            Assert.Equal(1, progress.Completed);
+            Assert.Equal(1, progress.Total);
+            Assert.False(string.IsNullOrWhiteSpace(progress.CurrentChunkId));
+
+            var hybrid = await configured.SearchAsync("车辆制造", KnowledgeSearchMode.Hybrid, 10, CancellationToken.None);
+            Assert.NotEmpty(hybrid);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task Embedding_configuration_error_is_visible_without_breaking_fts5()
+    {
+        var root = NewTempRoot();
+        try
+        {
+            using var service = new KnowledgeWorkbenchService(
+                root,
+                embeddingProvider: null,
+                embeddingConfigurationError: "Missing MLLM_EMBEDDING_DIMENSION");
+
+            var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+
+            Assert.True(snapshot.Fts5Ready);
+            Assert.False(snapshot.EmbeddingConfigured);
+            Assert.Contains("MLLM_EMBEDDING_DIMENSION", snapshot.EmbeddingConfigurationError, StringComparison.Ordinal);
+            Assert.False(snapshot.HybridReady);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task Unsupported_binary_document_is_rejected_instead_of_fake_import()
     {
         var root = NewTempRoot();
@@ -142,5 +208,10 @@ public sealed class KnowledgeWorkbenchServiceTests
                     : [0f, 0f, 1f];
             return Task.FromResult<ReadOnlyMemory<float>>(vector);
         }
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 }

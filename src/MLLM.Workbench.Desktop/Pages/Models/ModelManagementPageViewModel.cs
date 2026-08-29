@@ -162,8 +162,8 @@ public sealed class ModelManagementPageViewModel : ObservableObject
     {
         if (_services is null) return false;
         var local = _services.Services.FirstOrDefault(x =>
-            string.Equals(x.Id, "local-model-api", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(x.Id, "local-api", StringComparison.OrdinalIgnoreCase));
+            string.Equals(x.ServiceId, "local-model-api", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(x.ServiceId, "local-api", StringComparison.OrdinalIgnoreCase));
         return local is null || local.State == ManagedServiceState.Stopped;
     }
 

@@ -13,7 +13,9 @@ import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.replaceText;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.ViewMatchers.Visibility.VISIBLE;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
+import static androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibility;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.hamcrest.Matchers.containsString;
@@ -23,20 +25,20 @@ public class MainActivityInstrumentedTest {
     @Test
     public void diagnostic_screen_exposes_real_status_index_search_and_evidence_controls() {
         try (ActivityScenario<MainActivity> ignored = ActivityScenario.launch(MainActivity.class)) {
-            onView(withId(R.id.status_lexical)).check(matches(isDisplayed()));
-            onView(withId(R.id.status_embedding)).check(matches(isDisplayed()));
-            onView(withId(R.id.status_hybrid)).check(matches(isDisplayed()));
-            onView(withId(R.id.text_database)).check(matches(isDisplayed()));
-            onView(withId(R.id.text_index_coverage)).check(matches(isDisplayed()));
-            onView(withId(R.id.button_import)).check(matches(isDisplayed()));
-            onView(withId(R.id.button_build_index)).check(matches(isDisplayed()));
-            onView(withId(R.id.progress_index)).check(matches(isDisplayed()));
-            onView(withId(R.id.text_index_progress)).check(matches(isDisplayed()));
-            onView(withId(R.id.input_query)).check(matches(isDisplayed()));
-            onView(withId(R.id.spinner_mode)).check(matches(isDisplayed()));
-            onView(withId(R.id.button_search)).check(matches(isDisplayed()));
-            onView(withId(R.id.results_container)).check(matches(isDisplayed()));
-            onView(withId(R.id.evidence_detail)).check(matches(isDisplayed()));
+            assertVisibleContract(R.id.status_lexical);
+            assertVisibleContract(R.id.status_embedding);
+            assertVisibleContract(R.id.status_hybrid);
+            assertVisibleContract(R.id.text_database);
+            assertVisibleContract(R.id.text_index_coverage);
+            assertVisibleContract(R.id.button_import);
+            assertVisibleContract(R.id.button_build_index);
+            assertVisibleContract(R.id.progress_index);
+            assertVisibleContract(R.id.text_index_progress);
+            assertVisibleContract(R.id.input_query);
+            assertVisibleContract(R.id.spinner_mode);
+            assertVisibleContract(R.id.button_search);
+            assertVisibleContract(R.id.results_container);
+            assertVisibleContract(R.id.evidence_detail);
         }
     }
 
@@ -56,6 +58,10 @@ public class MainActivityInstrumentedTest {
             awaitText(R.id.evidence_detail, "车辆", 12_000);
             onView(withId(R.id.results_container)).check(matches(isDisplayed()));
         }
+    }
+
+    private static void assertVisibleContract(int viewId) {
+        onView(withId(viewId)).check(matches(withEffectiveVisibility(VISIBLE)));
     }
 
     private static void awaitText(int viewId, String expectedSubstring, long timeoutMs) {

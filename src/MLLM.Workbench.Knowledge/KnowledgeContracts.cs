@@ -1,0 +1,29 @@
+namespace MLLM.Workbench.Knowledge;
+
+public sealed record KnowledgeStoreOptions(string DatabasePath);
+
+public sealed record KnowledgeChunk(
+    string ChunkId,
+    int Ordinal,
+    string Content);
+
+public sealed record KnowledgeDocument(
+    string DocumentId,
+    string SourceUri,
+    string Title,
+    IReadOnlyList<KnowledgeChunk> Chunks);
+
+public sealed record KnowledgeSearchHit(
+    string DocumentId,
+    string ChunkId,
+    string SourceUri,
+    string Title,
+    int Ordinal,
+    string Excerpt,
+    double Score);
+
+public sealed record KnowledgeStoreHealth(
+    bool DatabaseReady,
+    bool Fts5Ready,
+    string SQLiteVersion,
+    string DatabasePath);

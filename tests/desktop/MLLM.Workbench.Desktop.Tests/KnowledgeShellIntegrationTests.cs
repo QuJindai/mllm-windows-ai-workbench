@@ -61,14 +61,15 @@ public sealed class KnowledgeShellIntegrationTests
     }
 
     [Fact]
-    public void Desktop_composition_wires_real_knowledge_service_launcher_and_view_model()
+    public void Desktop_composition_wires_real_knowledge_factory_launcher_and_view_model()
     {
         var root = FindRepositoryRoot();
         var app = File.ReadAllText(Path.Combine(root, "src", "MLLM.Workbench.Desktop", "App.xaml.cs"));
         var mainVm = File.ReadAllText(Path.Combine(root, "src", "MLLM.Workbench.Desktop", "Shell", "MainWindowViewModel.cs"));
 
         Assert.Contains("IKnowledgeWorkbenchService", app, StringComparison.Ordinal);
-        Assert.Contains("KnowledgeWorkbenchService", app, StringComparison.Ordinal);
+        Assert.Contains("KnowledgeServiceFactory.Create", app, StringComparison.Ordinal);
+        Assert.Contains("Environment.GetEnvironmentVariable", app, StringComparison.Ordinal);
         Assert.Contains("IEvidenceLauncher", app, StringComparison.Ordinal);
         Assert.Contains("ShellEvidenceLauncher", app, StringComparison.Ordinal);
         Assert.Contains("KnowledgePageViewModel", app, StringComparison.Ordinal);

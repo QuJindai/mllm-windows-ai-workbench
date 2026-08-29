@@ -13,17 +13,19 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
     [Fact]
     public async Task Factory_loopback_runtime_backfills_hybrid_searches_and_reuses_persisted_vectors_after_reopen()
     {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var cancellationToken = timeout.Token;
         var root = Path.Combine(Path.GetTempPath(), "mllm-local-embedding-e2e", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var source = Path.Combine(root, "vehicle.md");
-        await File.WriteAllTextAsync(source, "整车车辆制造软件版本追溯证据", CancellationToken.None);
+        await File.WriteAllTextAsync(source, "整车车辆制造软件版本追溯证据", cancellationToken);
 
         try
         {
             using (var ftsOnly = new KnowledgeWorkbenchService(root))
             {
-                await ftsOnly.ImportFileAsync(source, CancellationToken.None);
-                var lexical = await ftsOnly.SearchAsync("车辆制造", KnowledgeSearchMode.Fts5, 10, CancellationToken.None);
+                await ftsOnly.ImportFileAsync(source, cancellationToken);
+                var lexical = await ftsOnly.SearchAsync("车辆制造", KnowledgeSearchMode.Fts5, 10, cancellationToken);
                 Assert.NotEmpty(lexical);
             }
 
@@ -37,7 +39,7 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
 
             using (var configured = KnowledgeServiceFactory.Create(root, name => values.GetValueOrDefault(name)))
             {
-                var before = await configured.GetSnapshotAsync(CancellationToken.None);
+                var before = await configured.GetSnapshotAsync(cancellationToken);
                 Assert.True(before.Fts5Ready);
                 Assert.True(before.EmbeddingConfigured);
                 Assert.Equal(1, before.EmbeddingTotalChunks);
@@ -48,7 +50,7 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
                 var progressEvents = new List<KnowledgeEmbeddingProgress>();
                 var after = await configured.BuildEmbeddingIndexAsync(
                     new InlineProgress<KnowledgeEmbeddingProgress>(progressEvents.Add),
-                    CancellationToken.None);
+                    cancellationToken);
 
                 Assert.Equal(1, after.EmbeddingTotalChunks);
                 Assert.Equal(1, after.EmbeddingIndexedChunks);
@@ -63,7 +65,7 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
                     "车辆制造",
                     KnowledgeSearchMode.Hybrid,
                     10,
-                    CancellationToken.None);
+                    cancellationToken);
 
                 var hit = Assert.Single(hybrid);
                 Assert.Equal(Path.GetFullPath(source), hit.SourceUri);
@@ -74,7 +76,7 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
             var callsBeforeReopen = server.CallCount;
             using (var reopened = KnowledgeServiceFactory.Create(root, name => values.GetValueOrDefault(name)))
             {
-                var persisted = await reopened.GetSnapshotAsync(CancellationToken.None);
+                var persisted = await reopened.GetSnapshotAsync(cancellationToken);
                 Assert.True(persisted.HybridReady);
                 Assert.Equal(1, persisted.EmbeddingIndexedChunks);
                 Assert.Equal(1, persisted.EmbeddingTotalChunks);
@@ -84,7 +86,7 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
                     "车辆制造",
                     KnowledgeSearchMode.Hybrid,
                     10,
-                    CancellationToken.None);
+                    cancellationToken);
 
                 Assert.NotEmpty(hybrid);
                 Assert.Equal(callsBeforeReopen + 1, server.CallCount);
@@ -103,6 +105,7 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
 
     private sealed class LoopbackEmbeddingServer : IAsyncDisposable
     {
+        private const int MaxHeaderBytes = 64 * 1024;
         private readonly TcpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _acceptLoop;
@@ -156,34 +159,11 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
         {
             using (client)
             await using (var stream = client.GetStream())
-            using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true))
             {
-                var requestLine = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                Assert.NotNull(requestLine);
-                Assert.StartsWith("POST /v1/embeddings HTTP/1.1", requestLine, StringComparison.OrdinalIgnoreCase);
+                var request = await ReadRequestAsync(stream, cancellationToken).ConfigureAwait(false);
+                Assert.StartsWith("POST /v1/embeddings HTTP/1.1", request.RequestLine, StringComparison.OrdinalIgnoreCase);
 
-                var contentLength = 0;
-                while (true)
-                {
-                    var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                    if (string.IsNullOrEmpty(line)) break;
-                    var separator = line.IndexOf(':');
-                    if (separator <= 0) continue;
-                    var name = line[..separator].Trim();
-                    if (name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                        contentLength = int.Parse(line[(separator + 1)..].Trim(), System.Globalization.CultureInfo.InvariantCulture);
-                }
-
-                var body = new char[contentLength];
-                var offset = 0;
-                while (offset < body.Length)
-                {
-                    var read = await reader.ReadAsync(body.AsMemory(offset, body.Length - offset), cancellationToken).ConfigureAwait(false);
-                    if (read == 0) throw new EndOfStreamException("Embedding request body ended early.");
-                    offset += read;
-                }
-
-                using var document = JsonDocument.Parse(new string(body));
+                using var document = JsonDocument.Parse(request.Body);
                 var model = document.RootElement.GetProperty("model").GetString();
                 var input = document.RootElement.GetProperty("input").GetString() ?? string.Empty;
                 Assert.Equal("ci-loopback-3d", model);
@@ -211,5 +191,78 @@ public sealed class LocalEmbeddingRuntimeEndToEndTests
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
         }
+
+        private static async Task<HttpRequest> ReadRequestAsync(NetworkStream stream, CancellationToken cancellationToken)
+        {
+            using var received = new MemoryStream();
+            var buffer = new byte[4096];
+            var headerEnd = -1;
+
+            while (headerEnd < 0)
+            {
+                var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0) throw new EndOfStreamException("Embedding request ended before HTTP headers completed.");
+                received.Write(buffer, 0, read);
+                if (received.Length > MaxHeaderBytes)
+                    throw new InvalidDataException("Embedding request headers exceeded the test server limit.");
+
+                headerEnd = FindHeaderTerminator(received.GetBuffer(), checked((int)received.Length));
+            }
+
+            var allBytes = received.ToArray();
+            var headerText = Encoding.ASCII.GetString(allBytes, 0, headerEnd);
+            var headerLines = headerText.Split(["\r\n"], StringSplitOptions.None);
+            if (headerLines.Length == 0 || string.IsNullOrWhiteSpace(headerLines[0]))
+                throw new InvalidDataException("Embedding request did not contain a request line.");
+
+            var contentLength = 0;
+            foreach (var line in headerLines.Skip(1))
+            {
+                var separator = line.IndexOf(':');
+                if (separator <= 0) continue;
+                var name = line[..separator].Trim();
+                if (!name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
+                contentLength = int.Parse(
+                    line[(separator + 1)..].Trim(),
+                    System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (contentLength <= 0)
+                throw new InvalidDataException("Embedding request did not contain a positive Content-Length.");
+
+            var bodyOffset = headerEnd + 4;
+            var body = new byte[contentLength];
+            var bufferedBodyBytes = Math.Min(contentLength, Math.Max(0, allBytes.Length - bodyOffset));
+            if (bufferedBodyBytes > 0)
+                Buffer.BlockCopy(allBytes, bodyOffset, body, 0, bufferedBodyBytes);
+
+            var bodyRead = bufferedBodyBytes;
+            while (bodyRead < contentLength)
+            {
+                var read = await stream.ReadAsync(body.AsMemory(bodyRead, contentLength - bodyRead), cancellationToken).ConfigureAwait(false);
+                if (read == 0) throw new EndOfStreamException("Embedding request body ended early.");
+                bodyRead += read;
+            }
+
+            return new HttpRequest(headerLines[0], body);
+        }
+
+        private static int FindHeaderTerminator(byte[] bytes, int length)
+        {
+            for (var index = 0; index <= length - 4; index++)
+            {
+                if (bytes[index] == (byte)'\r' &&
+                    bytes[index + 1] == (byte)'\n' &&
+                    bytes[index + 2] == (byte)'\r' &&
+                    bytes[index + 3] == (byte)'\n')
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private sealed record HttpRequest(string RequestLine, byte[] Body);
     }
 }

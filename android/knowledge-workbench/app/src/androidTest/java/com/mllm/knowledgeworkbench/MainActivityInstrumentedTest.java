@@ -43,7 +43,7 @@ public class MainActivityInstrumentedTest {
     @Test
     public void bundled_sample_can_build_vectors_and_return_hybrid_evidence() {
         try (ActivityScenario<MainActivity> ignored = ActivityScenario.launch(MainActivity.class)) {
-            awaitText(R.id.text_index_coverage, "/", 8_000);
+            awaitText(R.id.text_index_coverage, "0/", 8_000);
             onView(withId(R.id.button_build_index)).perform(click());
             awaitText(R.id.status_hybrid, "可用", 12_000);
             awaitText(R.id.text_index_progress, "100%", 12_000);

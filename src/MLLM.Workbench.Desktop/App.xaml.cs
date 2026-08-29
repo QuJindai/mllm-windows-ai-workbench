@@ -89,7 +89,8 @@ public partial class App : Application
                 services.AddSingleton<IWorkbenchBackendClient>(sp => new NamedPipeBackendClient(sp.GetRequiredService<BackendProcessHost>().Options));
                 services.AddSingleton<IPrivilegedInstallerInvoker>(_ => new PrivilegedInstallerInvoker(runtime.ProjectRoot));
                 services.AddSingleton<WorkbenchCoordinator>();
-                services.AddSingleton<IKnowledgeWorkbenchService>(_ => new KnowledgeWorkbenchService(runtime.DataRoot));
+                services.AddSingleton<IKnowledgeWorkbenchService>(_ =>
+                    KnowledgeServiceFactory.Create(runtime.DataRoot, Environment.GetEnvironmentVariable));
                 services.AddSingleton<IEvidenceLauncher, ShellEvidenceLauncher>();
                 services.AddSingleton<DashboardPageViewModel>();
                 services.AddSingleton<DoctorPageViewModel>();

@@ -26,15 +26,52 @@
         <StackPanel>
           <TextBlock Text="Embedding" Foreground="{StaticResource MutedTextBrush}" />
           <TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingStatus" Text="{Binding EmbeddingStatus}" Margin="0,8,0,0" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" />
+          <TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingIndexStatus" Text="{Binding EmbeddingIndexStatus}" Margin="0,6,0,0" FontSize="12" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
       <Border Grid.Column="4" Style="{StaticResource CardStyle}">
         <StackPanel>
           <TextBlock Text="Hybrid" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock AutomationProperties.AutomationId="KnowledgeHybridStatus" Text="{Binding HybridStatus}" Margin="0,8,0,0" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
+          <TextBlock AutomationProperties.AutomationId="KnowledgeHybridStatus" Text="{Binding HybridStatus}" Margin="0,8,0,0" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
     </Grid>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="向量索引" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+            <TextBlock Text="仅调用已配置的本机 loopback Embedding 服务；不会回退到云端。" Margin="0,5,18,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+          </StackPanel>
+          <Button Grid.Column="1"
+                  AutomationProperties.AutomationId="KnowledgeBuildEmbeddingIndex"
+                  Content="构建/补齐向量索引"
+                  Command="{Binding BuildEmbeddingIndexCommand}"
+                  IsEnabled="{Binding CanBuildEmbeddingIndex}"
+                  Style="{StaticResource ActionButtonStyle}"
+                  VerticalAlignment="Center" />
+        </Grid>
+        <Grid Margin="0,14,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <ProgressBar Grid.Column="0"
+                       AutomationProperties.AutomationId="KnowledgeEmbeddingProgressBar"
+                       Minimum="0"
+                       Maximum="100"
+                       Value="{Binding EmbeddingProgressPercent}"
+                       Height="12"
+                       VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1"
+                     AutomationProperties.AutomationId="KnowledgeEmbeddingProgressText"
+                     Text="{Binding EmbeddingProgressText}"
+                     Margin="12,0,0,0"
+                     Foreground="{StaticResource MutedTextBrush}"
+                     VerticalAlignment="Center"
+                     TextWrapping="Wrap" />
+        </Grid>
+      </StackPanel>
+    </Border>
 
     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
       <StackPanel>

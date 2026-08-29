@@ -27,7 +27,7 @@ public sealed class KnowledgeShellIntegrationTests
     }
 
     [Fact]
-    public void Knowledge_page_has_import_search_evidence_and_rag_automation_contracts()
+    public void Knowledge_page_has_import_search_evidence_rag_and_embedding_index_contracts()
     {
         var root = FindRepositoryRoot();
         var pagePath = Path.Combine(root, "src", "MLLM.Workbench.Desktop", "Pages", "Knowledge", "KnowledgePage.xaml");
@@ -44,7 +44,11 @@ public sealed class KnowledgeShellIntegrationTests
         {
             "KnowledgeFtsStatus",
             "KnowledgeEmbeddingStatus",
+            "KnowledgeEmbeddingIndexStatus",
             "KnowledgeHybridStatus",
+            "KnowledgeBuildEmbeddingIndex",
+            "KnowledgeEmbeddingProgressText",
+            "KnowledgeEmbeddingProgressBar",
             "KnowledgeImportPath",
             "KnowledgeBrowseButton",
             "KnowledgeImportButton",

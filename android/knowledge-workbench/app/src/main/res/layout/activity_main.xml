@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#071018"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="M-LLM 知识工作台"
+            android:textColor="#E6F7FF"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="本地 SQLite · FTS5/LIKE · Local Hash Embedding · Hybrid"
+            android:textColor="#87A5B7"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/card_background"
+                android:orientation="vertical">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="LEXICAL" android:textColor="#87A5B7" android:textSize="11sp" />
+                <TextView android:id="@+id/status_lexical" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="初始化中" android:textColor="#67E8F9" android:textSize="14sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:layout_marginEnd="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/card_background"
+                android:orientation="vertical">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="EMBEDDING" android:textColor="#87A5B7" android:textSize="11sp" />
+                <TextView android:id="@+id/status_embedding" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="初始化中" android:textColor="#D7F9FF" android:textSize="12sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/card_background"
+                android:orientation="vertical">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="HYBRID" android:textColor="#87A5B7" android:textSize="11sp" />
+                <TextView android:id="@+id/status_hybrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="初始化中" android:textColor="#A7F3D0" android:textSize="14sp" android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="知识库状态" android:textColor="#E6F7FF" android:textSize="16sp" android:textStyle="bold" />
+            <TextView android:id="@+id/text_database" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="SQLite: 初始化中" android:textColor="#87A5B7" android:textIsSelectable="true" android:textSize="12sp" />
+            <TextView android:id="@+id/text_index_coverage" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="向量覆盖: 初始化中" android:textColor="#D7F9FF" android:textSize="14sp" />
+            <TextView android:id="@+id/text_import_source" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="来源: 内置验收样例准备中" android:textColor="#87A5B7" android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/button_import"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="导入 Markdown / Text"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/button_build_index"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:enabled="false"
+                android:text="构建 / 补齐向量索引"
+                android:textAllCaps="false" />
+
+            <ProgressBar
+                android:id="@+id/progress_index"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="10dp"
+                android:layout_marginTop="12dp"
+                android:max="100"
+                android:progress="0" />
+
+            <TextView
+                android:id="@+id/text_index_progress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="等待索引"
+                android:textColor="#67E8F9"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="检索显微镜" android:textColor="#E6F7FF" android:textSize="16sp" android:textStyle="bold" />
+
+            <EditText
+                android:id="@+id/input_query"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="#4C6A7C"
+                android:hint="输入检索内容，例如：车辆制造"
+                android:inputType="text"
+                android:singleLine="true"
+                android:textColor="#E6F7FF"
+                android:textColorHint="#668596" />
+
+            <Spinner
+                android:id="@+id/spinner_mode"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#67E8F9" />
+
+            <Button
+                android:id="@+id/button_search"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:enabled="false"
+                android:text="开始检索"
+                android:textAllCaps="false" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="排序结果"
+                android:textColor="#87A5B7"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/results_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="证据详情" android:textColor="#E6F7FF" android:textSize="16sp" android:textStyle="bold" />
+            <TextView
+                android:id="@+id/evidence_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:minHeight="100dp"
+                android:text="选择检索结果后显示 source / chunk / score / 原始证据。"
+                android:textColor="#C8DCE8"
+                android:textIsSelectable="true"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/text_error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="#381A22"
+            android:padding="10dp"
+            android:text="就绪"
+            android:textColor="#FCA5A5"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="20dp"
+            android:text="本验收版完全离线：无 INTERNET 权限。支持 .md / .markdown / .txt；PDF / Office 尚未接入，不会伪装支持。"
+            android:textColor="#668596"
+            android:textSize="11sp" />
+    </LinearLayout>
+</ScrollView>

@@ -278,6 +278,104 @@ public sealed class KnowledgeStore : IAsyncDisposable
         }
     }
 
+    public async Task<EmbeddingIndexStatus> GetEmbeddingIndexStatusAsync(
+        IEmbeddingProvider provider,
+        CancellationToken cancellationToken)
+    {
+        EnsureReady();
+        ValidateProvider(provider);
+        await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        return await ReadEmbeddingIndexStatusAsync(connection, provider, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<EmbeddingIndexStatus> IndexMissingEmbeddingsAsync(
+        IEmbeddingProvider provider,
+        IProgress<EmbeddingIndexProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        EnsureReady();
+        ValidateProvider(provider);
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            var pending = new List<PendingEmbedding>();
+
+            await using (var readPending = connection.CreateCommand())
+            {
+                readPending.CommandText = """
+                    SELECT c.chunk_id, c.content, c.content_sha256
+                    FROM chunks c
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM embeddings e
+                        WHERE e.chunk_id = c.chunk_id
+                          AND e.provider_id = $providerId
+                          AND e.model_id = $modelId
+                          AND e.dimension = $dimension
+                          AND e.content_sha256 = c.content_sha256
+                    )
+                    ORDER BY c.document_id ASC, c.ordinal ASC, c.chunk_id ASC;
+                    """;
+                readPending.Parameters.AddWithValue("$providerId", provider.ProviderId);
+                readPending.Parameters.AddWithValue("$modelId", provider.ModelId);
+                readPending.Parameters.AddWithValue("$dimension", provider.Dimension);
+
+                await using var reader = await readPending.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    pending.Add(new PendingEmbedding(
+                        ChunkId: reader.GetString(0),
+                        Content: reader.GetString(1),
+                        ContentSha256: reader.GetString(2),
+                        Vector: Array.Empty<float>()));
+                }
+            }
+
+            for (var i = 0; i < pending.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var row = pending[i];
+                var memory = await provider.EmbedAsync(row.Content, cancellationToken).ConfigureAwait(false);
+                var vector = memory.ToArray();
+                ValidateVector(provider, vector);
+
+                using var transaction = connection.BeginTransaction();
+                await using var upsert = connection.CreateCommand();
+                upsert.Transaction = transaction;
+                upsert.CommandText = """
+                    INSERT INTO embeddings(
+                        chunk_id, provider_id, model_id, dimension, vector, content_sha256, updated_at_utc)
+                    VALUES(
+                        $chunkId, $providerId, $modelId, $dimension, $vector, $contentSha256, $updatedAtUtc)
+                    ON CONFLICT(chunk_id, provider_id, model_id) DO UPDATE SET
+                        dimension=excluded.dimension,
+                        vector=excluded.vector,
+                        content_sha256=excluded.content_sha256,
+                        updated_at_utc=excluded.updated_at_utc;
+                    """;
+                upsert.Parameters.AddWithValue("$chunkId", row.ChunkId);
+                upsert.Parameters.AddWithValue("$providerId", provider.ProviderId);
+                upsert.Parameters.AddWithValue("$modelId", provider.ModelId);
+                upsert.Parameters.AddWithValue("$dimension", provider.Dimension);
+                upsert.Parameters.Add("$vector", SqliteType.Blob).Value = VectorCodec.Encode(vector);
+                upsert.Parameters.AddWithValue("$contentSha256", row.ContentSha256);
+                upsert.Parameters.AddWithValue("$updatedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
+                await upsert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                transaction.Commit();
+
+                progress?.Report(new EmbeddingIndexProgress(i + 1, pending.Count, row.ChunkId));
+            }
+
+            return await ReadEmbeddingIndexStatusAsync(connection, provider, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<KnowledgeSearchHit>> SearchFtsAsync(
         string query,
         int limit,
@@ -411,6 +509,38 @@ public sealed class KnowledgeStore : IAsyncDisposable
             await connection.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    private static async Task<EmbeddingIndexStatus> ReadEmbeddingIndexStatusAsync(
+        SqliteConnection connection,
+        IEmbeddingProvider provider,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) AS total_chunks,
+                   COALESCE(SUM(CASE WHEN EXISTS (
+                       SELECT 1
+                       FROM embeddings e
+                       WHERE e.chunk_id = c.chunk_id
+                         AND e.provider_id = $providerId
+                         AND e.model_id = $modelId
+                         AND e.dimension = $dimension
+                         AND e.content_sha256 = c.content_sha256
+                   ) THEN 1 ELSE 0 END), 0) AS indexed_chunks
+            FROM chunks c;
+            """;
+        command.Parameters.AddWithValue("$providerId", provider.ProviderId);
+        command.Parameters.AddWithValue("$modelId", provider.ModelId);
+        command.Parameters.AddWithValue("$dimension", provider.Dimension);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            return new EmbeddingIndexStatus(0, 0);
+
+        return new EmbeddingIndexStatus(
+            checked((int)reader.GetInt64(0)),
+            checked((int)reader.GetInt64(1)));
     }
 
     private static async Task ExecuteAsync(

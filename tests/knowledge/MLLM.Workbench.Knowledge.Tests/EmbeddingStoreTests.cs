@@ -39,7 +39,7 @@ public sealed class EmbeddingStoreTests
                 await reopened.InitializeAsync(CancellationToken.None);
                 var hits = await reopened.SearchVectorAsync("automobile production", queryProvider, 5, CancellationToken.None);
 
-                var first = Assert.Single(hits.Where(x => x.ChunkId == "vehicle"));
+                var first = Assert.Single(hits, x => x.ChunkId == "vehicle");
                 Assert.Equal("doc-semantic", first.DocumentId);
                 Assert.Equal(@"C:\Knowledge\semantic.md", first.SourceUri);
                 Assert.True(first.Score > 0.9);

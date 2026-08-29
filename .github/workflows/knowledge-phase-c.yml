@@ -36,3 +36,24 @@ jobs:
       - name: Native knowledge shell integration
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgeShellIntegrationTests
+      - name: Full desktop regression
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release
+      - name: Phase B contracts regression
+        shell: powershell
+        run: dotnet test tests/contracts/MLLM.Workbench.Contracts.Tests/MLLM.Workbench.Contracts.Tests.csproj -c Release --filter PhaseBContractSerializationTests
+      - name: Phase B model adapter regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterModelSmoke.ps1
+      - name: Phase B service adapter regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterServiceSmoke.ps1
+      - name: Phase B service lifecycle regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterLifecycleSmoke.ps1
+      - name: Phase B typed backend client regression
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter PhaseBBackendClientTests
+      - name: Phase B backend allowlist regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendPhaseBContractSmoke.ps1

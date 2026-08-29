@@ -9,8 +9,8 @@ public final class TextChunker {
     public record ChunkDraft(String chunkId, int ordinal, String content) {}
 
     public static List<ChunkDraft> chunk(String documentId, String text, int targetChars, int overlapChars) {
-        if (documentId == null || documentId.isBlank()) throw new IllegalArgumentException("documentId is required");
-        if (text == null || text.isBlank()) throw new IllegalArgumentException("text is required");
+        if (Compat.isBlank(documentId)) throw new IllegalArgumentException("documentId is required");
+        if (Compat.isBlank(text)) throw new IllegalArgumentException("text is required");
         if (targetChars < 32) throw new IllegalArgumentException("targetChars must be >= 32");
         if (overlapChars < 0 || overlapChars >= targetChars) throw new IllegalArgumentException("overlapChars must be >= 0 and < targetChars");
 
@@ -21,7 +21,7 @@ public final class TextChunker {
 
         for (String original : paragraphs) {
             String paragraph = original.trim();
-            if (paragraph.isBlank()) continue;
+            if (Compat.isBlank(paragraph)) continue;
 
             if (paragraph.length() > targetChars) {
                 flush(current, raw);
@@ -29,11 +29,11 @@ public final class TextChunker {
                 continue;
             }
 
-            int separator = current.isEmpty() ? 0 : 2;
-            if (!current.isEmpty() && current.length() + separator + paragraph.length() > targetChars) {
+            int separator = current.length() == 0 ? 0 : 2;
+            if (current.length() > 0 && current.length() + separator + paragraph.length() > targetChars) {
                 flush(current, raw);
             }
-            if (!current.isEmpty()) current.append("\n\n");
+            if (current.length() > 0) current.append("\n\n");
             current.append(paragraph);
         }
         flush(current, raw);
@@ -43,7 +43,7 @@ public final class TextChunker {
         for (int i = 0; i < raw.size(); i++) {
             result.add(new ChunkDraft(documentId + ":" + String.format("%06d", i), i, raw.get(i)));
         }
-        return List.copyOf(result);
+        return Compat.immutableCopy(result);
     }
 
     public static List<ChunkDraft> chunk(String documentId, String text) {
@@ -55,16 +55,16 @@ public final class TextChunker {
         while (start < paragraph.length()) {
             int end = Math.min(paragraph.length(), start + targetChars);
             String piece = paragraph.substring(start, end).trim();
-            if (!piece.isBlank()) raw.add(piece);
+            if (!Compat.isBlank(piece)) raw.add(piece);
             if (end >= paragraph.length()) break;
             start = Math.max(start + 1, end - overlapChars);
         }
     }
 
     private static void flush(StringBuilder current, List<String> raw) {
-        if (current.isEmpty()) return;
+        if (current.length() == 0) return;
         String value = current.toString().trim();
-        if (!value.isBlank()) raw.add(value);
+        if (!Compat.isBlank(value)) raw.add(value);
         current.setLength(0);
     }
 }

@@ -13,7 +13,7 @@ public final class LocalHashEmbeddingProvider {
     public int dimension() { return DIMENSION; }
 
     public float[] embed(String text) {
-        if (text == null || text.isBlank()) throw new IllegalArgumentException("text is required");
+        if (Compat.isBlank(text)) throw new IllegalArgumentException("text is required");
         String normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
             .toLowerCase(Locale.ROOT)
             .replaceAll("\\s+", " ")

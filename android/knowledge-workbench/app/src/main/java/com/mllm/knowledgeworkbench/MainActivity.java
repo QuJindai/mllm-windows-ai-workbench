@@ -6,7 +6,6 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
-import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -15,6 +14,7 @@ import android.widget.ProgressBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.mllm.knowledgeworkbench.core.Compat;
 import com.mllm.knowledgeworkbench.data.KnowledgeContracts.IndexProgress;
 import com.mllm.knowledgeworkbench.data.KnowledgeContracts.SearchHit;
 import com.mllm.knowledgeworkbench.data.KnowledgeContracts.SearchMode;
@@ -145,7 +145,6 @@ public final class MainActivity extends Activity {
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             getContentResolver().takePersistableUriPermission(uri, flags & Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (RuntimeException ignored) {
-            // Some document providers do not offer persistable grants; the indexed private copy remains usable.
         }
 
         String displayName = resolveDisplayName(uri);
@@ -159,7 +158,7 @@ public final class MainActivity extends Activity {
             try (InputStream input = getContentResolver().openInputStream(uri)) {
                 if (input == null) throw new IOException("无法打开所选文件");
                 String text = readStream(input);
-                if (text.isBlank()) throw new IOException("所选文件为空");
+                if (Compat.isBlank(text)) throw new IOException("所选文件为空");
                 repository.importText(uri.toString(), displayName, text);
                 Snapshot snapshot = repository.snapshot();
                 ui(() -> {
@@ -208,7 +207,7 @@ public final class MainActivity extends Activity {
 
     private void search() {
         String query = inputQuery.getText().toString().trim();
-        if (query.isBlank()) {
+        if (Compat.isBlank(query)) {
             textError.setText("请输入检索内容。");
             return;
         }
@@ -336,9 +335,9 @@ public final class MainActivity extends Activity {
             if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
         } catch (RuntimeException ignored) {
         }
-        if (name == null || name.isBlank()) {
+        if (Compat.isBlank(name)) {
             String segment = uri.getLastPathSegment();
-            name = segment == null || segment.isBlank() ? "knowledge.txt" : segment;
+            name = Compat.isBlank(segment) ? "knowledge.txt" : segment;
         }
         return name;
     }
@@ -364,7 +363,7 @@ public final class MainActivity extends Activity {
 
     private static String safeMessage(Throwable error) {
         String value = error.getMessage();
-        return value == null || value.isBlank() ? error.getClass().getSimpleName() : value;
+        return Compat.isBlank(value) ? error.getClass().getSimpleName() : value;
     }
 
     private static int coveragePercent(Snapshot snapshot) {

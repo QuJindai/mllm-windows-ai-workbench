@@ -34,9 +34,10 @@ public final class ReciprocalRankFusion {
         if (ranking == null) return;
         for (int i = 0; i < ranking.size(); i++) {
             String id = ranking.get(i);
-            if (id == null || id.isBlank()) continue;
+            if (Compat.isBlank(id)) continue;
             double score = 1d / (K + i + 1d);
-            scores.merge(id, score, Double::sum);
+            Double current = scores.get(id);
+            scores.put(id, current == null ? score : current + score);
         }
     }
 }

@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
+import com.mllm.knowledgeworkbench.core.Compat;
 import com.mllm.knowledgeworkbench.core.LocalHashEmbeddingProvider;
 import com.mllm.knowledgeworkbench.core.ReciprocalRankFusion;
 import com.mllm.knowledgeworkbench.core.TextChunker;
@@ -20,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,7 +35,7 @@ public final class KnowledgeRepository implements AutoCloseable {
 
     public KnowledgeRepository(Context context, String databaseName) {
         if (context == null) throw new IllegalArgumentException("context is required");
-        if (databaseName == null || databaseName.isBlank()) throw new IllegalArgumentException("databaseName is required");
+        if (Compat.isBlank(databaseName)) throw new IllegalArgumentException("databaseName is required");
         Context app = context.getApplicationContext();
         this.databasePath = app.getDatabasePath(databaseName).getAbsolutePath();
         this.helper = new KnowledgeDatabase(app, databaseName);
@@ -66,9 +68,9 @@ public final class KnowledgeRepository implements AutoCloseable {
 
     public synchronized void importText(String sourceUri, String title, String text) {
         requireOpen();
-        if (sourceUri == null || sourceUri.isBlank()) throw new IllegalArgumentException("sourceUri is required");
-        if (title == null || title.isBlank()) throw new IllegalArgumentException("title is required");
-        if (text == null || text.isBlank()) throw new IllegalArgumentException("text is required");
+        if (Compat.isBlank(sourceUri)) throw new IllegalArgumentException("sourceUri is required");
+        if (Compat.isBlank(title)) throw new IllegalArgumentException("title is required");
+        if (Compat.isBlank(text)) throw new IllegalArgumentException("text is required");
 
         String documentId = "doc-" + sha256(sourceUri).substring(0, 32);
         List<TextChunker.ChunkDraft> chunks = TextChunker.chunk(documentId, text);
@@ -159,7 +161,7 @@ public final class KnowledgeRepository implements AutoCloseable {
 
     public synchronized List<SearchHit> search(String query, SearchMode mode, int limit) {
         requireOpen();
-        if (query == null || query.isBlank()) return List.of();
+        if (Compat.isBlank(query)) return Collections.emptyList();
         if (mode == null) throw new IllegalArgumentException("mode is required");
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be 1..100");
         String normalized = query.trim();
@@ -185,10 +187,9 @@ public final class KnowledgeRepository implements AutoCloseable {
                     hits.add(readHit(cursor, 1d / (1d + Math.abs(rank))));
                 }
             } catch (RuntimeException ignored) {
-                // FTS query syntax/vendor behavior can vary; deterministic local fallback remains available.
                 return searchLike(query, limit);
             }
-            return List.copyOf(hits);
+            return Compat.immutableCopy(hits);
         }
         return searchLike(query, limit);
     }
@@ -205,7 +206,7 @@ public final class KnowledgeRepository implements AutoCloseable {
                 hits.add(readHit(cursor, 1d / (1d + rank++)));
             }
         }
-        return List.copyOf(hits);
+        return Compat.immutableCopy(hits);
     }
 
     private List<SearchHit> searchVector(String query, int limit) {
@@ -231,8 +232,8 @@ public final class KnowledgeRepository implements AutoCloseable {
         hits.sort(Comparator.comparingDouble(SearchHit::score).reversed()
             .thenComparingInt(SearchHit::ordinal)
             .thenComparing(SearchHit::chunkId));
-        if (hits.size() > limit) return List.copyOf(hits.subList(0, limit));
-        return List.copyOf(hits);
+        if (hits.size() > limit) return Compat.immutableCopy(hits.subList(0, limit));
+        return Compat.immutableCopy(hits);
     }
 
     private List<SearchHit> searchHybrid(String query, int limit) {
@@ -244,8 +245,10 @@ public final class KnowledgeRepository implements AutoCloseable {
         List<SearchHit> lexical = searchLexical(query, candidateLimit);
         List<SearchHit> vector = searchVector(query, candidateLimit);
 
-        List<String> lexicalIds = lexical.stream().map(SearchHit::chunkId).toList();
-        List<String> vectorIds = vector.stream().map(SearchHit::chunkId).toList();
+        List<String> lexicalIds = new ArrayList<>(lexical.size());
+        for (SearchHit hit : lexical) lexicalIds.add(hit.chunkId());
+        List<String> vectorIds = new ArrayList<>(vector.size());
+        for (SearchHit hit : vector) vectorIds.add(hit.chunkId());
         Map<String, Double> fused = ReciprocalRankFusion.fuse(lexicalIds, vectorIds, limit);
 
         Map<String, SearchHit> byId = new LinkedHashMap<>();
@@ -257,7 +260,7 @@ public final class KnowledgeRepository implements AutoCloseable {
             SearchHit hit = byId.get(entry.getKey());
             if (hit != null) result.add(hit.withScore(entry.getValue()));
         }
-        return List.copyOf(result);
+        return Compat.immutableCopy(result);
     }
 
     private SearchHit readHit(Cursor cursor, double score) {

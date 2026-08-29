@@ -59,6 +59,4 @@ jobs:
           target: default
           profile: pixel_6
           disable-animations: true
-          script: |
-            cd android/knowledge-workbench
-            gradle --no-daemon connectedDebugAndroidTest
+          script: cd android/knowledge-workbench && gradle --no-daemon connectedDebugAndroidTest

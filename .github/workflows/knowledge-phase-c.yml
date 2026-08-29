@@ -27,3 +27,6 @@ jobs:
       - name: Knowledge core tests
         shell: powershell
         run: dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release
+      - name: Native knowledge page view model
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgePageViewModelTests

@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   android:
-    name: Android APK / repository gate
+    name: Android APK / repository emulator gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,6 +33,17 @@ jobs:
       - name: Core unit tests
         working-directory: android/knowledge-workbench
         run: gradle --no-daemon testDebugUnitTest
-      - name: Repository RED compile gate
+      - name: Compile instrumentation tests
         working-directory: android/knowledge-workbench
         run: gradle --no-daemon assembleDebugAndroidTest
+      - name: Repository persistence emulator acceptance
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: default
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            cd android/knowledge-workbench
+            gradle --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.mllm.knowledgeworkbench.data.KnowledgeRepositoryInstrumentedTest

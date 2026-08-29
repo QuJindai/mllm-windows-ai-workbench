@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -13,6 +14,10 @@ public sealed record LocalOpenAiEmbeddingOptions(
 public sealed class LocalOpenAiEmbeddingProvider : IEmbeddingProvider
 {
     private static readonly HttpClient SharedHttpClient = new();
+    private static readonly JsonSerializerOptions RequestJsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private readonly Uri _endpoint;
     private readonly HttpClient _httpClient;
 
@@ -46,7 +51,7 @@ public sealed class LocalOpenAiEmbeddingProvider : IEmbeddingProvider
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Embedding input text is required.", nameof(text));
 
-        var json = JsonSerializer.Serialize(new EmbeddingRequest(ModelId, text));
+        var json = JsonSerializer.Serialize(new EmbeddingRequest(ModelId, text), RequestJsonOptions);
         using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")

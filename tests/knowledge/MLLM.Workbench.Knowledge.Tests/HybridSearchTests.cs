@@ -119,12 +119,12 @@ public sealed class HybridSearchTests
         {
             var normalized = text.ToLowerInvariant();
             float[] vector =
-                normalized.Contains("车辆", StringComparison.Ordinal) ||
-                normalized.Contains("automobile", StringComparison.Ordinal)
-                    ? [1f, 0f, 0f]
-                    : normalized.Contains("香蕉", StringComparison.Ordinal) ||
-                      normalized.Contains("banana", StringComparison.Ordinal)
-                        ? [0f, 1f, 0f]
+                normalized.Contains("香蕉", StringComparison.Ordinal) ||
+                normalized.Contains("banana", StringComparison.Ordinal)
+                    ? [0f, 1f, 0f]
+                    : normalized.Contains("车辆", StringComparison.Ordinal) ||
+                      normalized.Contains("automobile", StringComparison.Ordinal)
+                        ? [1f, 0f, 0f]
                         : [0f, 0f, 1f];
             return Task.FromResult<ReadOnlyMemory<float>>(vector);
         }

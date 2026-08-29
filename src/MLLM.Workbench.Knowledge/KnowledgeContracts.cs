@@ -27,3 +27,15 @@ public sealed record KnowledgeStoreHealth(
     bool Fts5Ready,
     string SQLiteVersion,
     string DatabasePath);
+
+public sealed record EmbeddingIndexStatus(
+    int TotalChunks,
+    int IndexedChunks)
+{
+    public int PendingChunks => Math.Max(0, TotalChunks - IndexedChunks);
+}
+
+public sealed record EmbeddingIndexProgress(
+    int CompletedChunks,
+    int TotalChunks,
+    string ChunkId);

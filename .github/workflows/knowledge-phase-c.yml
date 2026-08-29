@@ -33,3 +33,6 @@ jobs:
       - name: Real knowledge workspace service
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgeWorkbenchServiceTests
+      - name: Native knowledge shell integration
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgeShellIntegrationTests

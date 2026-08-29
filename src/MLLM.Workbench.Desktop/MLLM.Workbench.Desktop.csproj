@@ -12,5 +12,6 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <ProjectReference Include="..\MLLM.Workbench.Contracts\MLLM.Workbench.Contracts.csproj" />
     <ProjectReference Include="..\MLLM.Workbench.Infrastructure\MLLM.Workbench.Infrastructure.csproj" />
+    <ProjectReference Include="..\MLLM.Workbench.Knowledge\MLLM.Workbench.Knowledge.csproj" />
   </ItemGroup>
 </Project>

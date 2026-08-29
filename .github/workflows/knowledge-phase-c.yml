@@ -30,3 +30,6 @@ jobs:
       - name: Native knowledge page view model
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgePageViewModelTests
+      - name: Real knowledge workspace service
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgeWorkbenchServiceTests

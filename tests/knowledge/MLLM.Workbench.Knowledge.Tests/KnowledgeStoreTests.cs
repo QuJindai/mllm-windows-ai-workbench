@@ -1,4 +1,5 @@
 using MLLM.Workbench.Knowledge;
+using Xunit;
 
 namespace MLLM.Workbench.Knowledge.Tests;
 

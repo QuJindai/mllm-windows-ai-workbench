@@ -36,7 +36,7 @@ public sealed class KnowledgeShellIntegrationTests
         var document = XDocument.Load(pagePath);
         var automationIds = document.Descendants()
             .SelectMany(e => e.Attributes())
-            .Where(a => a.Name.LocalName == "AutomationId")
+            .Where(a => a.Name.LocalName.EndsWith("AutomationId", StringComparison.Ordinal))
             .Select(a => a.Value)
             .ToHashSet(StringComparer.Ordinal);
 

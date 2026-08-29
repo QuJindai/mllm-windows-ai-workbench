@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MLLM.Workbench.Knowledge.Embeddings;
 
@@ -97,5 +98,7 @@ public sealed class LocalOpenAiEmbeddingProvider : IEmbeddingProvider
         return vector;
     }
 
-    private sealed record EmbeddingRequest(string Model, string Input);
+    private sealed record EmbeddingRequest(
+        [property: JsonPropertyName("model")] string Model,
+        [property: JsonPropertyName("input")] string Input);
 }

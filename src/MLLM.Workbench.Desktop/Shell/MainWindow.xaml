@@ -6,6 +6,7 @@
         xmlns:dashboard="clr-namespace:MLLM.Workbench.Desktop.Pages.Dashboard"
         xmlns:doctor="clr-namespace:MLLM.Workbench.Desktop.Pages.Doctor"
         xmlns:installation="clr-namespace:MLLM.Workbench.Desktop.Pages.Installation"
+        xmlns:knowledge="clr-namespace:MLLM.Workbench.Desktop.Pages.Knowledge"
         mc:Ignorable="d"
         Title="M-LLM Windows AI Workbench"
         Width="1440" Height="900" MinWidth="1100" MinHeight="700"
@@ -15,6 +16,7 @@
     <DataTemplate DataType="{x:Type dashboard:DashboardPageViewModel}"><dashboard:DashboardPage /></DataTemplate>
     <DataTemplate DataType="{x:Type doctor:DoctorPageViewModel}"><doctor:DoctorPage /></DataTemplate>
     <DataTemplate DataType="{x:Type installation:InstallationPageViewModel}"><installation:InstallationPage /></DataTemplate>
+    <DataTemplate DataType="{x:Type knowledge:KnowledgePageViewModel}"><knowledge:KnowledgePage /></DataTemplate>
   </Window.Resources>
   <Grid>
     <Grid.ColumnDefinitions>
@@ -28,12 +30,13 @@
         <StackPanel Margin="8,12,8,28">
           <TextBlock Text="M-LLM" FontSize="26" FontWeight="SemiBold" Foreground="White" />
           <TextBlock Text="Windows AI Workbench" Margin="0,4,0,0" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock Text="Desktop Phase A" Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+          <TextBlock Text="Knowledge Phase C" Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource AccentBrush}" />
         </StackPanel>
         <StackPanel Grid.Row="1" x:Name="MainNavigation" AutomationProperties.AutomationId="MainNavigation">
           <Button x:Name="DashboardNavigation" AutomationProperties.AutomationId="DashboardNavigation" Style="{StaticResource NavigationButtonStyle}" Content="工作台" Command="{Binding NavigateDashboardCommand}" />
           <Button x:Name="DoctorNavigation" AutomationProperties.AutomationId="DoctorNavigation" Style="{StaticResource NavigationButtonStyle}" Content="系统体检 (Doctor)" Command="{Binding NavigateDoctorCommand}" />
           <Button x:Name="InstallationNavigation" AutomationProperties.AutomationId="InstallationNavigation" Style="{StaticResource NavigationButtonStyle}" Content="安装中心" Command="{Binding NavigateInstallationCommand}" />
+          <Button x:Name="KnowledgeNavigation" AutomationProperties.AutomationId="KnowledgeNavigation" Style="{StaticResource NavigationButtonStyle}" Content="知识工作台" Command="{Binding NavigateKnowledgeCommand}" />
         </StackPanel>
         <Border Grid.Row="2" Style="{StaticResource SafeGateCardStyle}">
           <StackPanel>
@@ -64,7 +67,7 @@
       </ScrollViewer>
 
       <Border Grid.Row="2" Background="{StaticResource HeaderBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
-        <TextBlock Margin="24,0" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Text="Desktop runs as standard user · privileged installation remains delegated to Universal Installer" />
+        <TextBlock Margin="24,0" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Text="Desktop runs as standard user · Safe Core + local knowledge stay non-privileged" />
       </Border>
     </Grid>
   </Grid>

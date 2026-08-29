@@ -1,0 +1,29 @@
+name: knowledge-phase-c
+
+on:
+  push:
+    branches:
+      - feature/knowledge-phase-c
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  knowledge-c1:
+    name: Knowledge Phase C1 / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: FTS5 evidence persistence
+        shell: powershell
+        run: dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release --filter KnowledgeStoreTests

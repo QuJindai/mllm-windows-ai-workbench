@@ -132,6 +132,11 @@ public sealed class KnowledgePageViewModelTests
             return Task.CompletedTask;
         }
 
+        public Task<KnowledgeWorkspaceSnapshot> BuildEmbeddingIndexAsync(
+            IProgress<KnowledgeEmbeddingProgress>? progress,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Snapshot);
+
         public Task<IReadOnlyList<KnowledgeSearchHit>> SearchAsync(
             string query,
             KnowledgeSearchMode mode,

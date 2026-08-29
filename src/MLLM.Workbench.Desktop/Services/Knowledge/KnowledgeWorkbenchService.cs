@@ -13,12 +13,16 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
 
     private readonly KnowledgeStore _store;
     private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly string? _embeddingConfigurationError;
     private readonly string _databasePath;
     private readonly SemaphoreSlim _initializeGate = new(1, 1);
     private bool _initialized;
     private bool _disposed;
 
-    public KnowledgeWorkbenchService(string dataRoot, IEmbeddingProvider? embeddingProvider = null)
+    public KnowledgeWorkbenchService(
+        string dataRoot,
+        IEmbeddingProvider? embeddingProvider = null,
+        string? embeddingConfigurationError = null)
     {
         if (string.IsNullOrWhiteSpace(dataRoot))
             throw new ArgumentException("Knowledge data root is required.", nameof(dataRoot));
@@ -26,20 +30,16 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
         var fullRoot = Path.GetFullPath(dataRoot);
         _databasePath = Path.Combine(fullRoot, "knowledge", "knowledge.db");
         _embeddingProvider = embeddingProvider;
+        _embeddingConfigurationError = string.IsNullOrWhiteSpace(embeddingConfigurationError)
+            ? null
+            : embeddingConfigurationError.Trim();
         _store = new KnowledgeStore(new KnowledgeStoreOptions(_databasePath));
     }
 
     public async Task<KnowledgeWorkspaceSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
-        var health = await _store.GetHealthAsync(cancellationToken).ConfigureAwait(false);
-
-        return new KnowledgeWorkspaceSnapshot(
-            DatabasePath: _databasePath,
-            Fts5Ready: health.Fts5Ready,
-            EmbeddingConfigured: _embeddingProvider is not null,
-            EmbeddingProvider: _embeddingProvider?.ProviderId,
-            EmbeddingModel: _embeddingProvider?.ModelId);
+        return await ReadSnapshotAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task ImportFileAsync(string path, CancellationToken cancellationToken)
@@ -73,6 +73,38 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
             await _store.IndexEmbeddingsAsync(documentId, _embeddingProvider, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<KnowledgeWorkspaceSnapshot> BuildEmbeddingIndexAsync(
+        IProgress<KnowledgeEmbeddingProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        if (_embeddingProvider is null)
+            throw new InvalidOperationException(GetEmbeddingUnavailableMessage());
+
+        var before = await _store
+            .GetEmbeddingIndexStatusAsync(_embeddingProvider, cancellationToken)
+            .ConfigureAwait(false);
+
+        IProgress<EmbeddingIndexProgress>? storeProgress = null;
+        if (progress is not null)
+        {
+            storeProgress = new InlineProgress<EmbeddingIndexProgress>(item =>
+            {
+                var completed = Math.Min(before.TotalChunks, before.IndexedChunks + item.CompletedChunks);
+                progress.Report(new KnowledgeEmbeddingProgress(
+                    Completed: completed,
+                    Total: before.TotalChunks,
+                    CurrentChunkId: item.ChunkId));
+            });
+        }
+
+        await _store
+            .IndexMissingEmbeddingsAsync(_embeddingProvider, storeProgress, cancellationToken)
+            .ConfigureAwait(false);
+
+        return await ReadSnapshotAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<KnowledgeSearchHit>> SearchAsync(
         string query,
         KnowledgeSearchMode mode,
@@ -81,20 +113,38 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
     {
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
-        return mode switch
+        switch (mode)
         {
-            KnowledgeSearchMode.Fts5 =>
-                await _store.SearchFtsAsync(query, limit, cancellationToken).ConfigureAwait(false),
-            KnowledgeSearchMode.Embedding when _embeddingProvider is null =>
-                throw new InvalidOperationException("Embedding provider is not configured."),
-            KnowledgeSearchMode.Embedding =>
-                await _store.SearchVectorAsync(query, _embeddingProvider!, limit, cancellationToken).ConfigureAwait(false),
-            KnowledgeSearchMode.Hybrid when _embeddingProvider is null =>
-                throw new InvalidOperationException("Embedding provider is not configured; Hybrid search is unavailable."),
-            KnowledgeSearchMode.Hybrid =>
-                await _store.SearchHybridAsync(query, _embeddingProvider!, limit, cancellationToken).ConfigureAwait(false),
-            _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported knowledge search mode.")
-        };
+            case KnowledgeSearchMode.Fts5:
+                return await _store.SearchFtsAsync(query, limit, cancellationToken).ConfigureAwait(false);
+
+            case KnowledgeSearchMode.Embedding:
+                if (_embeddingProvider is null)
+                    throw new InvalidOperationException(GetEmbeddingUnavailableMessage());
+                return await _store
+                    .SearchVectorAsync(query, _embeddingProvider, limit, cancellationToken)
+                    .ConfigureAwait(false);
+
+            case KnowledgeSearchMode.Hybrid:
+                if (_embeddingProvider is null)
+                    throw new InvalidOperationException(GetEmbeddingUnavailableMessage() + " Hybrid search is unavailable.");
+
+                var status = await _store
+                    .GetEmbeddingIndexStatusAsync(_embeddingProvider, cancellationToken)
+                    .ConfigureAwait(false);
+                if (status.PendingChunks > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Embedding index is incomplete ({status.IndexedChunks}/{status.TotalChunks}); build or resume the vector index before Hybrid search.");
+                }
+
+                return await _store
+                    .SearchHybridAsync(query, _embeddingProvider, limit, cancellationToken)
+                    .ConfigureAwait(false);
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported knowledge search mode.");
+        }
     }
 
     public void Dispose()
@@ -104,6 +154,31 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
         _store.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _initializeGate.Dispose();
     }
+
+    private async Task<KnowledgeWorkspaceSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var health = await _store.GetHealthAsync(cancellationToken).ConfigureAwait(false);
+        var indexStatus = _embeddingProvider is null
+            ? new EmbeddingIndexStatus(0, 0)
+            : await _store
+                .GetEmbeddingIndexStatusAsync(_embeddingProvider, cancellationToken)
+                .ConfigureAwait(false);
+
+        return new KnowledgeWorkspaceSnapshot(
+            DatabasePath: _databasePath,
+            Fts5Ready: health.Fts5Ready,
+            EmbeddingConfigured: _embeddingProvider is not null,
+            EmbeddingProvider: _embeddingProvider?.ProviderId,
+            EmbeddingModel: _embeddingProvider?.ModelId,
+            EmbeddingConfigurationError: _embeddingConfigurationError,
+            EmbeddingIndexedChunks: indexStatus.IndexedChunks,
+            EmbeddingTotalChunks: indexStatus.TotalChunks);
+    }
+
+    private string GetEmbeddingUnavailableMessage() =>
+        _embeddingConfigurationError is null
+            ? "Embedding provider is not configured."
+            : $"Embedding provider configuration is invalid: {_embeddingConfigurationError}";
 
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
@@ -195,5 +270,10 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KnowledgeWorkbenchService));
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 }

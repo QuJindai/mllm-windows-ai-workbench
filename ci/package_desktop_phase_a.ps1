@@ -32,7 +32,9 @@ try{
         'Start_M_LLM_Workbench.ps1',
         'M_LLM_GUI_PREFLIGHT.ps1',
         'M_LLM_PHYSICAL_PREFLIGHT.ps1',
-        'runtime\WorkbenchBackend.ps1'
+        'runtime\WorkbenchBackend.ps1',
+        'runtime\WorkbenchRuntimeAdapter.psm1',
+        'runtime\WorkbenchRuntimeLifecycle.ps1'
     )){Copy-RequiredFile -Relative $relative}
 
     foreach($dirName in @('installer','config')){
@@ -71,7 +73,7 @@ try{
     $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($shaFile,($sha+'  '+[IO.Path]::GetFileName($zip)+[Environment]::NewLine),[Text.Encoding]::ASCII)
     $size=(Get-Item -LiteralPath $zip).Length
-    Write-Host "DESKTOP_PACKAGE=PASS zip=$zip bytes=$size sha256=$sha pre_materialized=PASS self_contained=PASS"
+    Write-Host "DESKTOP_PACKAGE=PASS zip=$zip bytes=$size sha256=$sha pre_materialized=PASS self_contained=PASS runtime_complete=PASS"
 }finally{
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 }

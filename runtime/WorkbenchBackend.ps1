@@ -173,7 +173,12 @@ function Require-PayloadString {
 
 function Assert-OperationId {
     param($Payload)
-    $operationId=Require-PayloadString -Payload $Payload -Name 'operationId' -ErrorCode 'INVALID_OPERATION_ID'
+    return (Require-PayloadString -Payload $Payload -Name 'operationId' -ErrorCode 'INVALID_OPERATION_ID')
+}
+
+function Assert-PresetOperationId {
+    param($Payload)
+    $operationId=Assert-OperationId -Payload $Payload
     if($operationId -notmatch '^[0-9a-fA-F]{32}$'){throw ('INVALID_OPERATION_ID|'+$operationId)}
     return $operationId
 }
@@ -295,7 +300,7 @@ function Resolve-ComponentPresetDefinition {
 function Invoke-ComponentPresetInstall {
     param($Payload)
     Initialize-SafeCore
-    [void](Assert-OperationId -Payload $Payload)
+    [void](Assert-PresetOperationId -Payload $Payload)
     $presetId=Require-PayloadString -Payload $Payload -Name 'presetId' -ErrorCode 'PRESET_NOT_ALLOWED'
     $preset=Resolve-ComponentPresetDefinition -PresetId $presetId
     $runDir=Start-MLLMRunLog -Root $DataRoot

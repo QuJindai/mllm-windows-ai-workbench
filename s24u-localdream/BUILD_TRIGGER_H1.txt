@@ -1,0 +1,3 @@
+S24U LocalDream Harness H1 validation build trigger
+workflow_revision=a727cf4162b26499fb6b5e18bca09a0e4af3cb20
+baseline=a7666f6198412a58c6eb1eacc28828aa40c7d7ae

@@ -24,6 +24,9 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Safe Core preset inventory
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-SafeCorePresetInventoryProbe.ps1
       - name: Knowledge core tests
         shell: powershell
         run: dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release

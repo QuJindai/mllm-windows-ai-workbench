@@ -20,7 +20,11 @@ public sealed record KnowledgeSearchHit(
     string Title,
     int Ordinal,
     string Excerpt,
-    double Score);
+    double Score)
+{
+    public string? Locator =>
+        KnowledgeChunkLocator.TryGetLocator(ChunkId, out var locator) ? locator : null;
+}
 
 public sealed record KnowledgeStoreHealth(
     bool DatabaseReady,

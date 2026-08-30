@@ -33,6 +33,9 @@ jobs:
       - name: Real knowledge workspace service
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgeWorkbenchServiceTests
+      - name: PDF DOCX document import
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgeDocumentImportTests
       - name: Local embedding runtime end-to-end
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter LocalEmbeddingRuntimeEndToEndTests

@@ -1,0 +1,42 @@
+name: knowledge-c-release
+
+on:
+  push:
+    branches:
+      - feature/knowledge-phase-c
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: knowledge-c-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Knowledge C7 Release / windows-2025
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: C7 release package and installed smoke
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ci/Invoke-C7ReleasePackageSmoke.ps1 -OutputRoot artifacts/c7-release
+      - name: Upload verified C7 release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLLM-Workbench-C7-win-x64
+          path: |
+            artifacts/c7-release/MLLM_WORKBENCH_C7_OFFLINE_INSTALLER_win-x64.zip
+            artifacts/c7-release/MLLM_WORKBENCH_C7_OFFLINE_INSTALLER_win-x64.zip.sha256
+            artifacts/c7-release/MLLM_WORKBENCH_C7_PORTABLE_win-x64.zip
+            artifacts/c7-release/MLLM_WORKBENCH_C7_PORTABLE_win-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

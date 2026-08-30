@@ -16,5 +16,11 @@ $definition=[string]$cmd.Definition
 Write-Host 'SAFE_CORE_PRESET_DEFINITION_BEGIN'
 Write-Host $definition
 Write-Host 'SAFE_CORE_PRESET_DEFINITION_END'
-if($registered.Count -lt 8){throw ('Expected at least 8 registered component tasks, got '+$registered.Count)}
+if($registered.Count -ne 8){throw ('Expected exactly 8 registered component tasks, got '+$registered.Count)}
+$policy=Get-Content -LiteralPath (Join-Path $root 'config\task-policy.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$full=@($policy.presets.'Full Setup')
+$missing=@($registered | Where-Object {$full -notcontains [string]$_.Id} | ForEach-Object {[string]$_.Id})
+if($missing.Count -gt 0){throw ('Full Setup does not cover all registered tasks: '+($missing -join ','))}
+if($full.Count -ne $registered.Count){throw ('Full Setup task count mismatch expected='+$registered.Count+' actual='+$full.Count)}
+Write-Host ('SAFE_CORE_FULL_SETUP=PASS tasks='+($full -join ','))
 Write-Host 'SAFE_CORE_PRESET_INVENTORY=PASS'

@@ -44,6 +44,14 @@ function Initialize-SafeCore {
     $bootstrap=Join-Path $ProjectRoot 'Bootstrap_SafeCore.ps1'
     if(-not(Test-Path -LiteralPath $bootstrap -PathType Leaf)){throw 'Bootstrap_SafeCore.ps1 missing'}
     & $bootstrap -ProjectRoot $ProjectRoot | Out-Null
+
+    foreach($name in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){
+        $module=Join-Path $ProjectRoot ('engine\'+$name+'.psm1')
+        if(-not(Test-Path -LiteralPath $module -PathType Leaf)){throw ('Required Safe Core engine module missing: '+$module)}
+        Import-Module $module -Force -ErrorAction Stop
+    }
+    Import-MLLMTasks -ProjectRoot $ProjectRoot
+
     foreach($module in @(
         (Join-Path $ProjectRoot 'gui\GuiAdapter.psm1'),
         (Join-Path $ProjectRoot 'installer\InstallerPaths.psm1'),
@@ -165,7 +173,9 @@ function Require-PayloadString {
 
 function Assert-OperationId {
     param($Payload)
-    return (Require-PayloadString -Payload $Payload -Name 'operationId' -ErrorCode 'INVALID_OPERATION_ID')
+    $operationId=Require-PayloadString -Payload $Payload -Name 'operationId' -ErrorCode 'INVALID_OPERATION_ID'
+    if($operationId -notmatch '^[0-9a-fA-F]{32}$'){throw ('INVALID_OPERATION_ID|'+$operationId)}
+    return $operationId
 }
 
 function Assert-ServiceId {
@@ -248,6 +258,59 @@ function Invoke-PhaseBServiceLogs {
     return (Get-MLLMWorkbenchServiceLogs -DataRoot $DataRoot -ServiceId $serviceId -TailLines $tail)
 }
 
+function Get-ComponentPresetDefinitions {
+    Initialize-SafeCore
+    $policyPath=Join-Path $ProjectRoot 'config\task-policy.json'
+    if(-not(Test-Path -LiteralPath $policyPath -PathType Leaf)){throw ('PRESET_POLICY_MISSING|'+$policyPath)}
+    $policy=Get-Content -LiteralPath $policyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $specs=@(
+        [ordered]@{id='full-setup';name='Full Setup';description='完整本地 AI 栈：Git、Git LFS、Python、ModelScope、llama.cpp、Qwen3.5-4B、Local API、Web Workbench';recommended=$true},
+        [ordered]@{id='local-ai-fast';name='Local AI Fast';description='本地快速推理：Python、ModelScope、llama.cpp、Qwen3.5-4B、Local API';recommended=$false},
+        [ordered]@{id='core';name='Core';description='基础运行环境：Python、ModelScope、llama.cpp';recommended=$false},
+        [ordered]@{id='web-workbench';name='Web Workbench';description='本地 AI 栈加 Web Workbench';recommended=$false},
+        [ordered]@{id='developer-tools';name='Developer Tools';description='开发工具：Git、Git LFS';recommended=$false}
+    )
+    $rows=New-Object Collections.Generic.List[object]
+    foreach($spec in $specs){
+        $presetName=[string]$spec.name
+        if(-not($policy.presets.PSObject.Properties.Name -contains $presetName)){throw ('PRESET_POLICY_INVALID|'+$presetName)}
+        $rows.Add([ordered]@{
+            id=[string]$spec.id
+            displayName=$presetName
+            description=[string]$spec.description
+            recommended=[bool]$spec.recommended
+            components=@($policy.presets.$presetName)
+        })
+    }
+    return $rows.ToArray()
+}
+
+function Resolve-ComponentPresetDefinition {
+    param([Parameter(Mandatory=$true)][string]$PresetId)
+    $rows=@(Get-ComponentPresetDefinitions | Where-Object {[string]$_.id -eq $PresetId})
+    if($rows.Count -ne 1){throw ('PRESET_NOT_ALLOWED|'+$PresetId)}
+    return $rows[0]
+}
+
+function Invoke-ComponentPresetInstall {
+    param($Payload)
+    Initialize-SafeCore
+    [void](Assert-OperationId -Payload $Payload)
+    $presetId=Require-PayloadString -Payload $Payload -Name 'presetId' -ErrorCode 'PRESET_NOT_ALLOWED'
+    $preset=Resolve-ComponentPresetDefinition -PresetId $presetId
+    $runDir=Start-MLLMRunLog -Root $DataRoot
+    $results=@(Invoke-MLLMPreset -Preset ([string]$preset.displayName) -ProjectRoot $ProjectRoot -DataRoot $DataRoot -NetworkMode $NetworkMode -RunDir $runDir)
+    $mapped=New-Object Collections.Generic.List[object]
+    foreach($item in $results){
+        $mapped.Add([ordered]@{
+            id=[string](Get-ObjectValue -Object $item -Name 'id' -Default 'unknown')
+            status=[string](Get-ObjectValue -Object $item -Name 'status' -Default 'UNKNOWN')
+            summary=[string](Get-ObjectValue -Object $item -Name 'summary' -Default '')
+        })
+    }
+    return [ordered]@{presetId=$presetId;displayName=[string]$preset.displayName;results=$mapped.ToArray()}
+}
+
 function New-RpcError {
     param([string]$Code,[string]$Message,[bool]$Recoverable=$true)
     return [ordered]@{code=$Code;message=$Message;stage='RPC';recoverable=$Recoverable;details=$null}
@@ -275,10 +338,12 @@ $MethodTable=@{
     'service.stop' = { param($Payload) return (Invoke-PhaseBServiceAction -Payload $Payload -Action stop) }
     'service.restart' = { param($Payload) return (Invoke-PhaseBServiceAction -Payload $Payload -Action restart) }
     'service.logs' = { param($Payload) return (Invoke-PhaseBServiceLogs -Payload $Payload) }
+    'components.presets' = { param($Payload) return [ordered]@{presets=@(Get-ComponentPresetDefinitions)} }
+    'components.install_preset' = { param($Payload) return (Invoke-ComponentPresetInstall -Payload $Payload) }
 }
 
 $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-$adminSid=New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
+$adminSid=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
 $pipeSecurity=New-Object System.IO.Pipes.PipeSecurity
 $rights=[System.IO.Pipes.PipeAccessRights]::ReadWrite
 $allow=[Security.AccessControl.AccessControlType]::Allow

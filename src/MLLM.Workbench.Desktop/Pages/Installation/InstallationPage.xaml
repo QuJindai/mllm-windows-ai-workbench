@@ -16,6 +16,31 @@
 
     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
       <StackPanel>
+        <TextBlock Text="推荐组件安装" FontSize="17" FontWeight="SemiBold" Foreground="White"/>
+        <TextBlock Text="Full Setup 会按依赖顺序 Detect → Install → Verify：Git / Git LFS / Python 3.12 / ModelScope / llama.cpp / Qwen3.5-4B Q4_K_M / Local OpenAI API / Web Workbench。已通过检测的组件自动跳过。" Margin="0,7,0,12" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <ComboBox Grid.Column="0"
+                    AutomationProperties.AutomationId="ComponentPresetSelector"
+                    ItemsSource="{Binding Presets}"
+                    SelectedItem="{Binding SelectedPreset, Mode=TwoWay}"
+                    DisplayMemberPath="DisplayName"
+                    MinHeight="38" Padding="8"/>
+          <Button Grid.Column="1"
+                  AutomationProperties.AutomationId="InstallComponentPresetButton"
+                  Content="安装所选方案"
+                  Command="{Binding InstallSelectedPresetCommand}"
+                  IsEnabled="{Binding CanInstallPreset}"
+                  Style="{StaticResource ActionButtonStyle}"
+                  Margin="10,0,0,0"/>
+        </Grid>
+        <TextBlock Text="{Binding SelectedPreset.Description, Mode=OneWay}" Margin="0,10,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+        <TextBlock Text="模型下载体积较大；实际下载、校验和安装进度由 Safe Core 任务状态决定。Embedding/Hybrid 仍使用已配置的本机 loopback Embedding provider，不会自动回退云端。" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+      <StackPanel>
         <TextBlock Text="组件与依赖" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
         <Grid Margin="0,12,0,7"><Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.8*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions><TextBlock Text="组件" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Grid.Column="1" Text="状态" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Grid.Column="2" Text="详情" Foreground="{StaticResource MutedTextBrush}"/></Grid>
         <ItemsControl ItemsSource="{Binding Components}"><ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,9"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.8*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Id}" Foreground="White"/><TextBlock Grid.Column="1" Text="{Binding Health}" Foreground="{StaticResource AccentBrush}"/><TextBlock Grid.Column="2" Text="{Binding Summary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Grid></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
@@ -24,9 +49,9 @@
 
     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
       <StackPanel>
-        <TextBlock Text="操作" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+        <TextBlock Text="版本安装 / 恢复" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
         <WrapPanel Margin="0,14,0,0">
-          <Button Content="安装 / 恢复" Style="{StaticResource ActionButtonStyle}" Command="{Binding InstallResumeCommand}" IsEnabled="{Binding CanInstallResume}"/>
+          <Button Content="安装 / 恢复版本" Style="{StaticResource ActionButtonStyle}" Command="{Binding InstallResumeCommand}" IsEnabled="{Binding CanInstallResume}"/>
           <Button Content="重试获取" Style="{StaticResource ActionButtonStyle}" Command="{Binding RetryAcquisitionCommand}" IsEnabled="{Binding CanRetryAcquisition}"/>
           <Button x:Name="ImportOfflineButton" AutomationProperties.AutomationId="ImportOfflineButton" Content="导入离线包" Style="{StaticResource ActionButtonStyle}" Click="ImportOfflineButton_OnClick" IsEnabled="{Binding CanImportOffline}"/>
           <Button Content="回滚" Style="{StaticResource ActionButtonStyle}" Command="{Binding RollbackCommand}" IsEnabled="{Binding CanRollback}"/>
@@ -36,6 +61,6 @@
       </StackPanel>
     </Border>
 
-    <Border Style="{StaticResource SafeGateCardStyle}"><TextBlock Text="Desktop 不直接执行 winget / msiexec / DISM / PNPUTIL。需要管理员权限时，由 Universal Installer 自己发起 UAC，并继续使用现有断点、SHA256、安全解压和回滚事务。" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Border>
+    <Border Style="{StaticResource SafeGateCardStyle}"><TextBlock Text="Desktop 不开放任意 PowerShell / shell / eval。组件安装只允许固定 preset；版本安装、离线导入和回滚继续由 Universal Installer 负责。" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Border>
   </StackPanel>
 </UserControl>

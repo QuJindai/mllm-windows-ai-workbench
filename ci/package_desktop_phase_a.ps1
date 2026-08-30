@@ -37,11 +37,15 @@ try{
         'runtime\WorkbenchRuntimeLifecycle.ps1'
     )){Copy-RequiredFile -Relative $relative}
 
-    foreach($dirName in @('installer','config')){
+    foreach($dirName in @('installer','config','web')){
         $sourceDir=Join-Path $root $dirName
         if(-not(Test-Path -LiteralPath $sourceDir -PathType Container)){throw "Required package source directory missing: $dirName"}
         Copy-Item -LiteralPath $sourceDir -Destination $stage -Recurse -Force
     }
+    foreach($relative in @('web\backend\app.py','web\backend\engine_bridge.py','web\backend\requirements.txt')){
+        if(-not(Test-Path -LiteralPath (Join-Path $stage $relative) -PathType Leaf)){throw "Web runtime staging file missing: $relative"}
+    }
+
     $stageCi=Join-Path $stage 'ci'
     New-Item -ItemType Directory -Force -Path $stageCi | Out-Null
     $overlay=Join-Path $root 'ci\overlay'
@@ -73,7 +77,7 @@ try{
     $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($shaFile,($sha+'  '+[IO.Path]::GetFileName($zip)+[Environment]::NewLine),[Text.Encoding]::ASCII)
     $size=(Get-Item -LiteralPath $zip).Length
-    Write-Host "DESKTOP_PACKAGE=PASS zip=$zip bytes=$size sha256=$sha pre_materialized=PASS self_contained=PASS runtime_complete=PASS"
+    Write-Host "DESKTOP_PACKAGE=PASS zip=$zip bytes=$size sha256=$sha pre_materialized=PASS self_contained=PASS runtime_complete=PASS web_runtime_complete=PASS"
 }finally{
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 }

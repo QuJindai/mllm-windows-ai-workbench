@@ -7,7 +7,7 @@ from pathlib import Path
 MARKER = "S24U HARNESS · RAW"
 APP_ID = 'applicationId = "io.github.xororz.localdream.s24uharness"'
 VERSION = 'versionName = "2.8.1-s24u-h1"'
-COMPILE_SDK = "compileSdk = 36"
+COMPILE_SDK = "compileSdk = 37"
 
 
 def require(condition: bool, message: str) -> None:
@@ -33,7 +33,7 @@ def main() -> int:
 
     require(APP_ID in gradle, "custom side-by-side applicationId is missing")
     require(VERSION in gradle, "S24U harness version marker is missing")
-    require(COMPILE_SDK in gradle, "CI-compatible compileSdk 36 override is missing")
+    require(COMPILE_SDK in gradle, "upstream compileSdk 37 must be preserved")
     require(MARKER in screen, "RAW harness UI marker is missing")
     require("RAW INPUT →" in screen, "raw prompt trace is missing")
     require("NEGATIVE →" in screen, "negative prompt trace is missing")

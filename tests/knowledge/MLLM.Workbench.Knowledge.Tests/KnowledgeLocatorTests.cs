@@ -5,7 +5,7 @@ namespace MLLM.Workbench.Knowledge.Tests;
 public sealed class KnowledgeLocatorTests
 {
     [Fact]
-    public async Task Fts_and_rag_preserve_source_locator()
+    public async Task Fts_and_rag_preserve_source_locator_from_stable_chunk_id()
     {
         var root = NewTempRoot();
         var databasePath = Path.Combine(root, "knowledge.db");
@@ -13,12 +13,13 @@ public sealed class KnowledgeLocatorTests
         {
             await using var store = new KnowledgeStore(new KnowledgeStoreOptions(databasePath));
             await store.InitializeAsync(CancellationToken.None);
+            var chunkId = KnowledgeChunkLocator.CreateChunkId("doc-pdf", "page=2", 0);
             await store.UpsertDocumentAsync(
                 new KnowledgeDocument(
                     "doc-pdf",
                     @"C:\evidence\manual.pdf",
                     "manual",
-                    [new KnowledgeChunk("doc-pdf:000001", 0, "vehicle software traceability evidence", "page=2")]),
+                    [new KnowledgeChunk(chunkId, 0, "vehicle software traceability evidence")]),
                 CancellationToken.None);
 
             var hits = await store.SearchFtsAsync("software traceability", 10, CancellationToken.None);
@@ -37,7 +38,7 @@ public sealed class KnowledgeLocatorTests
     }
 
     [Fact]
-    public async Task Initialize_migrates_pre_locator_database_without_data_loss()
+    public async Task Existing_database_without_locator_schema_remains_compatible_and_keeps_legacy_rows()
     {
         var root = NewTempRoot();
         var databasePath = Path.Combine(root, "knowledge.db");
@@ -72,12 +73,13 @@ public sealed class KnowledgeLocatorTests
 
             await using var store = new KnowledgeStore(new KnowledgeStoreOptions(databasePath));
             await store.InitializeAsync(CancellationToken.None);
+            var chunkId = KnowledgeChunkLocator.CreateChunkId("new", "page=4", 0);
             await store.UpsertDocumentAsync(
                 new KnowledgeDocument(
                     "new",
                     "new.pdf",
                     "new",
-                    [new KnowledgeChunk("new:000000", 0, "new locator evidence", "page=4")]),
+                    [new KnowledgeChunk(chunkId, 0, "new locator evidence")]),
                 CancellationToken.None);
 
             var hits = await store.SearchFtsAsync("locator evidence", 10, CancellationToken.None);
@@ -85,12 +87,9 @@ public sealed class KnowledgeLocatorTests
 
             await using var verify = new SqliteConnection($"Data Source={databasePath}");
             await verify.OpenAsync(CancellationToken.None);
-            await using var pragma = verify.CreateCommand();
-            pragma.CommandText = "PRAGMA table_info(chunks);";
-            await using var reader = await pragma.ExecuteReaderAsync(CancellationToken.None);
-            var columns = new List<string>();
-            while (await reader.ReadAsync(CancellationToken.None)) columns.Add(reader.GetString(1));
-            Assert.Contains("locator", columns);
+            await using var count = verify.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM chunks WHERE chunk_id = 'legacy:000000';";
+            Assert.Equal(1L, Convert.ToInt64(await count.ExecuteScalarAsync(CancellationToken.None)));
         }
         finally
         {

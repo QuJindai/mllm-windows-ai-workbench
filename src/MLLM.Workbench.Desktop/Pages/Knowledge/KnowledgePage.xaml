@@ -83,7 +83,7 @@
           <Button Grid.Column="1" AutomationProperties.AutomationId="KnowledgeBrowseButton" Content="选择文件" Click="BrowseKnowledgeFile_Click" Style="{StaticResource ActionButtonStyle}" Margin="10,0,0,0" />
           <Button Grid.Column="2" AutomationProperties.AutomationId="KnowledgeImportButton" Content="导入并建索引" Command="{Binding ImportCommand}" Style="{StaticResource ActionButtonStyle}" Margin="10,0,0,0" />
         </Grid>
-        <TextBlock Text="当前真实支持 Markdown / Text（.md、.markdown、.txt）。PDF 尚未接入解析器，不会伪装导入。" Margin="0,10,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+        <TextBlock Text="当前真实支持 Markdown / Text、文本型 PDF（保留页码定位）和 DOCX（保留段落定位）。扫描或纯图片 PDF 需要 OCR，当前不会伪装识别。" Margin="0,10,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
       </StackPanel>
     </Border>
 
@@ -103,9 +103,10 @@
         </Grid>
         <DataGrid AutomationProperties.AutomationId="KnowledgeResults" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" Margin="0,10,0,0" MinHeight="230" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}" GridLinesVisibility="Horizontal">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="150" />
-            <DataGridTextColumn Header="来源" Binding="{Binding SourceUri}" Width="220" />
-            <DataGridTextColumn Header="Chunk" Binding="{Binding ChunkId}" Width="170" />
+            <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="140" />
+            <DataGridTextColumn Header="来源" Binding="{Binding SourceUri}" Width="210" />
+            <DataGridTextColumn Header="定位" Binding="{Binding Locator}" Width="100" />
+            <DataGridTextColumn Header="Chunk" Binding="{Binding ChunkId}" Width="160" />
             <DataGridTextColumn Header="序号" Binding="{Binding Ordinal}" Width="60" />
             <DataGridTextColumn Header="分数" Binding="{Binding Score, StringFormat=0.0000}" Width="80" />
             <DataGridTextColumn Header="证据" Binding="{Binding Excerpt}" Width="*" />
@@ -117,7 +118,7 @@
     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
       <StackPanel>
         <TextBlock Text="RAG 证据上下文" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-        <TextBlock Text="每条上下文带稳定 [K1]… 引用，并保留 source/chunk，可直接用于本地模型回答。" Margin="0,6,0,10" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+        <TextBlock Text="每条上下文带稳定 [K1]… 引用，并保留 source/chunk/locator，可直接用于本地模型回答并回查页码或段落。" Margin="0,6,0,10" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
         <TextBox AutomationProperties.AutomationId="KnowledgeRagContext" Text="{Binding RagContextText}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="180" Padding="12" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}" />
       </StackPanel>
     </Border>

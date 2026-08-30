@@ -1,0 +1,46 @@
+name: S24U LocalDream 154 Converter Inspect
+
+on:
+  push:
+    branches:
+      - feature/s24u-localdream-154-20260831
+    paths:
+      - 's24u-localdream/converter/**'
+      - '.github/workflows/s24u-localdream-154-converter-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-official-converter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official converter kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-all-errors \
+            https://chino.icu/local-dream/convertsdxl.zip \
+            -o convertsdxl.zip
+          sha256sum convertsdxl.zip | tee convertsdxl.zip.sha256
+          mkdir converter-kit
+          unzip -q convertsdxl.zip -d converter-kit
+      - name: Inspect exact 77-token shape sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/converter/inspect_official_sdxl_converter.py \
+            converter-kit --output converter-inspection.json | tee converter-inspection.log
+      - name: Upload inspection evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-localdream-154-converter-inspection
+          path: |
+            convertsdxl.zip.sha256
+            converter-inspection.json
+            converter-inspection.log
+          if-no-files-found: error
+          retention-days: 3

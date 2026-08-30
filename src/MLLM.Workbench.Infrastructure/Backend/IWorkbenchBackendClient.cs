@@ -1,3 +1,4 @@
+using MLLM.Workbench.Contracts.Components;
 using MLLM.Workbench.Contracts.Models;
 using MLLM.Workbench.Contracts.Protocol;
 using MLLM.Workbench.Contracts.Services;
@@ -15,6 +16,12 @@ public interface IWorkbenchBackendClient : IAsyncDisposable
 
     Task<BackendCapabilitiesSnapshot> GetCapabilitiesAsync(CancellationToken cancellationToken) =>
         InvokeAsync<BackendCapabilitiesSnapshot>("system.capabilities", null, cancellationToken);
+
+    Task<ComponentInstallResult> InstallComponentPresetAsync(ComponentPresetInstallRequest request, CancellationToken cancellationToken) =>
+        InvokeAsync<ComponentInstallResult>("components.installPreset", request, cancellationToken);
+
+    Task<ComponentInstallResult> InstallComponentTaskAsync(ComponentTaskInstallRequest request, CancellationToken cancellationToken) =>
+        InvokeAsync<ComponentInstallResult>("components.installTask", request, cancellationToken);
 
     Task<ModelSnapshot> GetModelsAsync(CancellationToken cancellationToken) =>
         InvokeAsync<ModelSnapshot>("models.snapshot", null, cancellationToken);

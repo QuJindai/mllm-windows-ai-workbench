@@ -26,14 +26,17 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Install Android 17 preview SDK
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager \
-            'platforms;android-36' \
+          sdkmanager --list --channel=3 | grep -F 'platforms;android-37' | head -5 | tee android37-packages.txt
+          test -s android37-packages.txt
+          sdkmanager --channel=3 \
+            'platforms;android-37' \
             'build-tools;36.0.0' \
             'platform-tools'
+          test -s "$ANDROID_HOME/platforms/android-37/android.jar"
 
       - name: Clone pinned Local Dream baseline
         shell: bash
@@ -147,6 +150,7 @@ jobs:
             APK_SIZE.txt
             apk-badging.txt
             apk-files.txt
+            android37-packages.txt
             native-runtime-files.txt
             qnn-runtime-files.txt
             red-test.log

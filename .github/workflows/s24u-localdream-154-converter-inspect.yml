@@ -26,6 +26,7 @@ jobs:
             https://chino.icu/local-dream/convertsdxl.zip \
             -o convertsdxl.zip
           sha256sum convertsdxl.zip | tee convertsdxl.zip.sha256
+          grep -q '^9085c3d1440b229376e58cef972248f6095c0af3d1c2eb131e2da024db069998 ' convertsdxl.zip.sha256
           mkdir converter-kit
           unzip -q convertsdxl.zip -d converter-kit
       - name: Inspect exact 77-token shape sites
@@ -42,6 +43,40 @@ jobs:
             converter-kit \
             --json converter-context.json \
             --text converter-context.txt | tee converter-context.log
+      - name: TDD baseline contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/converter/test_converter_154_patch.py \
+            converter-kit --expect baseline | tee converter-baseline.log
+      - name: TDD RED - 154 contract must fail before patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-localdream/converter/test_converter_154_patch.py \
+            converter-kit --expect patched > converter-red.log 2>&1
+          code=$?
+          set -e
+          cat converter-red.log
+          if [ "$code" -eq 0 ]; then
+            echo 'RED gate failed: stock converter unexpectedly satisfies 154 contract' >&2
+            exit 1
+          fi
+          echo 'RED_EXPECTED_FAIL=PASS' | tee -a converter-red.log
+      - name: Apply fingerprinted 154 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/converter/patch_converter_154.py converter-kit | tee converter-patch.log
+      - name: TDD GREEN - 154 converter contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/converter/test_converter_154_patch.py \
+            converter-kit --expect patched | tee converter-green.log
+          grep -R -n -E 'torch.randn\(1, 154, 2048\)|S24U_TEXT_SEQ_LEN|TEXT_SEQ_LEN|expected UNet text context' \
+            converter-kit/convertsdxl > converter-patched-sites.txt
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
@@ -53,5 +88,10 @@ jobs:
             converter-context.json
             converter-context.txt
             converter-context.log
+            converter-baseline.log
+            converter-red.log
+            converter-patch.log
+            converter-green.log
+            converter-patched-sites.txt
           if-no-files-found: error
           retention-days: 3

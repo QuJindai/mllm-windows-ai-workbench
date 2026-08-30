@@ -164,18 +164,18 @@ public sealed class KnowledgeWorkbenchServiceTests
     }
 
     [Fact]
-    public async Task Unsupported_binary_document_is_rejected_instead_of_fake_import()
+    public async Task Unsupported_legacy_binary_document_is_rejected_instead_of_fake_import()
     {
         var root = NewTempRoot();
-        var source = Path.Combine(root, "manual.pdf");
-        await File.WriteAllBytesAsync(source, [0x25, 0x50, 0x44, 0x46], CancellationToken.None);
+        var source = Path.Combine(root, "manual.doc");
+        await File.WriteAllBytesAsync(source, [0xD0, 0xCF, 0x11, 0xE0], CancellationToken.None);
 
         try
         {
             using var service = new KnowledgeWorkbenchService(root);
             var error = await Assert.ThrowsAsync<NotSupportedException>(() =>
                 service.ImportFileAsync(source, CancellationToken.None));
-            Assert.Contains("pdf", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(".doc", error.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

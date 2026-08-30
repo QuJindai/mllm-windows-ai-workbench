@@ -42,21 +42,26 @@ def main() -> int:
     require("kS24uClipEffectiveMaxLength" in text_encoder, "effective long prompt maximum missing")
     require("splitPromptChunks" in text_encoder, "native prompt chunk splitter missing")
     require("prefixBytesWithinBudget" in text_encoder, "token-aware split boundary missing")
-    require("processPromptPair(" in pipeline, "existing fixed-shape prompt encoder not reused")
     require("encodePromptChunks" in pipeline, "multi-chunk conditioning path missing")
+    require("chunk_req.prompt = chunk_prompt" in pipeline, "positive chunks are not fed as independent requests")
+    require("chunk_req.negative_prompt = chunk_negative" in pipeline, "negative chunks are not independently paired")
+    require("result.push_back(encodePrompts(chunk_req))" in pipeline, "chunk conditioning does not reuse the fixed-shape encoder")
+    require("cond.seq_len = textSeqLen()" in pipeline, "conditioning sequence length is not sourced from fixed model context")
+    require("virtual int textSeqLen() const { return 77; }" in pipeline, "SD/SDXL individual context is no longer fixed at 77")
     require("std::vector<Conditioning> conds" in pipeline, "multi-conditioning generation state missing")
     require("for (auto &chunk_cond : conds)" in pipeline, "per-chunk UNet loop missing")
     require("noise_pred = xt::eval(noise_pred / (float)conds.size())" in pipeline,
             "chunk noise-prediction fusion missing")
     require("kS24uClipEffectiveMaxLength" in main_cpp, "/tokenize is not exposing expanded prompt budget")
 
-    # Hard invariant: H2 long prompt must never enlarge the individual CLIP/QNN graph shape.
-    require("processPromptPair(chunk_prompt, chunk_negative, kS24uClipChunkLen)" in pipeline,
-            "chunk encoder does not pin every call to 77")
+    # Hard invariant: the effective 302-token budget is a harness-level multipass budget,
+    # never one oversized CLIP/QNN tensor.
     require("processWeightedPrompt(positive, kS24uClipEffectiveMaxLength)" not in text_encoder,
             "single oversized CLIP call detected")
+    require("processPromptPair(\n      req.prompt, req.negative_prompt, cond.seq_len)" in pipeline,
+            "upstream per-conditioning fixed-length processPromptPair path changed unexpectedly")
 
-    require('getenv("QNN_SDK_ROOT")' in cmake, "CI-selectable QAIRT root missing")
+    require("ENV{QNN_SDK_ROOT}" in cmake, "CI-selectable QAIRT root missing")
     require('/data/android-ndk-r28' not in presets, "hard-coded local Android NDK path remains")
 
     print("H2_SOURCE_CONTRACT_PASS")

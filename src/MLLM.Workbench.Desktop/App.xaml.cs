@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
@@ -36,6 +37,7 @@ public partial class App : Application
             if (smoke)
             {
                 await VerifyBackendPingAsync(_host.Services.GetRequiredService<IWorkbenchBackendClient>()).ConfigureAwait(true);
+                WriteSmokeDiagnostic("DESKTOP_SMOKE=PASS");
                 Shutdown(0);
                 return;
             }
@@ -46,6 +48,7 @@ public partial class App : Application
             if (smokeKnowledge)
             {
                 await VerifyKnowledgeNavigationAsync(viewModel, _host.Services.GetRequiredService<MainWindow>()).ConfigureAwait(true);
+                WriteSmokeDiagnostic("KNOWLEDGE_NAVIGATION_SMOKE=PASS fts5=" + viewModel.Knowledge.Fts5Status);
                 Shutdown(0);
                 return;
             }
@@ -60,7 +63,9 @@ public partial class App : Application
         {
             if (smoke || smokeKnowledge)
             {
-                try { Console.Error.WriteLine((smokeKnowledge ? "KNOWLEDGE_NAVIGATION_SMOKE=FAIL " : "DESKTOP_SMOKE=FAIL ") + ex); } catch { }
+                var prefix = smokeKnowledge ? "KNOWLEDGE_NAVIGATION_SMOKE=FAIL" : "DESKTOP_SMOKE=FAIL";
+                WriteSmokeDiagnostic(prefix + Environment.NewLine + ex);
+                try { Console.Error.WriteLine(prefix + " " + ex); } catch { }
                 Shutdown(2);
                 return;
             }
@@ -82,6 +87,22 @@ public partial class App : Application
             }
             MessageBox.Show(ex.Message, "M-LLM Workbench startup error", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(2);
+        }
+    }
+
+    private static void WriteSmokeDiagnostic(string text)
+    {
+        try
+        {
+            var path = Environment.GetEnvironmentVariable("MLLM_SMOKE_DIAGNOSTIC_PATH");
+            if (string.IsNullOrWhiteSpace(path)) return;
+            var full = Path.GetFullPath(path);
+            var parent = Path.GetDirectoryName(full);
+            if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
+            File.WriteAllText(full, text);
+        }
+        catch
+        {
         }
     }
 
@@ -126,7 +147,6 @@ public partial class App : Application
             if (!string.IsNullOrWhiteSpace(viewModel.Knowledge.LastError))
                 throw new InvalidOperationException("Knowledge workspace refresh failed: " + viewModel.Knowledge.LastError);
 
-            Console.WriteLine("KNOWLEDGE_NAVIGATION_SMOKE=PASS fts5=" + viewModel.Knowledge.Fts5Status);
             window.Close();
         }
         finally

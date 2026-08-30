@@ -27,7 +27,7 @@ public sealed class KnowledgeShellIntegrationTests
     }
 
     [Fact]
-    public void Knowledge_page_has_import_search_evidence_rag_and_embedding_index_contracts()
+    public void Knowledge_page_has_import_search_evidence_rag_embedding_and_locator_contracts()
     {
         var root = FindRepositoryRoot();
         var pagePath = Path.Combine(root, "src", "MLLM.Workbench.Desktop", "Pages", "Knowledge", "KnowledgePage.xaml");
@@ -62,6 +62,12 @@ public sealed class KnowledgeShellIntegrationTests
         {
             Assert.Contains(required, automationIds);
         }
+
+        var xml = File.ReadAllText(pagePath);
+        Assert.Contains("Binding=\"{Binding Locator}\"", xml, StringComparison.Ordinal);
+        Assert.Contains("PDF", xml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DOCX", xml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OCR", xml, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -84,15 +90,15 @@ public sealed class KnowledgeShellIntegrationTests
     }
 
     [Fact]
-    public void File_picker_contract_does_not_claim_unsupported_pdf_import()
+    public void File_picker_contract_claims_only_real_supported_document_formats()
     {
         var root = FindRepositoryRoot();
         var codeBehindPath = Path.Combine(root, "src", "MLLM.Workbench.Desktop", "Pages", "Knowledge", "KnowledgePage.xaml.cs");
         Assert.True(File.Exists(codeBehindPath), $"KnowledgePage.xaml.cs missing: {codeBehindPath}");
         var source = File.ReadAllText(codeBehindPath);
 
-        Assert.Contains("*.md;*.markdown;*.txt", source, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("*.pdf", source, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("*.md;*.markdown;*.txt;*.pdf;*.docx", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("*.doc;", source, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FindRepositoryRoot()

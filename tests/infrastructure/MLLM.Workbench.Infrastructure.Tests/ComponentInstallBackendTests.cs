@@ -27,9 +27,10 @@ public sealed class ComponentInstallBackendTests
                 new ComponentPresetInstallRequest("Full Setup", "OFFLINE_CACHE", "c8-offline-full-setup"),
                 timeout.Token);
 
+            var detail = string.Join(" | ", result.Items.Select(item => $"{item.Id}:{item.Status}:{item.Summary}"));
             Assert.Equal("Full Setup", result.Preset);
             Assert.Equal("OFFLINE_CACHE", result.NetworkMode);
-            Assert.Equal("BLOCKED", result.Status);
+            Assert.True(result.Status == "BLOCKED", $"Expected BLOCKED, got {result.Status}. Items: {detail}");
             Assert.NotEmpty(result.Items);
             Assert.Contains(result.Items, item => item.Id == "python" && item.Status == "BLOCKED");
             Assert.DoesNotContain(result.Items, item => item.Status == "FAILED");

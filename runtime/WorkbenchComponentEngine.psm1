@@ -16,9 +16,6 @@ function Initialize-MLLMWorkbenchComponentEngine {
     foreach($name in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){
         $module=Join-Path $ProjectRoot ('engine\'+$name+'.psm1')
         if(-not(Test-Path -LiteralPath $module -PathType Leaf)){throw ('COMPONENT_ENGINE_MISSING|'+$module)}
-        # Tasks are dynamically imported by Core.psm1 and execute in the runspace's
-        # global command table. Match Start_M_LLM_Workbench.ps1 semantics explicitly
-        # so detector/download helpers such as Find-MLLMPython are visible to tasks.
         Import-Module $module -Global -Force -ErrorAction Stop
     }
     Initialize-MLLMStateStore -Root $DataRoot | Out-Null
@@ -44,6 +41,25 @@ function Assert-MLLMWorkbenchInstallNetworkMode {
     return $NetworkMode
 }
 
+function Add-MLLMWorkbenchComponentItems {
+    param(
+        [Parameter(Mandatory=$true)]$Value,
+        [Parameter(Mandatory=$true)]$Items
+    )
+    if($null -eq $Value){return}
+    $idProperty=$Value.PSObject.Properties['id']
+    if($null -eq $idProperty -and $Value -is [Collections.IEnumerable] -and -not($Value -is [string]) -and -not($Value -is [Collections.IDictionary])){
+        foreach($nested in $Value){Add-MLLMWorkbenchComponentItems -Value $nested -Items $Items}
+        return
+    }
+    $id=if($null -ne $idProperty){[string]$idProperty.Value}else{'unknown'}
+    $statusProperty=$Value.PSObject.Properties['status']
+    $summaryProperty=$Value.PSObject.Properties['summary']
+    $status=if($null -ne $statusProperty){([string]$statusProperty.Value).ToUpperInvariant()}else{'UNKNOWN'}
+    $summary=if($null -ne $summaryProperty){[string]$summaryProperty.Value}else{''}
+    $Items.Add([ordered]@{id=$id;status=$status;summary=$summary}) | Out-Null
+}
+
 function Convert-MLLMWorkbenchComponentInstallResult {
     param(
         [Parameter(Mandatory=$true)]$Results,
@@ -53,13 +69,7 @@ function Convert-MLLMWorkbenchComponentInstallResult {
         [Parameter(Mandatory=$true)][string]$RunDirectory
     )
     $items=New-Object Collections.Generic.List[object]
-    foreach($result in @($Results)){
-        if($null -eq $result){continue}
-        $id=if($null -ne $result.PSObject.Properties['id']){[string]$result.id}else{'unknown'}
-        $status=if($null -ne $result.PSObject.Properties['status']){([string]$result.status).ToUpperInvariant()}else{'UNKNOWN'}
-        $summary=if($null -ne $result.PSObject.Properties['summary']){[string]$result.summary}else{''}
-        $items.Add([ordered]@{id=$id;status=$status;summary=$summary})
-    }
+    Add-MLLMWorkbenchComponentItems -Value $Results -Items $items
     $overall='PASS'
     if(@($items | Where-Object {[string]$_.status -eq 'FAILED'}).Count -gt 0){$overall='FAILED'}
     elseif(@($items | Where-Object {[string]$_.status -eq 'BLOCKED'}).Count -gt 0){$overall='BLOCKED'}
@@ -87,7 +97,7 @@ function Invoke-MLLMWorkbenchComponentPreset {
     $Preset=Assert-MLLMWorkbenchComponentPreset -Preset $Preset
     $NetworkMode=Assert-MLLMWorkbenchInstallNetworkMode -NetworkMode $NetworkMode
     $runDir=Start-MLLMRunLog -Root $DataRoot
-    $results=@(Invoke-MLLMPreset -Preset $Preset -ProjectRoot $ProjectRoot -DataRoot $DataRoot -NetworkMode $NetworkMode -RunDir $runDir)
+    $results=Invoke-MLLMPreset -Preset $Preset -ProjectRoot $ProjectRoot -DataRoot $DataRoot -NetworkMode $NetworkMode -RunDir $runDir
     $results | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $runDir 'component-install-summary.json') -Encoding UTF8
     return Convert-MLLMWorkbenchComponentInstallResult -Results $results -Preset $Preset -NetworkMode $NetworkMode -RunDirectory $runDir
 }
@@ -107,7 +117,7 @@ function Invoke-MLLMWorkbenchComponentTask {
     $context=@{ProjectRoot=$ProjectRoot;DataRoot=$DataRoot;NetworkMode=$NetworkMode;RunDir=$runDir}
     $result=Invoke-MLLMTask -Id $TaskId -Action Install -Context $context
     @($result) | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $runDir 'component-install-summary.json') -Encoding UTF8
-    return Convert-MLLMWorkbenchComponentInstallResult -Results @($result) -TaskId $TaskId -NetworkMode $NetworkMode -RunDirectory $runDir
+    return Convert-MLLMWorkbenchComponentInstallResult -Results $result -TaskId $TaskId -NetworkMode $NetworkMode -RunDirectory $runDir
 }
 
 Export-ModuleMember -Function Initialize-MLLMWorkbenchComponentEngine,Invoke-MLLMWorkbenchComponentPreset,Invoke-MLLMWorkbenchComponentTask

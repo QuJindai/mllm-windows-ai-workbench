@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Xunit;
 
 namespace MLLM.Workbench.Knowledge.Tests;
 

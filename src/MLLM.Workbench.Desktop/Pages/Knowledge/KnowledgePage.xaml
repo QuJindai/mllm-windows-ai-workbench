@@ -1,77 +1,31 @@
 <UserControl x:Class="MLLM.Workbench.Desktop.Pages.Knowledge.KnowledgePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             MinWidth="760">
+             xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore">
   <StackPanel>
-    <Grid Margin="0,0,0,18">
+    <Grid Margin="0,0,0,16">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <StackPanel>
-        <TextBlock Text="知识工作台" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+        <TextBlock Text="知识工作台" FontSize="28" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" />
         <TextBlock Text="本地 FTS5 · Embedding · Hybrid · RAG 证据链" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}" />
       </StackPanel>
-      <Button Grid.Column="1" Content="刷新状态" Command="{Binding RefreshCommand}" Style="{StaticResource ActionButtonStyle}" VerticalAlignment="Center" />
+      <Button Grid.Column="1" AutomationProperties.AutomationId="KnowledgeRefreshButton" Content="刷新" Command="{Binding RefreshCommand}" Style="{StaticResource ActionButtonStyle}" />
     </Grid>
 
-    <Grid Margin="0,0,0,16">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/>
-      </Grid.ColumnDefinitions>
-      <Border Grid.Column="0" Style="{StaticResource CardStyle}">
-        <StackPanel>
-          <TextBlock Text="FTS5" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock AutomationProperties.AutomationId="KnowledgeFtsStatus" Text="{Binding Fts5Status}" Margin="0,8,0,0" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}" />
-        </StackPanel>
+    <UniformGrid Columns="4" Margin="0,0,0,16">
+      <Border Style="{StaticResource CardStyle}" Margin="0,0,8,0">
+        <StackPanel><TextBlock Text="FTS5" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding Fts5Status}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
       </Border>
-      <Border Grid.Column="2" Style="{StaticResource CardStyle}">
-        <StackPanel>
-          <TextBlock Text="Embedding" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingStatus" Text="{Binding EmbeddingStatus}" Margin="0,8,0,0" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" />
-          <TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingIndexStatus" Text="{Binding EmbeddingIndexStatus}" Margin="0,6,0,0" FontSize="12" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-        </StackPanel>
+      <Border Style="{StaticResource CardStyle}" Margin="8,0">
+        <StackPanel><TextBlock Text="Embedding" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding EmbeddingStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
       </Border>
-      <Border Grid.Column="4" Style="{StaticResource CardStyle}">
-        <StackPanel>
-          <TextBlock Text="Hybrid" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock AutomationProperties.AutomationId="KnowledgeHybridStatus" Text="{Binding HybridStatus}" Margin="0,8,0,0" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" />
-        </StackPanel>
+      <Border Style="{StaticResource CardStyle}" Margin="8,0">
+        <StackPanel><TextBlock Text="Vector Index" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding EmbeddingIndexStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
       </Border>
-    </Grid>
-
-    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
-      <StackPanel>
-        <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <StackPanel>
-            <TextBlock Text="向量索引" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-            <TextBlock Text="仅调用已配置的本机 loopback Embedding 服务；不会回退到云端。" Margin="0,5,18,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-          </StackPanel>
-          <Button Grid.Column="1"
-                  AutomationProperties.AutomationId="KnowledgeBuildEmbeddingIndex"
-                  Content="构建/补齐向量索引"
-                  Command="{Binding BuildEmbeddingIndexCommand}"
-                  IsEnabled="{Binding CanBuildEmbeddingIndex}"
-                  Style="{StaticResource ActionButtonStyle}"
-                  VerticalAlignment="Center" />
-        </Grid>
-        <Grid Margin="0,14,0,0">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <ProgressBar Grid.Column="0"
-                       AutomationProperties.AutomationId="KnowledgeEmbeddingProgressBar"
-                       Minimum="0"
-                       Maximum="100"
-                       Value="{Binding EmbeddingProgressPercent}"
-                       Height="12"
-                       VerticalAlignment="Center" />
-          <TextBlock Grid.Column="1"
-                     AutomationProperties.AutomationId="KnowledgeEmbeddingProgressText"
-                     Text="{Binding EmbeddingProgressText}"
-                     Margin="12,0,0,0"
-                     Foreground="{StaticResource MutedTextBrush}"
-                     VerticalAlignment="Center"
-                     TextWrapping="Wrap" />
-        </Grid>
-      </StackPanel>
-    </Border>
+      <Border Style="{StaticResource CardStyle}" Margin="8,0,0,0">
+        <StackPanel><TextBlock Text="Hybrid" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding HybridStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
+      </Border>
+    </UniformGrid>
 
     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
       <StackPanel>
@@ -84,6 +38,20 @@
           <Button Grid.Column="2" AutomationProperties.AutomationId="KnowledgeImportButton" Content="导入并建索引" Command="{Binding ImportCommand}" Style="{StaticResource ActionButtonStyle}" Margin="10,0,0,0" />
         </Grid>
         <TextBlock Text="当前真实支持 Markdown / Text、文本型 PDF（保留页码定位）和 DOCX（保留段落定位）。扫描或纯图片 PDF 需要 OCR，当前不会伪装识别。" Margin="0,10,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="向量索引" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+            <TextBlock Text="{Binding EmbeddingProgressText}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+          </StackPanel>
+          <Button Grid.Column="1" AutomationProperties.AutomationId="KnowledgeBuildEmbeddingIndex" Content="补建 / 继续向量索引" Command="{Binding BuildEmbeddingIndexCommand}" Style="{StaticResource ActionButtonStyle}" />
+        </Grid>
+        <ProgressBar AutomationProperties.AutomationId="KnowledgeEmbeddingProgress" Minimum="0" Maximum="100" Value="{Binding EmbeddingProgressPercent}" Height="14" Margin="0,12,0,0" />
       </StackPanel>
     </Border>
 
@@ -120,7 +88,7 @@
         <TextBlock Text="证据显微镜" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
         <TextBlock Text="选中一条检索结果后，拆解 FTS 排名与词法分数、Embedding cosine 相似度，以及 Hybrid 的 RRF 双路贡献。" Margin="0,6,0,10" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
         <TextBox AutomationProperties.AutomationId="KnowledgeEvidenceMicroscope"
-                 Text="{Binding EvidenceMicroscopeText}"
+                 Text="{Binding EvidenceMicroscopeText, Mode=OneWay}"
                  IsReadOnly="True"
                  AcceptsReturn="True"
                  TextWrapping="Wrap"
@@ -137,7 +105,7 @@
       <StackPanel>
         <TextBlock Text="RAG 证据上下文" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
         <TextBlock Text="每条上下文带稳定 [K1]… 引用，并保留 source/chunk/locator，可直接用于本地模型回答并回查页码或段落。" Margin="0,6,0,10" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-        <TextBox AutomationProperties.AutomationId="KnowledgeRagContext" Text="{Binding RagContextText}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="180" Padding="12" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}" />
+        <TextBox AutomationProperties.AutomationId="KnowledgeRagContext" Text="{Binding RagContextText, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="180" Padding="12" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}" />
       </StackPanel>
     </Border>
 

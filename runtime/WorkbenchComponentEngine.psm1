@@ -16,7 +16,10 @@ function Initialize-MLLMWorkbenchComponentEngine {
     foreach($name in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){
         $module=Join-Path $ProjectRoot ('engine\'+$name+'.psm1')
         if(-not(Test-Path -LiteralPath $module -PathType Leaf)){throw ('COMPONENT_ENGINE_MISSING|'+$module)}
-        Import-Module $module -Force -ErrorAction Stop
+        # Tasks are dynamically imported by Core.psm1 and execute in the runspace's
+        # global command table. Match Start_M_LLM_Workbench.ps1 semantics explicitly
+        # so detector/download helpers such as Find-MLLMPython are visible to tasks.
+        Import-Module $module -Global -Force -ErrorAction Stop
     }
     Initialize-MLLMStateStore -Root $DataRoot | Out-Null
     Import-MLLMTasks -ProjectRoot $ProjectRoot

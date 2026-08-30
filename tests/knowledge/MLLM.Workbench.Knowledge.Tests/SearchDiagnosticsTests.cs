@@ -83,7 +83,7 @@ public sealed class SearchDiagnosticsTests
 
         var fused = HybridSearch.Fuse(lexical, semantic, 10, rrfK: 60);
 
-        var overlap = Assert.Single(fused.Where(x => x.ChunkId == "overlap"));
+        var overlap = Assert.Single(fused, x => x.ChunkId == "overlap");
         Assert.Equal("Hybrid/RRF", overlap.Diagnostics?.Method);
         Assert.Equal(60, overlap.Diagnostics?.RrfK);
         Assert.Equal(1, overlap.Diagnostics?.LexicalRank);
@@ -94,7 +94,7 @@ public sealed class SearchDiagnosticsTests
         Assert.Equal(1d / 62d, overlap.Diagnostics?.SemanticRrfContribution, 12);
         Assert.Equal((1d / 61d) + (1d / 62d), overlap.Score, 12);
 
-        var lexicalOnly = Assert.Single(fused.Where(x => x.ChunkId == "lexical-only"));
+        var lexicalOnly = Assert.Single(fused, x => x.ChunkId == "lexical-only");
         Assert.Equal(2, lexicalOnly.Diagnostics?.LexicalRank);
         Assert.Null(lexicalOnly.Diagnostics?.SemanticRank);
         Assert.Equal(1d / 62d, lexicalOnly.Diagnostics?.LexicalRrfContribution, 12);

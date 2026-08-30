@@ -3,6 +3,15 @@ param()
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$backend=Join-Path $root 'runtime\WorkbenchBackend.ps1'
+$tokens=$null;$parseErrors=$null
+[void][Management.Automation.Language.Parser]::ParseFile($backend,[ref]$tokens,[ref]$parseErrors)
+if(@($parseErrors).Count -gt 0){
+  $detail=@($parseErrors | ForEach-Object { 'line='+$_.Extent.StartLineNumber+' col='+$_.Extent.StartColumnNumber+' '+$_.Message }) -join ' | '
+  throw ('WORKBENCH_BACKEND_PARSE_FAILED|'+$detail)
+}
+Write-Host 'WORKBENCH_BACKEND_PARSE=PASS'
+
 & (Join-Path $root 'Bootstrap_SafeCore.ps1') -ProjectRoot $root | Out-Null
 foreach($m in @('Core','State','Detection','Network','Download','Security','Evidence','Runtime')){
   Import-Module (Join-Path $root ('engine\'+$m+'.psm1')) -Force

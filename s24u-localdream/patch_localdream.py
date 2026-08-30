@@ -28,7 +28,6 @@ def main() -> int:
         'applicationId = "io.github.xororz.localdream.s24uharness"',
         "applicationId",
     )
-    gradle = replace_once(gradle, "compileSdk = 37", "compileSdk = 36", "compileSdk")
     gradle = replace_once(gradle, "versionCode = 74", "versionCode = 7401", "versionCode")
     gradle = replace_once(
         gradle,

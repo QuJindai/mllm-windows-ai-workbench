@@ -18,7 +18,7 @@ public partial class KnowledgePage : UserControl
             Title = "选择知识文件",
             CheckFileExists = true,
             Multiselect = false,
-            Filter = "Markdown / Text (*.md;*.markdown;*.txt)|*.md;*.markdown;*.txt|All files (*.*)|*.*"
+            Filter = "Knowledge files (*.md;*.markdown;*.txt;*.pdf;*.docx)|*.md;*.markdown;*.txt;*.pdf;*.docx|All files (*.*)|*.*"
         };
 
         if (dialog.ShowDialog() == true && DataContext is KnowledgePageViewModel viewModel)

@@ -55,6 +55,18 @@ try{
         if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "Offline installer bundle missing required file: $relative"}
     }
 
+    $portableInspectRoot=Join-Path $extractRoot 'portable-inspect'
+    New-Item -ItemType Directory -Force -Path $portableInspectRoot | Out-Null
+    Expand-Archive -LiteralPath (Join-Path $extractRoot ('payload\'+$portableName)) -DestinationPath $portableInspectRoot -Force
+    foreach($relative in @(
+        'runtime\WorkbenchBackend.ps1',
+        'runtime\WorkbenchRuntimeAdapter.psm1',
+        'runtime\WorkbenchRuntimeLifecycle.ps1'
+    )){
+        $full=Join-Path $portableInspectRoot $relative
+        if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "C7 portable runtime dependency missing: $relative"}
+    }
+
     $env:ProgramFiles=Join-Path $fakeRoot 'Program Files'
     $env:ProgramData=Join-Path $fakeRoot 'ProgramData'
     $env:USERPROFILE=Join-Path $fakeRoot 'User'
@@ -72,6 +84,15 @@ try{
     $pointer=Get-Content -LiteralPath $pointerPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if([string]$pointer.version_id -ne $versionId){throw "Activated version mismatch expected=$versionId actual=$($pointer.version_id)"}
     $installedRoot=[IO.Path]::GetFullPath([string]$pointer.version_path)
+    foreach($relative in @(
+        'runtime\WorkbenchBackend.ps1',
+        'runtime\WorkbenchRuntimeAdapter.psm1',
+        'runtime\WorkbenchRuntimeLifecycle.ps1'
+    )){
+        $full=Join-Path $installedRoot $relative
+        if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "Installed runtime dependency missing: $relative"}
+    }
+
     $installedExe=Join-Path $installedRoot 'desktop\MLLM.Workbench.Desktop.exe'
     if(-not(Test-Path -LiteralPath $installedExe -PathType Leaf)){throw "Installed desktop executable missing: $installedExe"}
 
@@ -84,7 +105,7 @@ try{
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
-    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha activated=PASS installed_desktop_smoke=PASS"
+    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS"
 }finally{
     $env:ProgramFiles=$oldProgramFiles
     $env:ProgramData=$oldProgramData

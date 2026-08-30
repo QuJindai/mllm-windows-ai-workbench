@@ -94,7 +94,10 @@ try{
     foreach($relative in @(
         'runtime\WorkbenchBackend.ps1',
         'runtime\WorkbenchRuntimeAdapter.psm1',
-        'runtime\WorkbenchRuntimeLifecycle.ps1'
+        'runtime\WorkbenchRuntimeLifecycle.ps1',
+        'web\backend\app.py',
+        'web\backend\engine_bridge.py',
+        'web\backend\requirements.txt'
     )){
         $full=Join-Path $portableInspectRoot $relative
         if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "C7 portable runtime dependency missing: $relative"}
@@ -120,7 +123,10 @@ try{
     foreach($relative in @(
         'runtime\WorkbenchBackend.ps1',
         'runtime\WorkbenchRuntimeAdapter.psm1',
-        'runtime\WorkbenchRuntimeLifecycle.ps1'
+        'runtime\WorkbenchRuntimeLifecycle.ps1',
+        'web\backend\app.py',
+        'web\backend\engine_bridge.py',
+        'web\backend\requirements.txt'
     )){
         $full=Join-Path $installedRoot $relative
         if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "Installed runtime dependency missing: $relative"}
@@ -134,7 +140,7 @@ try{
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
-    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS"
+    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS"
 }finally{
     $env:ProgramFiles=$oldProgramFiles
     $env:ProgramData=$oldProgramData

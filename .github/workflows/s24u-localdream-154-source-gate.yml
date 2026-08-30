@@ -1,0 +1,122 @@
+name: S24U LocalDream 154 Source Gate
+
+on:
+  push:
+    branches:
+      - feature/s24u-localdream-154-20260831
+    paths:
+      - 's24u-localdream/native154/**'
+      - 's24u-localdream/patch_localdream.py'
+      - '.github/workflows/s24u-localdream-154-source-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  red-green-source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout harness repository
+        uses: actions/checkout@v4
+
+      - name: Python syntax gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            s24u-localdream/patch_localdream.py \
+            s24u-localdream/native154/patch_native_154.py \
+            s24u-localdream/native154/test_native154_source_contract.py
+
+      - name: Host C++ layout gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Is24u-localdream/native154 \
+            s24u-localdream/native154/test_long_prompt_chunking.cpp \
+            -o /tmp/test_long_prompt_chunking
+          /tmp/test_long_prompt_chunking | tee native154-layout.log
+
+      - name: Checkout exact Local Dream v2.8.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git upstream-local-dream
+          git -C upstream-local-dream checkout --detach a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+          git -C upstream-local-dream submodule update --init --recursive
+          test "$(git -C upstream-local-dream rev-parse HEAD)" = a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+
+      - name: Apply known-good H1 Android harness baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/patch_localdream.py upstream-local-dream | tee h1-patch.log
+          grep -q 'S24U_LOCALDREAM_PATCH_APPLIED' h1-patch.log
+
+      - name: Baseline contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/native154/test_native154_source_contract.py \
+            upstream-local-dream --expect baseline | tee native154-baseline.log
+
+      - name: TDD RED - patched contract must fail before native patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-localdream/native154/test_native154_source_contract.py \
+            upstream-local-dream --expect patched > native154-red.log 2>&1
+          code=$?
+          set -e
+          cat native154-red.log
+          if [ "$code" -eq 0 ]; then
+            echo 'RED gate failed: H1 baseline unexpectedly satisfies 154 contract' >&2
+            exit 1
+          fi
+          echo 'NATIVE154_RED_EXPECTED_FAIL=PASS' | tee -a native154-red.log
+
+      - name: Apply exact native 154 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/native154/patch_native_154.py upstream-local-dream | tee native154-patch.log
+          grep -q 'S24U_154_NATIVE_PATCH=PASS' native154-patch.log
+
+      - name: TDD GREEN - patched source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/native154/test_native154_source_contract.py \
+            upstream-local-dream --expect patched | tee native154-green.log
+          git -C upstream-local-dream diff --check
+          git -C upstream-local-dream diff --stat | tee native154-diff-stat.txt
+          git -C upstream-local-dream diff -- \
+            app/src/main/cpp/src/TextEncoder.hpp \
+            app/src/main/cpp/src/PipelineSdxl.hpp \
+            app/src/main/cpp/src/QnnModel.hpp \
+            app/src/main/cpp/src/main.cpp \
+            app/src/main/java/io/github/xororz/localdream/service/BackendService.kt \
+            app/build.gradle.kts \
+            app/src/main/res/values/strings.xml \
+            app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt \
+            > native154-source.diff
+
+      - name: Upload source-gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-localdream-154-source-gate
+          path: |
+            native154-layout.log
+            h1-patch.log
+            native154-baseline.log
+            native154-red.log
+            native154-patch.log
+            native154-green.log
+            native154-diff-stat.txt
+            native154-source.diff
+          if-no-files-found: error
+          retention-days: 3

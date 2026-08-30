@@ -33,6 +33,21 @@ function Assert-ShaSidecar {
     return $actual
 }
 
+function Invoke-InstalledDesktopSmoke {
+    param(
+        [Parameter(Mandatory=$true)][string]$Exe,
+        [Parameter(Mandatory=$true)][string[]]$Arguments,
+        [Parameter(Mandatory=$true)][string]$Name,
+        [int]$TimeoutMs=60000
+    )
+    $process=Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
+    if(-not $process.WaitForExit($TimeoutMs)){
+        try{$process.Kill()}catch{}
+        throw "Installed C7 desktop $Name exceeded $TimeoutMs ms"
+    }
+    if($process.ExitCode -ne 0){throw "Installed C7 desktop $Name failed rc=$($process.ExitCode)"}
+}
+
 try{
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packager -OutputRoot $OutputRoot -SourceSha ([string]$env:GITHUB_SHA)
     if($LASTEXITCODE -ne 0){throw "C7 release packaging failed rc=$LASTEXITCODE"}
@@ -96,16 +111,12 @@ try{
     $installedExe=Join-Path $installedRoot 'desktop\MLLM.Workbench.Desktop.exe'
     if(-not(Test-Path -LiteralPath $installedExe -PathType Leaf)){throw "Installed desktop executable missing: $installedExe"}
 
-    $process=Start-Process -FilePath $installedExe -ArgumentList @('--smoke') -WorkingDirectory (Split-Path -Parent $installedExe) -PassThru
-    if(-not $process.WaitForExit(60000)){
-        try{$process.Kill()}catch{}
-        throw 'Installed C7 desktop --smoke exceeded 60 seconds'
-    }
-    if($process.ExitCode -ne 0){throw "Installed C7 desktop --smoke failed rc=$($process.ExitCode)"}
+    Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke') -Name '--smoke' -TimeoutMs 60000
+    Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-knowledge') -Name '--smoke-knowledge' -TimeoutMs 20000
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
-    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS"
+    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS"
 }finally{
     $env:ProgramFiles=$oldProgramFiles
     $env:ProgramData=$oldProgramData

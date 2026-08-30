@@ -420,7 +420,15 @@ public sealed class KnowledgeStore : IAsyncDisposable
                 Score: 1d / (1d + Math.Abs(rank))));
         }
 
-        return hits;
+        return hits
+            .Select((hit, index) => hit with
+            {
+                Diagnostics = new KnowledgeSearchDiagnostics(
+                    Method: "FTS5",
+                    LexicalRank: index + 1,
+                    LexicalScore: hit.Score)
+            })
+            .ToArray();
     }
 
     public async Task<IReadOnlyList<KnowledgeSearchHit>> SearchVectorAsync(
@@ -479,11 +487,21 @@ public sealed class KnowledgeStore : IAsyncDisposable
                 Score: score));
         }
 
-        return hits
+        var ranked = hits
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Ordinal)
             .ThenBy(x => x.ChunkId, StringComparer.Ordinal)
             .Take(limit)
+            .ToArray();
+
+        return ranked
+            .Select((hit, index) => hit with
+            {
+                Diagnostics = new KnowledgeSearchDiagnostics(
+                    Method: "Embedding",
+                    SemanticRank: index + 1,
+                    SemanticScore: hit.Score)
+            })
             .ToArray();
     }
 

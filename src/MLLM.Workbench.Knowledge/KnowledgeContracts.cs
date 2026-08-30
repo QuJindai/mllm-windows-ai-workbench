@@ -13,6 +13,16 @@ public sealed record KnowledgeDocument(
     string Title,
     IReadOnlyList<KnowledgeChunk> Chunks);
 
+public sealed record KnowledgeSearchDiagnostics(
+    string Method,
+    int? LexicalRank = null,
+    double? LexicalScore = null,
+    int? SemanticRank = null,
+    double? SemanticScore = null,
+    double? LexicalRrfContribution = null,
+    double? SemanticRrfContribution = null,
+    int? RrfK = null);
+
 public sealed record KnowledgeSearchHit(
     string DocumentId,
     string ChunkId,
@@ -24,6 +34,8 @@ public sealed record KnowledgeSearchHit(
 {
     public string? Locator =>
         KnowledgeChunkLocator.TryGetLocator(ChunkId, out var locator) ? locator : null;
+
+    public KnowledgeSearchDiagnostics? Diagnostics { get; init; }
 }
 
 public sealed record KnowledgeStoreHealth(

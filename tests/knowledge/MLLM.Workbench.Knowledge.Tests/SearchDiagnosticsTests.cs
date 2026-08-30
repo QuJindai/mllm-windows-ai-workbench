@@ -90,14 +90,14 @@ public sealed class SearchDiagnosticsTests
         Assert.Equal(0.91, overlap.Diagnostics?.LexicalScore);
         Assert.Equal(2, overlap.Diagnostics?.SemanticRank);
         Assert.Equal(0.84, overlap.Diagnostics?.SemanticScore);
-        Assert.Equal(1d / 61d, overlap.Diagnostics?.LexicalRrfContribution, 12);
-        Assert.Equal(1d / 62d, overlap.Diagnostics?.SemanticRrfContribution, 12);
+        Assert.Equal(1d / 61d, overlap.Diagnostics?.LexicalRrfContribution ?? double.NaN, 12);
+        Assert.Equal(1d / 62d, overlap.Diagnostics?.SemanticRrfContribution ?? double.NaN, 12);
         Assert.Equal((1d / 61d) + (1d / 62d), overlap.Score, 12);
 
         var lexicalOnly = Assert.Single(fused, x => x.ChunkId == "lexical-only");
         Assert.Equal(2, lexicalOnly.Diagnostics?.LexicalRank);
         Assert.Null(lexicalOnly.Diagnostics?.SemanticRank);
-        Assert.Equal(1d / 62d, lexicalOnly.Diagnostics?.LexicalRrfContribution, 12);
+        Assert.Equal(1d / 62d, lexicalOnly.Diagnostics?.LexicalRrfContribution ?? double.NaN, 12);
         Assert.Null(lexicalOnly.Diagnostics?.SemanticRrfContribution);
     }
 

@@ -49,7 +49,8 @@ function Initialize-SafeCore {
         (Join-Path $ProjectRoot 'installer\InstallerPaths.psm1'),
         (Join-Path $ProjectRoot 'installer\InstallerState.psm1'),
         (Join-Path $ProjectRoot 'installer\Activation.psm1'),
-        (Join-Path $ProjectRoot 'runtime\WorkbenchRuntimeAdapter.psm1')
+        (Join-Path $ProjectRoot 'runtime\WorkbenchRuntimeAdapter.psm1'),
+        (Join-Path $ProjectRoot 'runtime\WorkbenchComponentEngine.psm1')
     )){
         if(-not(Test-Path -LiteralPath $module -PathType Leaf)){throw ('Required backend module missing: '+$module)}
         Import-Module $module -Force -ErrorAction Stop
@@ -248,6 +249,24 @@ function Invoke-PhaseBServiceLogs {
     return (Get-MLLMWorkbenchServiceLogs -DataRoot $DataRoot -ServiceId $serviceId -TailLines $tail)
 }
 
+function Invoke-ComponentPresetRpc {
+    param($Payload)
+    Initialize-SafeCore
+    [void](Assert-OperationId -Payload $Payload)
+    $preset=Require-PayloadString -Payload $Payload -Name 'preset' -ErrorCode 'COMPONENT_PRESET_NOT_ALLOWED'
+    $mode=Require-PayloadString -Payload $Payload -Name 'networkMode' -ErrorCode 'COMPONENT_NETWORK_MODE_NOT_ALLOWED'
+    return (Invoke-MLLMWorkbenchComponentPreset -ProjectRoot $ProjectRoot -DataRoot $DataRoot -Preset $preset -NetworkMode $mode)
+}
+
+function Invoke-ComponentTaskRpc {
+    param($Payload)
+    Initialize-SafeCore
+    [void](Assert-OperationId -Payload $Payload)
+    $taskId=Require-PayloadString -Payload $Payload -Name 'taskId' -ErrorCode 'COMPONENT_TASK_NOT_ALLOWED'
+    $mode=Require-PayloadString -Payload $Payload -Name 'networkMode' -ErrorCode 'COMPONENT_NETWORK_MODE_NOT_ALLOWED'
+    return (Invoke-MLLMWorkbenchComponentTask -ProjectRoot $ProjectRoot -DataRoot $DataRoot -TaskId $taskId -NetworkMode $mode)
+}
+
 function New-RpcError {
     param([string]$Code,[string]$Message,[bool]$Recoverable=$true)
     return [ordered]@{code=$Code;message=$Message;stage='RPC';recoverable=$Recoverable;details=$null}
@@ -266,6 +285,8 @@ $MethodTable=@{
     'doctor.snapshot' = { param($Payload) return (Get-DesktopDoctorSnapshot) }
     'installer.snapshot' = { param($Payload) return (Get-DesktopInstallerSnapshot) }
     'system.capabilities' = { param($Payload) return [ordered]@{backendVersion='phase-b';methods=@($MethodTable.Keys)} }
+    'components.installPreset' = { param($Payload) return (Invoke-ComponentPresetRpc -Payload $Payload) }
+    'components.installTask' = { param($Payload) return (Invoke-ComponentTaskRpc -Payload $Payload) }
     'models.snapshot' = { param($Payload) return (Get-PhaseBModelSnapshot) }
     'models.verify' = { param($Payload) return (Invoke-PhaseBModelVerify -Payload $Payload) }
     'models.import' = { param($Payload) return (Invoke-PhaseBModelImport -Payload $Payload) }

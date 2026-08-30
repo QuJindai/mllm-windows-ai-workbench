@@ -1,3 +1,4 @@
+using MLLM.Workbench.Contracts.Components;
 using MLLM.Workbench.Contracts.Protocol;
 using MLLM.Workbench.Contracts.Snapshots;
 using MLLM.Workbench.Contracts.Status;
@@ -95,6 +96,28 @@ public sealed class InstallationViewModelTests
         }
     }
 
+    [Fact]
+    public async Task Component_presets_use_explicit_install_network_mode_and_refresh_component_truth()
+    {
+        var installer = new InstallerSnapshot(null, null, "COMPLETE", false, "c7", null, @"C:\Evidence", false);
+        var doctor = new DoctorSnapshot([new ComponentSnapshot("llama-cpp", ComponentHealth.ReadyToInstall, "missing", true, "llama-cpp")], []);
+        await using var backend = new FakeBackendClient(installer, doctor);
+        var vm = new InstallationPageViewModel(backend, new FakeInstallerInvoker());
+
+        Assert.Equal(new[] { "AUTO_CN_FIRST", "CHINA_ONLY", "GLOBAL_FIRST", "OFFLINE_CACHE" }, vm.InstallNetworkModes);
+        Assert.Equal("AUTO_CN_FIRST", vm.SelectedInstallNetworkMode);
+
+        vm.SelectedInstallNetworkMode = "CHINA_ONLY";
+        await vm.InstallComponentPresetAsync("Full Setup", CancellationToken.None);
+
+        var request = Assert.Single(backend.ComponentPresetRequests);
+        Assert.Equal("Full Setup", request.Preset);
+        Assert.Equal("CHINA_ONLY", request.NetworkMode);
+        Assert.False(string.IsNullOrWhiteSpace(request.OperationId));
+        Assert.Contains("BLOCKED", vm.OperationMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.True(backend.InstallerReads >= 1);
+    }
+
     private sealed class FakeInstallerInvoker : IPrivilegedInstallerInvoker
     {
         public List<InstallerProcessRequest> Requests { get; } = [];
@@ -111,8 +134,18 @@ public sealed class InstallationViewModelTests
         private readonly DoctorSnapshot _doctor;
         public FakeBackendClient(InstallerSnapshot installer, DoctorSnapshot doctor) { _installer = installer; _doctor = doctor; }
         public int InstallerReads { get; private set; }
+        public List<ComponentPresetInstallRequest> ComponentPresetRequests { get; } = [];
         public Task<BackendHandshakeResponse> ConnectAsync(CancellationToken cancellationToken) => Task.FromResult(new BackendHandshakeResponse(true, RpcProtocol.Version, "test", null));
-        public Task<TResponse> InvokeAsync<TResponse>(string method, object? payload, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<TResponse> InvokeAsync<TResponse>(string method, object? payload, CancellationToken cancellationToken)
+        {
+            if (method == "components.installPreset" && payload is ComponentPresetInstallRequest request)
+            {
+                ComponentPresetRequests.Add(request);
+                object response = new ComponentInstallResult(request.Preset, null, request.NetworkMode, "BLOCKED", @"C:\Runs\c8", [new("modelscope", "BLOCKED", "offline cache missing")]);
+                return Task.FromResult((TResponse)response);
+            }
+            throw new NotSupportedException(method);
+        }
         public Task<DashboardSnapshot> GetDashboardAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<DoctorSnapshot> GetDoctorAsync(CancellationToken cancellationToken) => Task.FromResult(_doctor);
         public Task<InstallerSnapshot> GetInstallerAsync(CancellationToken cancellationToken) { InstallerReads++; return Task.FromResult(_installer); }

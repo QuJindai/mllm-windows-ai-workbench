@@ -21,10 +21,12 @@ $RequiredPaths = @(
     'engine\Core.psm1',
     'engine\EmergencyDoctor.ps1',
     'gui\GuiAdapter.psm1',
-    'gui\Workbench.Wpf.ps1'
+    'gui\Workbench.Wpf.ps1',
+    'tasks\modelscope.task.ps1'
 )
 $GuiScopeMarker = 'Import-Module (Join-Path $ProjectRoot "engine\$m.psm1") -Force -Global'
 $WpfNetworkModeMarker = 'WPF_SMOKE=PASS network_mode='
+$ModelScopeOfflineMarker = 'Offline ModelScope pip cache missing or incomplete'
 
 function Test-SafeCoreReady {
     if (-not (Test-Path -LiteralPath $StampPath -PathType Leaf)) { return $false }
@@ -36,6 +38,8 @@ function Test-SafeCoreReady {
         if (-not $adapterText.Contains($GuiScopeMarker)) { return $false }
         $readyWpfText = Get-Content -LiteralPath (Join-Path $ProjectRoot 'gui\Workbench.Wpf.ps1') -Raw -Encoding UTF8
         if (-not $readyWpfText.Contains($WpfNetworkModeMarker)) { return $false }
+        $readyModelScopeText = Get-Content -LiteralPath (Join-Path $ProjectRoot 'tasks\modelscope.task.ps1') -Raw -Encoding UTF8
+        if (-not $readyModelScopeText.Contains($ModelScopeOfflineMarker)) { return $false }
     } catch { return $false }
     return $true
 }
@@ -195,6 +199,19 @@ if ($coreText.Contains($coreOldCrLf)) {
     throw 'SAFE_CORE_DOCTOR_ARRAY_SHAPE_PATCH_TARGET_MISSING'
 }
 Set-Content -LiteralPath $corePath -Value $coreText -Encoding UTF8 -NoNewline
+
+# Offline cache miss is an expected, recoverable block. Preserve FAILED when
+# cached artifacts exist but pip installation itself is broken/corrupt.
+$modelScopePath = Join-Path $ProjectRoot 'tasks\modelscope.task.ps1'
+$modelScopeText = Get-Content -LiteralPath $modelScopePath -Raw -Encoding UTF8
+$modelScopeOld = "        if(`$result.exit_code -ne 0){return New-MLLMResult -Id 'modelscope' -Status FAILED -Summary 'Offline isolated ModelScope installation failed' -Evidence @{stderr=`$result.stderr;target=`$target} -RepairAvailable `$true -RepairTask 'modelscope'}"
+$modelScopeNew = "        if(`$result.exit_code -ne 0){`$offlineArtifacts=@(Get-ChildItem -LiteralPath `$cache -File -ErrorAction SilentlyContinue);if(`$offlineArtifacts.Count -eq 0){return New-MLLMResult -Id 'modelscope' -Status BLOCKED -Summary 'Offline ModelScope pip cache missing or incomplete' -Evidence @{cache=`$cache;target=`$target} -RepairAvailable `$true -RepairTask 'modelscope'};return New-MLLMResult -Id 'modelscope' -Status FAILED -Summary 'Offline isolated ModelScope installation failed' -Evidence @{stderr=`$result.stderr;target=`$target} -RepairAvailable `$true -RepairTask 'modelscope'}"
+if ($modelScopeText.Contains($modelScopeOld)) {
+    $modelScopeText = $modelScopeText.Replace($modelScopeOld, $modelScopeNew)
+} elseif (-not $modelScopeText.Contains($ModelScopeOfflineMarker)) {
+    throw 'SAFE_CORE_MODELSCOPE_OFFLINE_PATCH_TARGET_MISSING'
+}
+Set-Content -LiteralPath $modelScopePath -Value $modelScopeText -Encoding UTF8 -NoNewline
 
 Set-Content -LiteralPath $StampPath -Value ("sha256=$actualSha256`r`nmaterialized=" + (Get-Date -Format o)) -Encoding ASCII
 

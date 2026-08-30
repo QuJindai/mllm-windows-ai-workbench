@@ -264,11 +264,11 @@ function Get-ComponentPresetDefinitions {
     if(-not(Test-Path -LiteralPath $policyPath -PathType Leaf)){throw ('PRESET_POLICY_MISSING|'+$policyPath)}
     $policy=Get-Content -LiteralPath $policyPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $specs=@(
-        [ordered]@{id='full-setup';name='Full Setup';description='完整本地 AI 栈：Git、Git LFS、Python、ModelScope、llama.cpp、Qwen3.5-4B、Local API、Web Workbench';recommended=$true},
-        [ordered]@{id='local-ai-fast';name='Local AI Fast';description='本地快速推理：Python、ModelScope、llama.cpp、Qwen3.5-4B、Local API';recommended=$false},
-        [ordered]@{id='core';name='Core';description='基础运行环境：Python、ModelScope、llama.cpp';recommended=$false},
-        [ordered]@{id='web-workbench';name='Web Workbench';description='本地 AI 栈加 Web Workbench';recommended=$false},
-        [ordered]@{id='developer-tools';name='Developer Tools';description='开发工具：Git、Git LFS';recommended=$false}
+        [ordered]@{id='full-setup';name='Full Setup';description='Complete local AI stack: Git, Git LFS, Python, ModelScope, llama.cpp, Qwen3.5-4B, Local API, Web Workbench';recommended=$true},
+        [ordered]@{id='local-ai-fast';name='Local AI Fast';description='Local inference stack: Python, ModelScope, llama.cpp, Qwen3.5-4B, Local API';recommended=$false},
+        [ordered]@{id='core';name='Core';description='Core runtime: Python, ModelScope, llama.cpp';recommended=$false},
+        [ordered]@{id='web-workbench';name='Web Workbench';description='Local AI stack plus Web Workbench';recommended=$false},
+        [ordered]@{id='developer-tools';name='Developer Tools';description='Developer tools: Git and Git LFS';recommended=$false}
     )
     $rows=New-Object Collections.Generic.List[object]
     foreach($spec in $specs){

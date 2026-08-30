@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MLLM.Workbench.Desktop.Pages.Dashboard;
@@ -22,6 +23,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         var smoke = e.Args.Any(x => string.Equals(x, "--smoke", StringComparison.OrdinalIgnoreCase));
+        var smokeKnowledge = e.Args.Any(x => string.Equals(x, "--smoke-knowledge", StringComparison.OrdinalIgnoreCase));
         try
         {
             var runtime = WorkbenchRuntimeOptions.Resolve();
@@ -33,18 +35,21 @@ public partial class App : Application
 
             if (smoke)
             {
-                var client = _host.Services.GetRequiredService<IWorkbenchBackendClient>();
-                var ping = await client.InvokeAsync<JsonElement>("system.ping", null, CancellationToken.None).ConfigureAwait(true);
-                if (!ping.TryGetProperty("status", out var status) || !string.Equals(status.GetString(), "PASS", StringComparison.Ordinal))
-                {
-                    throw new BackendRpcException("SMOKE_PING_FAILED", "Safe Core backend ping did not return PASS.");
-                }
+                await VerifyBackendPingAsync(_host.Services.GetRequiredService<IWorkbenchBackendClient>()).ConfigureAwait(true);
                 Shutdown(0);
                 return;
             }
 
             var viewModel = _host.Services.GetRequiredService<MainWindowViewModel>();
             viewModel.SetBackendStatus("Safe Core backend: connected");
+
+            if (smokeKnowledge)
+            {
+                await VerifyKnowledgeNavigationAsync(viewModel, _host.Services.GetRequiredService<MainWindow>()).ConfigureAwait(true);
+                Shutdown(0);
+                return;
+            }
+
             await viewModel.Dashboard.RefreshAsync(CancellationToken.None).ConfigureAwait(true);
 
             var window = _host.Services.GetRequiredService<MainWindow>();
@@ -53,9 +58,9 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            if (smoke)
+            if (smoke || smokeKnowledge)
             {
-                try { Console.Error.WriteLine("DESKTOP_SMOKE=FAIL " + ex.Message); } catch { }
+                try { Console.Error.WriteLine((smokeKnowledge ? "KNOWLEDGE_NAVIGATION_SMOKE=FAIL " : "DESKTOP_SMOKE=FAIL ") + ex); } catch { }
                 Shutdown(2);
                 return;
             }
@@ -77,6 +82,56 @@ public partial class App : Application
             }
             MessageBox.Show(ex.Message, "M-LLM Workbench startup error", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(2);
+        }
+    }
+
+    private static async Task VerifyBackendPingAsync(IWorkbenchBackendClient client)
+    {
+        var ping = await client.InvokeAsync<JsonElement>("system.ping", null, CancellationToken.None).ConfigureAwait(true);
+        if (!ping.TryGetProperty("status", out var status) || !string.Equals(status.GetString(), "PASS", StringComparison.Ordinal))
+            throw new BackendRpcException("SMOKE_PING_FAILED", "Safe Core backend ping did not return PASS.");
+    }
+
+    private async Task VerifyKnowledgeNavigationAsync(MainWindowViewModel viewModel, MainWindow window)
+    {
+        Exception? dispatcherFailure = null;
+        DispatcherUnhandledExceptionEventHandler handler = (_, args) =>
+        {
+            dispatcherFailure = args.Exception;
+            args.Handled = true;
+        };
+
+        DispatcherUnhandledException += handler;
+        try
+        {
+            await VerifyBackendPingAsync(_host!.Services.GetRequiredService<IWorkbenchBackendClient>()).ConfigureAwait(true);
+            MainWindow = window;
+            window.Show();
+            viewModel.NavigateKnowledgeCommand.Execute(null);
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (viewModel.Knowledge.IsBusy && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(40).ConfigureAwait(true);
+                await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background);
+            }
+
+            await Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
+            if (dispatcherFailure is not null)
+                throw new InvalidOperationException("Knowledge navigation raised an unhandled dispatcher exception.", dispatcherFailure);
+            if (!ReferenceEquals(viewModel.CurrentPage, viewModel.Knowledge))
+                throw new InvalidOperationException("Knowledge navigation did not keep KnowledgePageViewModel active.");
+            if (viewModel.Knowledge.IsBusy)
+                throw new TimeoutException("Knowledge workspace refresh did not complete within 10 seconds.");
+            if (!string.IsNullOrWhiteSpace(viewModel.Knowledge.LastError))
+                throw new InvalidOperationException("Knowledge workspace refresh failed: " + viewModel.Knowledge.LastError);
+
+            Console.WriteLine("KNOWLEDGE_NAVIGATION_SMOKE=PASS fts5=" + viewModel.Knowledge.Fts5Status);
+            window.Close();
+        }
+        finally
+        {
+            DispatcherUnhandledException -= handler;
         }
     }
 

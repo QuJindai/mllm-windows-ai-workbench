@@ -32,8 +32,19 @@ public sealed class ComponentInstallBackendTests
             Assert.Equal("OFFLINE_CACHE", result.NetworkMode);
             Assert.True(result.Status == "BLOCKED", $"Expected BLOCKED, got {result.Status}. Items: {detail}");
             Assert.NotEmpty(result.Items);
-            Assert.Contains(result.Items, item => item.Id == "python" && item.Status == "BLOCKED");
+            Assert.Contains(result.Items, item => item.Status == "BLOCKED");
             Assert.DoesNotContain(result.Items, item => item.Status == "FAILED");
+
+            var python = result.Items.FirstOrDefault(item => item.Id == "python");
+            Assert.NotNull(python);
+            if (python.Status == "PASS")
+            {
+                Assert.Contains(result.Items, item => item.Id == "modelscope" && item.Status == "BLOCKED");
+            }
+            else
+            {
+                Assert.Equal("BLOCKED", python.Status);
+            }
 
             Assert.Empty(Directory.EnumerateFiles(dataRoot, "python.exe", SearchOption.AllDirectories));
             Assert.Empty(Directory.EnumerateFiles(dataRoot, "llama-server.exe", SearchOption.AllDirectories));

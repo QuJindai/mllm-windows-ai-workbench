@@ -117,6 +117,24 @@
 
     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
       <StackPanel>
+        <TextBlock Text="证据显微镜" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+        <TextBlock Text="选中一条检索结果后，拆解 FTS 排名与词法分数、Embedding cosine 相似度，以及 Hybrid 的 RRF 双路贡献。" Margin="0,6,0,10" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+        <TextBox AutomationProperties.AutomationId="KnowledgeEvidenceMicroscope"
+                 Text="{Binding EvidenceMicroscopeText}"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"
+                 MinHeight="150"
+                 Padding="12"
+                 Background="{StaticResource CardSecondaryBrush}"
+                 Foreground="{StaticResource PrimaryTextBrush}"
+                 BorderBrush="{StaticResource BorderBrush}" />
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+      <StackPanel>
         <TextBlock Text="RAG 证据上下文" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
         <TextBlock Text="每条上下文带稳定 [K1]… 引用，并保留 source/chunk/locator，可直接用于本地模型回答并回查页码或段落。" Margin="0,6,0,10" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
         <TextBox AutomationProperties.AutomationId="KnowledgeRagContext" Text="{Binding RagContextText}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="180" Padding="12" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}" />

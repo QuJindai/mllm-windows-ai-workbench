@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Windows.Input;
 using MLLM.Workbench.Desktop.Services.Knowledge;
 using MLLM.Workbench.Desktop.Shell;
@@ -68,7 +69,16 @@ public sealed class KnowledgePageViewModel : ObservableObject
     public string ImportPath { get => _importPath; set => SetProperty(ref _importPath, value); }
     public string Query { get => _query; set => SetProperty(ref _query, value); }
     public KnowledgeSearchMode SelectedSearchMode { get => _selectedSearchMode; set => SetProperty(ref _selectedSearchMode, value); }
-    public KnowledgeSearchHit? SelectedResult { get => _selectedResult; set => SetProperty(ref _selectedResult, value); }
+    public KnowledgeSearchHit? SelectedResult
+    {
+        get => _selectedResult;
+        set
+        {
+            if (SetProperty(ref _selectedResult, value))
+                OnPropertyChanged(nameof(EvidenceMicroscopeText));
+        }
+    }
+    public string EvidenceMicroscopeText => FormatEvidenceMicroscope(SelectedResult);
     public string RagContextText { get => _ragContextText; private set => SetProperty(ref _ragContextText, value); }
     public string ResultSummary { get => _resultSummary; private set => SetProperty(ref _resultSummary, value); }
     public string? LastError { get => _lastError; private set => SetProperty(ref _lastError, value); }
@@ -326,6 +336,44 @@ public sealed class KnowledgePageViewModel : ObservableObject
             ? provider
             : $"{provider} · {snapshot.EmbeddingModel}";
     }
+
+    private static string FormatEvidenceMicroscope(KnowledgeSearchHit? hit)
+    {
+        if (hit is null) return "选择一条检索结果查看解释链路。";
+
+        var diagnostics = hit.Diagnostics;
+        var lines = new List<string>
+        {
+            $"方法: {diagnostics?.Method ?? "-"}",
+            $"来源: {hit.SourceUri}",
+            $"定位: {hit.Locator ?? "-"}",
+            $"Chunk: {hit.ChunkId}",
+            $"最终分: {hit.Score.ToString("0.000000", CultureInfo.InvariantCulture)}"
+        };
+
+        if (diagnostics is null)
+        {
+            lines.Add("诊断: 此结果未携带检索诊断数据。");
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        if (diagnostics.LexicalRank is int lexicalRank)
+            lines.Add($"FTS: rank #{lexicalRank} · score={FormatDiagnosticNumber(diagnostics.LexicalScore)}");
+
+        if (diagnostics.SemanticRank is int semanticRank)
+            lines.Add($"Embedding: rank #{semanticRank} · cosine={FormatDiagnosticNumber(diagnostics.SemanticScore)}");
+
+        if (diagnostics.RrfK is int rrfK)
+        {
+            lines.Add(
+                $"RRF: k={rrfK} · lexical={FormatDiagnosticNumber(diagnostics.LexicalRrfContribution)} · semantic={FormatDiagnosticNumber(diagnostics.SemanticRrfContribution)}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatDiagnosticNumber(double? value) =>
+        value.HasValue ? value.Value.ToString("0.000000", CultureInfo.InvariantCulture) : "-";
 
     private void ClearResults()
     {

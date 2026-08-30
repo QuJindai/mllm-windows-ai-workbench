@@ -11,17 +11,19 @@ if(-not $match.Success){throw 'MethodTable allowlist not found'}
 $keys=@([regex]::Matches($match.Groups['body'].Value,"(?m)^\s*'([^']+)'\s*=") | ForEach-Object {$_.Groups[1].Value})
 $expected=@(
   'system.ping','dashboard.snapshot','doctor.snapshot','installer.snapshot',
-  'system.capabilities','models.snapshot','models.verify','models.import','models.activate',
+  'system.capabilities','components.installPreset','components.installTask',
+  'models.snapshot','models.verify','models.import','models.activate',
   'services.snapshot','service.start','service.stop','service.restart','service.logs'
 )
 $missing=@($expected | Where-Object {$keys -notcontains $_})
 $extra=@($keys | Where-Object {$expected -notcontains $_})
-if($missing.Count -gt 0){throw ('Phase B backend methods missing: '+($missing -join ','))}
+if($missing.Count -gt 0){throw ('Phase B/C8 backend methods missing: '+($missing -join ','))}
 if($extra.Count -gt 0){throw ('Unexpected backend methods exposed: '+($extra -join ','))}
 $forbidden=@($keys | Where-Object {$_ -match '(?i)exec|command|shell|script|eval|powershell|pid|process'})
 if($forbidden.Count -gt 0){throw ('Forbidden backend method exposed: '+($forbidden -join ','))}
 if($content -notmatch 'WorkbenchRuntimeAdapter\.psm1'){throw 'Backend does not load shared WorkbenchRuntimeAdapter.psm1'}
-foreach($operation in @('Get-MLLMModelInventory','Test-MLLMWorkbenchModel','Import-MLLMManagedModel','Set-MLLMActiveModel','Get-MLLMWorkbenchServices','Start-MLLMWorkbenchService','Stop-MLLMWorkbenchService','Restart-MLLMWorkbenchService','Get-MLLMWorkbenchServiceLogs')){
+if($content -notmatch 'WorkbenchComponentEngine\.psm1'){throw 'Backend does not load fixed WorkbenchComponentEngine.psm1'}
+foreach($operation in @('Get-MLLMModelInventory','Test-MLLMWorkbenchModel','Import-MLLMManagedModel','Set-MLLMActiveModel','Get-MLLMWorkbenchServices','Start-MLLMWorkbenchService','Stop-MLLMWorkbenchService','Restart-MLLMWorkbenchService','Get-MLLMWorkbenchServiceLogs','Invoke-MLLMWorkbenchComponentPreset','Invoke-MLLMWorkbenchComponentTask')){
   if($content -notmatch [regex]::Escape($operation)){throw "Backend does not route fixed runtime operation: $operation"}
 }
-Write-Host ('PHASE_B_BACKEND_CONTRACT=PASS methods='+($keys -join ','))
+Write-Host ('PHASE_B_C8_BACKEND_CONTRACT=PASS methods='+($keys -join ','))

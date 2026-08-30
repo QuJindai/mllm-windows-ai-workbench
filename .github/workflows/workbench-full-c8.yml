@@ -1,0 +1,45 @@
+name: workbench-full-c8
+
+on:
+  push:
+    branches:
+      - feature/workbench-full-c8
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  c8:
+    name: Workbench Full C8 / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Component install backend contract
+        shell: powershell
+        run: dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release --filter ComponentInstallBackendTests
+      - name: Full desktop regression
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release
+      - name: Backend fixed allowlist regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/backend/Invoke-WorkbenchBackendPhaseBContractSmoke.ps1
+      - name: Runtime model adapter regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterModelSmoke.ps1
+      - name: Runtime service adapter regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterServiceSmoke.ps1
+      - name: Runtime service lifecycle regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/runtime/Invoke-WorkbenchRuntimeAdapterLifecycleSmoke.ps1

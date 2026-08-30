@@ -5,32 +5,18 @@ namespace MLLM.Workbench.Desktop.Services.Knowledge;
 
 public sealed class ShellEvidenceLauncher : IEvidenceLauncher
 {
-    public Task OpenAsync(string sourceUri, CancellationToken cancellationToken)
+    public Task OpenAsync(string sourceUri, CancellationToken cancellationToken) =>
+        OpenAsync(sourceUri, locator: null, cancellationToken);
+
+    public Task OpenAsync(string sourceUri, string? locator, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (string.IsNullOrWhiteSpace(sourceUri))
-            throw new ArgumentException("Evidence source is required.", nameof(sourceUri));
+        var target = EvidenceLaunchTargetBuilder.Build(sourceUri, locator);
 
-        string path;
-        if (Path.IsPathRooted(sourceUri))
-        {
-            path = Path.GetFullPath(sourceUri);
-        }
-        else if (Uri.TryCreate(sourceUri, UriKind.Absolute, out var uri))
-        {
-            if (!uri.IsFile)
-                throw new NotSupportedException("Only local file evidence can be opened from the knowledge workbench.");
-            path = Path.GetFullPath(uri.LocalPath);
-        }
-        else
-        {
-            path = Path.GetFullPath(sourceUri);
-        }
+        if (!File.Exists(target.ResolvedPath))
+            throw new FileNotFoundException("Evidence source file was not found.", target.ResolvedPath);
 
-        if (!File.Exists(path))
-            throw new FileNotFoundException("Evidence source file was not found.", path);
-
-        var process = Process.Start(new ProcessStartInfo(path)
+        var process = Process.Start(new ProcessStartInfo(target.ShellTarget)
         {
             UseShellExecute = true
         });

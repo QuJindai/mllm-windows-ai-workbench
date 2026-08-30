@@ -247,7 +247,9 @@ public sealed class KnowledgePageViewModel : ObservableObject
 
         try
         {
-            await _evidenceLauncher.OpenAsync(SelectedResult.SourceUri, cancellationToken).ConfigureAwait(true);
+            await _evidenceLauncher
+                .OpenAsync(SelectedResult.SourceUri, SelectedResult.Locator, cancellationToken)
+                .ConfigureAwait(true);
             LastError = null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

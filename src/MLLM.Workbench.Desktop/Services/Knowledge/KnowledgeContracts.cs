@@ -54,4 +54,7 @@ public interface IKnowledgeWorkbenchService
 public interface IEvidenceLauncher
 {
     Task OpenAsync(string sourceUri, CancellationToken cancellationToken);
+
+    Task OpenAsync(string sourceUri, string? locator, CancellationToken cancellationToken) =>
+        OpenAsync(sourceUri, cancellationToken);
 }

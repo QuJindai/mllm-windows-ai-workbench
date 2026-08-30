@@ -21,6 +21,7 @@ $fakeRoot=Join-Path $env:RUNNER_TEMP ('mllm c7 installed '+[guid]::NewGuid().ToS
 $oldProgramFiles=$env:ProgramFiles
 $oldProgramData=$env:ProgramData
 $oldUserProfile=$env:USERPROFILE
+$oldSmokeDiagnostic=$env:MLLM_SMOKE_DIAGNOSTIC_PATH
 
 function Assert-ShaSidecar {
     param([Parameter(Mandatory=$true)][string]$ZipPath)
@@ -38,14 +39,31 @@ function Invoke-InstalledDesktopSmoke {
         [Parameter(Mandatory=$true)][string]$Exe,
         [Parameter(Mandatory=$true)][string[]]$Arguments,
         [Parameter(Mandatory=$true)][string]$Name,
-        [int]$TimeoutMs=60000
+        [int]$TimeoutMs=60000,
+        [switch]$CaptureDiagnostic
     )
-    $process=Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
-    if(-not $process.WaitForExit($TimeoutMs)){
-        try{$process.Kill()}catch{}
-        throw "Installed C7 desktop $Name exceeded $TimeoutMs ms"
+    $diag=$null
+    if($CaptureDiagnostic){
+        $diag=Join-Path $env:RUNNER_TEMP ('mllm-smoke-'+[guid]::NewGuid().ToString('N')+'.txt')
+        $env:MLLM_SMOKE_DIAGNOSTIC_PATH=$diag
     }
-    if($process.ExitCode -ne 0){throw "Installed C7 desktop $Name failed rc=$($process.ExitCode)"}
+    try{
+        $process=Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
+        if(-not $process.WaitForExit($TimeoutMs)){
+            try{$process.Kill()}catch{}
+            $detail=if($diag -and (Test-Path -LiteralPath $diag -PathType Leaf)){Get-Content -LiteralPath $diag -Raw}else{'<no diagnostic file>'}
+            throw "Installed C7 desktop $Name exceeded $TimeoutMs ms. diagnostic=$detail"
+        }
+        if($process.ExitCode -ne 0){
+            $detail=if($diag -and (Test-Path -LiteralPath $diag -PathType Leaf)){Get-Content -LiteralPath $diag -Raw}else{'<no diagnostic file>'}
+            throw "Installed C7 desktop $Name failed rc=$($process.ExitCode). diagnostic=$detail"
+        }
+    }finally{
+        if($CaptureDiagnostic){
+            if($null -eq $oldSmokeDiagnostic){Remove-Item Env:MLLM_SMOKE_DIAGNOSTIC_PATH -ErrorAction SilentlyContinue}else{$env:MLLM_SMOKE_DIAGNOSTIC_PATH=$oldSmokeDiagnostic}
+            if($diag){Remove-Item -LiteralPath $diag -Force -ErrorAction SilentlyContinue}
+        }
+    }
 }
 
 try{
@@ -112,7 +130,7 @@ try{
     if(-not(Test-Path -LiteralPath $installedExe -PathType Leaf)){throw "Installed desktop executable missing: $installedExe"}
 
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke') -Name '--smoke' -TimeoutMs 60000
-    Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-knowledge') -Name '--smoke-knowledge' -TimeoutMs 20000
+    Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-knowledge') -Name '--smoke-knowledge' -TimeoutMs 20000 -CaptureDiagnostic
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
@@ -121,6 +139,7 @@ try{
     $env:ProgramFiles=$oldProgramFiles
     $env:ProgramData=$oldProgramData
     $env:USERPROFILE=$oldUserProfile
+    if($null -eq $oldSmokeDiagnostic){Remove-Item Env:MLLM_SMOKE_DIAGNOSTIC_PATH -ErrorAction SilentlyContinue}else{$env:MLLM_SMOKE_DIAGNOSTIC_PATH=$oldSmokeDiagnostic}
     Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $fakeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

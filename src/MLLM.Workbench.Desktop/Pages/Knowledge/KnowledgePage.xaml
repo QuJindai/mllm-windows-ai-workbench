@@ -14,16 +14,16 @@
 
     <UniformGrid Columns="4" Margin="0,0,0,16">
       <Border Style="{StaticResource CardStyle}" Margin="0,0,8,0">
-        <StackPanel><TextBlock Text="FTS5" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding Fts5Status}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
+        <StackPanel><TextBlock Text="FTS5" Foreground="{StaticResource MutedTextBrush}"/><TextBlock AutomationProperties.AutomationId="KnowledgeFtsStatus" Text="{Binding Fts5Status}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
       </Border>
       <Border Style="{StaticResource CardStyle}" Margin="8,0">
-        <StackPanel><TextBlock Text="Embedding" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding EmbeddingStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
+        <StackPanel><TextBlock Text="Embedding" Foreground="{StaticResource MutedTextBrush}"/><TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingStatus" Text="{Binding EmbeddingStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
       </Border>
       <Border Style="{StaticResource CardStyle}" Margin="8,0">
-        <StackPanel><TextBlock Text="Vector Index" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding EmbeddingIndexStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
+        <StackPanel><TextBlock Text="Vector Index" Foreground="{StaticResource MutedTextBrush}"/><TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingIndexStatus" Text="{Binding EmbeddingIndexStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
       </Border>
       <Border Style="{StaticResource CardStyle}" Margin="8,0,0,0">
-        <StackPanel><TextBlock Text="Hybrid" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding HybridStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
+        <StackPanel><TextBlock Text="Hybrid" Foreground="{StaticResource MutedTextBrush}"/><TextBlock AutomationProperties.AutomationId="KnowledgeHybridStatus" Text="{Binding HybridStatus}" Margin="0,8,0,0" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
       </Border>
     </UniformGrid>
 
@@ -47,11 +47,11 @@
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel>
             <TextBlock Text="向量索引" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-            <TextBlock Text="{Binding EmbeddingProgressText}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+            <TextBlock AutomationProperties.AutomationId="KnowledgeEmbeddingProgressText" Text="{Binding EmbeddingProgressText}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
           </StackPanel>
           <Button Grid.Column="1" AutomationProperties.AutomationId="KnowledgeBuildEmbeddingIndex" Content="补建 / 继续向量索引" Command="{Binding BuildEmbeddingIndexCommand}" Style="{StaticResource ActionButtonStyle}" />
         </Grid>
-        <ProgressBar AutomationProperties.AutomationId="KnowledgeEmbeddingProgress" Minimum="0" Maximum="100" Value="{Binding EmbeddingProgressPercent, Mode=OneWay}" Height="14" Margin="0,12,0,0" />
+        <ProgressBar AutomationProperties.AutomationId="KnowledgeEmbeddingProgressBar" Minimum="0" Maximum="100" Value="{Binding EmbeddingProgressPercent, Mode=OneWay}" Height="14" Margin="0,12,0,0" />
       </StackPanel>
     </Border>
 

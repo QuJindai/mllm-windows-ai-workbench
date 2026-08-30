@@ -22,6 +22,7 @@ $oldProgramFiles=$env:ProgramFiles
 $oldProgramData=$env:ProgramData
 $oldUserProfile=$env:USERPROFILE
 $oldSmokeDiagnostic=$env:MLLM_SMOKE_DIAGNOSTIC_PATH
+$oldNetworkMode=$env:MLLM_NETWORK_MODE
 
 function Assert-ShaSidecar {
     param([Parameter(Mandatory=$true)][string]$ZipPath)
@@ -135,17 +136,21 @@ try{
     $installedExe=Join-Path $installedRoot 'desktop\MLLM.Workbench.Desktop.exe'
     if(-not(Test-Path -LiteralPath $installedExe -PathType Leaf)){throw "Installed desktop executable missing: $installedExe"}
 
+    # Release smoke must remain network-isolated even though the normal product default
+    # now permits component acquisition through AUTO_CN_FIRST.
+    $env:MLLM_NETWORK_MODE='OFFLINE_CACHE'
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke') -Name '--smoke' -TimeoutMs 60000
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-knowledge') -Name '--smoke-knowledge' -TimeoutMs 20000 -CaptureDiagnostic
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
-    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS"
+    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS smoke_network_mode=OFFLINE_CACHE"
 }finally{
     $env:ProgramFiles=$oldProgramFiles
     $env:ProgramData=$oldProgramData
     $env:USERPROFILE=$oldUserProfile
     if($null -eq $oldSmokeDiagnostic){Remove-Item Env:MLLM_SMOKE_DIAGNOSTIC_PATH -ErrorAction SilentlyContinue}else{$env:MLLM_SMOKE_DIAGNOSTIC_PATH=$oldSmokeDiagnostic}
+    if($null -eq $oldNetworkMode){Remove-Item Env:MLLM_NETWORK_MODE -ErrorAction SilentlyContinue}else{$env:MLLM_NETWORK_MODE=$oldNetworkMode}
     Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $fakeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

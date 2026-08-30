@@ -34,6 +34,14 @@ jobs:
           set -euo pipefail
           python3 s24u-localdream/converter/inspect_official_sdxl_converter.py \
             converter-kit --output converter-inspection.json | tee converter-inspection.log
+      - name: Extract focused converter context
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/converter/extract_converter_context.py \
+            converter-kit \
+            --json converter-context.json \
+            --text converter-context.txt | tee converter-context.log
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
@@ -42,5 +50,8 @@ jobs:
             convertsdxl.zip.sha256
             converter-inspection.json
             converter-inspection.log
+            converter-context.json
+            converter-context.txt
+            converter-context.log
           if-no-files-found: error
           retention-days: 3

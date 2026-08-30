@@ -52,16 +52,12 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
         if (!File.Exists(fullPath))
             throw new FileNotFoundException("Knowledge source file was not found.", fullPath);
 
-        var extension = Path.GetExtension(fullPath).ToLowerInvariant();
-        if (extension is not ".md" and not ".markdown" and not ".txt")
-            throw new NotSupportedException($"Knowledge import does not support '{extension}' yet. Supported formats: .md, .markdown, .txt.");
-
-        var text = await File.ReadAllTextAsync(fullPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(text))
-            throw new InvalidDataException("Knowledge source file is empty.");
+        var sections = await KnowledgeSourceExtractor
+            .ExtractAsync(fullPath, cancellationToken)
+            .ConfigureAwait(false);
 
         var documentId = CreateDocumentId(fullPath);
-        var chunks = CreateChunks(documentId, text);
+        var chunks = CreateChunks(documentId, sections);
         var document = new KnowledgeDocument(
             DocumentId: documentId,
             SourceUri: fullPath,
@@ -206,7 +202,31 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
         return "doc-" + Convert.ToHexString(hash).ToLowerInvariant()[..32];
     }
 
-    private static IReadOnlyList<KnowledgeChunk> CreateChunks(string documentId, string text)
+    private static IReadOnlyList<KnowledgeChunk> CreateChunks(
+        string documentId,
+        IReadOnlyList<KnowledgeSourceSection> sections)
+    {
+        var chunks = new List<KnowledgeChunk>();
+
+        foreach (var section in sections)
+        {
+            foreach (var content in CreateRawChunks(section.Text))
+            {
+                var ordinal = chunks.Count;
+                var chunkId = string.IsNullOrWhiteSpace(section.Locator)
+                    ? $"{documentId}:{ordinal:D6}"
+                    : KnowledgeChunkLocator.CreateChunkId(documentId, section.Locator, ordinal);
+                chunks.Add(new KnowledgeChunk(chunkId, ordinal, content));
+            }
+        }
+
+        if (chunks.Count == 0)
+            throw new InvalidDataException("Knowledge source produced no indexable text chunks.");
+
+        return chunks;
+    }
+
+    private static IReadOnlyList<string> CreateRawChunks(string text)
     {
         var normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         var paragraphs = normalized
@@ -235,15 +255,7 @@ public sealed class KnowledgeWorkbenchService : IKnowledgeWorkbenchService, IDis
         }
 
         FlushCurrent(current, rawChunks);
-        if (rawChunks.Count == 0)
-            throw new InvalidDataException("Knowledge source produced no indexable text chunks.");
-
-        return rawChunks
-            .Select((content, ordinal) => new KnowledgeChunk(
-                ChunkId: $"{documentId}:{ordinal:D6}",
-                Ordinal: ordinal,
-                Content: content))
-            .ToArray();
+        return rawChunks;
     }
 
     private static void AddLongParagraph(string paragraph, List<string> chunks)

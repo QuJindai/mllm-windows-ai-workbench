@@ -1,0 +1,157 @@
+name: S24U LocalDream Harness CI
+
+on:
+  push:
+    branches:
+      - ci/s24u-localdream-harness-20260831
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-s24u-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout CI staging branch
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager \
+            'platforms;android-37' \
+            'build-tools;36.0.0' \
+            'platform-tools'
+
+      - name: Clone pinned Local Dream baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "a7666f6198412a58c6eb1eacc28828aa40c7d7ae"
+
+      - name: Hydrate official native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          OFFICIAL_URL='https://github.com/xororz/local-dream/releases/download/v2.8.1/LocalDream_armv8a_2.8.1.apk'
+          OFFICIAL_SHA='c8ba61769564ed13bcfb7e13cc48bb3bf6e3f9fd26db132a0bb2d6aa00a31edb'
+          curl -L --fail --retry 4 --retry-all-errors "$OFFICIAL_URL" -o official-localdream.apk
+          echo "$OFFICIAL_SHA  official-localdream.apk" | sha256sum -c -
+          rm -rf official-apk
+          mkdir official-apk
+          unzip -q official-localdream.apk -d official-apk
+
+          test -s official-apk/lib/arm64-v8a/libstable_diffusion_core.so
+          test -d official-apk/assets/qnnlibs
+
+          mkdir -p local-dream/app/src/main/jniLibs/arm64-v8a
+          cp -a official-apk/lib/arm64-v8a/. local-dream/app/src/main/jniLibs/arm64-v8a/
+          mkdir -p local-dream/app/src/main/assets/qnnlibs
+          cp -a official-apk/assets/qnnlibs/. local-dream/app/src/main/assets/qnnlibs/
+
+          find local-dream/app/src/main/jniLibs/arm64-v8a -maxdepth 1 -type f -printf '%f\n' | sort | tee native-runtime-files.txt
+          find local-dream/app/src/main/assets/qnnlibs -maxdepth 1 -type f -printf '%f\n' | sort | tee qnn-runtime-files.txt
+
+      - name: TDD RED - baseline must not already contain harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-localdream/test_harness_patch.py local-dream > red-test.log 2>&1
+          code=$?
+          set -e
+          cat red-test.log
+          if [ "$code" -eq 0 ]; then
+            echo 'RED gate failed: test unexpectedly passed before implementation' >&2
+            exit 1
+          fi
+          echo 'RED_EXPECTED_FAIL_PASS'
+
+      - name: Apply S24U validation harness patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/patch_localdream.py local-dream | tee patch.log
+
+      - name: TDD GREEN - harness contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-localdream/test_harness_patch.py local-dream | tee green-test.log
+
+      - name: Run upstream unit tests and build Basic APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd local-dream
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-build.log
+
+      - name: Verify installable S24U APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' | head -1)"
+          test -n "$APK"
+          test -s "$APK"
+
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          "$AAPT2" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='io.github.xororz.localdream.s24uharness'" apk-badging.txt
+          grep -q "versionName='2.8.1-s24u-h1'" apk-badging.txt
+
+          unzip -l "$APK" | tee apk-files.txt
+          grep -q 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files.txt
+          grep -q 'assets/qnnlibs/' apk-files.txt
+          if grep -q 'safety_checker.mnn' apk-files.txt; then
+            echo 'Basic APK unexpectedly contains safety_checker.mnn' >&2
+            exit 1
+          fi
+
+          rm -rf dex-check
+          mkdir dex-check
+          unzip -q "$APK" 'classes*.dex' -d dex-check
+          if ! strings dex-check/classes*.dex | grep -Fq 'S24U HARNESS'; then
+            echo 'Harness marker not found in packaged DEX' >&2
+            exit 1
+          fi
+
+          OUT='S24U_LocalDream_Harness_H1_20260831.apk'
+          cp "$APK" "$OUT"
+          sha256sum "$OUT" | tee APK_SHA256SUMS.txt
+          stat -c 'APK_BYTES=%s' "$OUT" | tee APK_SIZE.txt
+
+      - name: Upload phone-test APK and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-localdream-harness-h1
+          path: |
+            S24U_LocalDream_Harness_H1_20260831.apk
+            APK_SHA256SUMS.txt
+            APK_SIZE.txt
+            apk-badging.txt
+            apk-files.txt
+            native-runtime-files.txt
+            qnn-runtime-files.txt
+            red-test.log
+            green-test.log
+            patch.log
+            gradle-build.log
+          if-no-files-found: error
+          retention-days: 3

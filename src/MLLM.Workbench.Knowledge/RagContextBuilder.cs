@@ -10,7 +10,11 @@ public sealed record RagEvidence(
     string Title,
     int Ordinal,
     string Excerpt,
-    double Score);
+    double Score)
+{
+    public string? Locator =>
+        KnowledgeChunkLocator.TryGetLocator(ChunkId, out var locator) ? locator : null;
+}
 
 public sealed record RagContext(
     string ContextText,
@@ -68,8 +72,10 @@ public static class RagContextBuilder
             .Append(hit.Title)
             .Append(" | source=").Append(hit.SourceUri)
             .Append(" | chunk=").Append(hit.ChunkId)
-            .Append(" | ordinal=").Append(hit.Ordinal)
-            .AppendLine();
+            .Append(" | ordinal=").Append(hit.Ordinal);
+        if (!string.IsNullOrWhiteSpace(hit.Locator))
+            builder.Append(" | locator=").Append(hit.Locator);
+        builder.AppendLine();
         builder.AppendLine(hit.Excerpt);
         builder.AppendLine();
         return builder.ToString();

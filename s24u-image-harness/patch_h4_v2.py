@@ -11,14 +11,7 @@ _ORIGINAL_REPLACE_ONCE = patch_h4.replace_once
 
 
 def region_safe_replace_once(text: str, old: str, new: str, label: str) -> str:
-    """Keep strict patching except for the known Event/Snapshot shared tail.
-
-    H3 deliberately gives MicroscopeEvent and MicroscopeSnapshot the same
-    trailing positiveChunks/negativeChunks fields. H4 extends Event first and
-    Snapshot second, so this one anchor legitimately occurs twice before the
-    first replacement. Replacing only the first occurrence targets Event;
-    Snapshot remains available for the explicitly unique snapshot anchor.
-    """
+    """Keep strict patching except for the known Event/Snapshot shared tail."""
     if label == "H4 event budget fields":
         count = text.count(old)
         if count != 2:
@@ -29,16 +22,52 @@ def region_safe_replace_once(text: str, old: str, new: str, label: str) -> str:
     return _ORIGINAL_REPLACE_ONCE(text, old, new, label)
 
 
-def fix_formula_token_units(root: Path) -> None:
+def fix_visualizer_contract_and_formula(root: Path) -> None:
     path = root / "app/src/main/assets/s24u_microscope/microscope.js"
     text = path.read_text(encoding="utf-8")
-    old = "    const content = Math.max(posInput - 2, 0);"
-    new = "    const content = Math.max(posInput, 0);"
-    if text.count(old) != 1:
+
+    formula_old = "    const content = Math.max(posInput - 2, 0);"
+    formula_new = "    const content = Math.max(posInput, 0);"
+    if text.count(formula_old) != 1:
         raise RuntimeError(
             "H4 formula token-unit fix: expected exactly one content-token expression"
         )
-    text = text.replace(old, new, 1)
+    text = text.replace(formula_old, formula_new, 1)
+
+    budget_old = '''  function budget(snapshot, prefix) {
+    return {
+      input: int(snapshot[`${prefix}_input_tokens`]),
+      effective: int(snapshot[`${prefix}_effective_tokens`]),
+      truncated: int(snapshot[`${prefix}_truncated_tokens`]),
+      chunks: arr(snapshot[`${prefix}_chunk_tokens`]),
+      texts: arr(snapshot[`${prefix}_chunks`]),
+    };
+  }
+'''
+    budget_new = '''  function budget(snapshot, prefix) {
+    if (prefix === 'positive') {
+      return {
+        input: int(snapshot.positive_input_tokens),
+        effective: int(snapshot.positive_effective_tokens),
+        truncated: int(snapshot.positive_truncated_tokens),
+        chunks: arr(snapshot.positive_chunk_tokens),
+        texts: arr(snapshot.positive_chunks),
+      };
+    }
+    return {
+      input: int(snapshot.negative_input_tokens),
+      effective: int(snapshot.negative_effective_tokens),
+      truncated: int(snapshot.negative_truncated_tokens),
+      chunks: arr(snapshot.negative_chunk_tokens),
+      texts: arr(snapshot.negative_chunks),
+    };
+  }
+'''
+    if text.count(budget_old) != 1:
+        raise RuntimeError(
+            "H4 visualizer budget fix: expected exactly one dynamic budget helper"
+        )
+    text = text.replace(budget_old, budget_new, 1)
     path.write_text(text, encoding="utf-8")
 
 
@@ -53,8 +82,8 @@ def main() -> int:
         return rc
 
     root = Path(sys.argv[1]).resolve()
-    fix_formula_token_units(root)
-    print("S24U_IMAGE_HARNESS_H4_V2_REGION_AND_FORMULA_FIX_APPLIED")
+    fix_visualizer_contract_and_formula(root)
+    print("S24U_IMAGE_HARNESS_H4_V2_REGION_FORMULA_AND_BUDGET_FIX_APPLIED")
     return 0
 
 

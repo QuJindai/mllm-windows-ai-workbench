@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  tdd-h3-red:
+  tdd-h3:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
     steps:
@@ -48,12 +48,33 @@ jobs:
           grep -q 'H3 versionCode' h3-red.log
           echo H3_MICROSCOPE_RED_EXPECTED_FAIL_PASS
 
-      - name: Upload RED evidence
+      - name: Apply H3 live microscope patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h3.py local-dream | tee h3-patch.log
+
+      - name: TDD GREEN - H3 microscope source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream | tee h3-green.log
+
+      - name: Python syntax gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile s24u-image-harness/patch_h2.py s24u-image-harness/patch_h3.py s24u-image-harness/tests/test_h2_source_contract.py s24u-image-harness/tests/test_h3_microscope_contract.py
+          echo H3_PYTHON_SYNTAX_PASS
+
+      - name: Upload TDD evidence
         uses: actions/upload-artifact@v4
         with:
-          name: s24u-h3-red-evidence
+          name: s24u-h3-tdd-evidence
           path: |
             h2-patch-for-h3.log
             h2-green-for-h3.log
             h3-red.log
+            h3-patch.log
+            h3-green.log
           retention-days: 7

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <title>S24U H4 Visual Microscope</title>
+  <link rel="stylesheet" href="microscope.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">S24U H4 VISUAL MICROSCOPE · LIVE</p>
+        <h1>扩散模型正在怎样“想”出这张图？</h1>
+        <p id="stage-explain" class="explain">等待真实 native trace…</p>
+      </div>
+      <div class="hero-metrics">
+        <div><span>阶段</span><strong id="phase-value">WAIT</strong></div>
+        <div><span>进度</span><strong id="progress-value">0%</strong></div>
+        <div><span>后端</span><strong id="backend-value">NPU/QNN</strong></div>
+        <div><span>分辨率</span><strong id="resolution-value">—</strong></div>
+      </div>
+    </section>
+
+    <section class="card architecture-card">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">教学层 · ARCHITECTURE</p>
+          <h2>真实计算链</h2>
+        </div>
+        <div class="legend"><i class="dot active-dot"></i>正在计算 <i class="dot done-dot"></i>已完成</div>
+      </div>
+      <div class="svg-wrap">
+        <svg id="pipeline-svg" viewBox="0 0 1240 430" role="img" aria-label="Stable Diffusion runtime architecture">
+          <defs>
+            <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,8 L10,4 z" class="arrow-head"></path>
+            </marker>
+          </defs>
+          <g class="pipeline-edge"><path d="M135 116 H220" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M350 116 H435" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M565 116 H650" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M780 116 H865" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M995 116 H1080" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M1145 171 V260 H995" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M865 305 H780" marker-end="url(#arrow)"></path></g>
+          <g class="pipeline-edge"><path d="M650 305 H565" marker-end="url(#arrow)"></path></g>
+
+          <g id="node-prompt" class="pipeline-node" transform="translate(25 66)">
+            <rect width="110" height="100" rx="22"></rect><text x="55" y="40">Prompt</text><text class="node-sub" x="55" y="67">文本</text>
+          </g>
+          <g id="node-token" class="pipeline-node" transform="translate(220 66)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">Token</text><text class="node-sub" x="65" y="64">Chunk × K</text>
+          </g>
+          <g id="node-clip" class="pipeline-node" transform="translate(435 66)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">CLIP</text><text class="node-sub" x="65" y="64">77 × hidden</text>
+          </g>
+          <g id="node-unet" class="pipeline-node" transform="translate(650 66)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">UNet</text><text class="node-sub" x="65" y="64">εₜ⁽ᵏ⁾</text>
+          </g>
+          <g id="node-fusion" class="pipeline-node" transform="translate(865 66)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">Fusion</text><text class="node-sub" x="65" y="64">mean ε̄ₜ</text>
+          </g>
+          <g id="node-scheduler" class="pipeline-node" transform="translate(1080 66)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">Scheduler</text><text class="node-sub" x="65" y="64">zₜ → zₜ₋₁</text>
+          </g>
+          <g id="node-latent" class="pipeline-node" transform="translate(865 255)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">Latent</text><text id="latent-node-sub" class="node-sub" x="65" y="64">128 × 128</text>
+          </g>
+          <g id="node-vae" class="pipeline-node" transform="translate(650 255)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">VAE</text><text class="node-sub" x="65" y="64">decode</text>
+          </g>
+          <g id="node-image" class="pipeline-node" transform="translate(435 255)">
+            <rect width="130" height="100" rx="22"></rect><text x="65" y="36">Image</text><text class="node-sub" x="65" y="64">RGB</text>
+          </g>
+        </svg>
+      </div>
+      <div id="step-strip" class="step-strip" aria-label="diffusion steps"></div>
+    </section>
+
+    <section class="two-col">
+      <article class="card token-card">
+        <div class="section-heading"><div><p class="eyebrow">PROMPT MICROSCOPE</p><h2>Token / Chunk 显微镜</h2></div></div>
+        <div id="budget-summary" class="budget-summary"></div>
+        <div id="truncation-warning" class="warning hidden"></div>
+        <div class="chunk-legend"><span class="slot-key bos"></span>BOS <span class="slot-key content"></span>内容 <span class="slot-key eos"></span>EOS <span class="slot-key pad"></span>PAD</div>
+        <div id="positive-chunks" class="chunk-zone"></div>
+        <div id="negative-chunks" class="chunk-zone"></div>
+      </article>
+
+      <article class="card formula-card">
+        <div class="section-heading"><div><p class="eyebrow">MATH · LIVE VALUES</p><h2>公式联动</h2></div></div>
+        <div id="formula-list" class="formula-list"></div>
+      </article>
+    </section>
+
+    <section class="card timeline-card">
+      <div class="section-heading">
+        <div><p class="eyebrow">诊断层 · PERFETTO-STYLE</p><h2>真实时间轴</h2></div>
+        <div id="timeline-total" class="timeline-total">—</div>
+      </div>
+      <div id="timeline" class="timeline"></div>
+    </section>
+
+    <section class="two-col">
+      <article class="card tensor-card">
+        <div class="section-heading"><div><p class="eyebrow">TENSOR VIEW</p><h2>张量形状</h2></div></div>
+        <div id="tensor-grid" class="tensor-grid"></div>
+      </article>
+      <article class="card attention-card">
+        <div class="section-heading"><div><p class="eyebrow">DAAM-STYLE ATTRIBUTION</p><h2>词语 → 图像区域</h2></div></div>
+        <div class="attention-empty">
+          <div class="attention-placeholder" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <strong>Cross-attention：未采集</strong>
+          <p>当前 QNN 编译图没有导出可用于归因的中间 cross-attention tensor。H4 不生成伪热力图；拿到真实张量后才启用这一层。</p>
+        </div>
+      </article>
+    </section>
+
+    <details class="card evidence-card">
+      <summary>专家证据 <span>原始 token / chunk / native trace</span></summary>
+      <div class="evidence-grid">
+        <div><h3>Positive token IDs</h3><pre id="positive-token-ids">—</pre></div>
+        <div><h3>Negative token IDs</h3><pre id="negative-token-ids">—</pre></div>
+      </div>
+      <h3>Native event stream</h3>
+      <pre id="raw-events">等待真实 trace…</pre>
+    </details>
+  </main>
+  <script src="microscope.js"></script>
+</body>
+</html>

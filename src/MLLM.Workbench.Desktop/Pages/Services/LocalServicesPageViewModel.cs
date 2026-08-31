@@ -33,9 +33,9 @@ public sealed class LocalServicesPageViewModel : ObservableObject
         _clipboard = clipboard ?? throw new ArgumentNullException(nameof(clipboard));
 
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
-        _startCommand = new AsyncRelayCommand(StartSelectedAsync, () => CanStartSelected);
-        _stopCommand = new AsyncRelayCommand(StopSelectedAsync, () => CanStopSelected);
-        _restartCommand = new AsyncRelayCommand(RestartSelectedAsync, () => CanRestartSelected);
+        _startCommand = new AsyncRelayCommand(ExecuteStartCommandAsync, () => CanStartSelected);
+        _stopCommand = new AsyncRelayCommand(ExecuteStopCommandAsync, () => CanStopSelected);
+        _restartCommand = new AsyncRelayCommand(ExecuteRestartCommandAsync, () => CanRestartSelected);
         _loadLogsCommand = new AsyncRelayCommand(LoadLogsAsync, () => SelectedService is not null && !IsBusy);
         _copyEndpointCommand = new RelayCommand(CopyEndpoint, () => CanCopyEndpoint);
         StartCommand = _startCommand;
@@ -181,6 +181,33 @@ public sealed class LocalServicesPageViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private async Task ExecuteStartCommandAsync(CancellationToken cancellationToken) =>
+        await ExecuteMutationCommandAsync(StartSelectedAsync, cancellationToken).ConfigureAwait(true);
+
+    private async Task ExecuteStopCommandAsync(CancellationToken cancellationToken) =>
+        await ExecuteMutationCommandAsync(StopSelectedAsync, cancellationToken).ConfigureAwait(true);
+
+    private async Task ExecuteRestartCommandAsync(CancellationToken cancellationToken) =>
+        await ExecuteMutationCommandAsync(RestartSelectedAsync, cancellationToken).ConfigureAwait(true);
+
+    private static async Task ExecuteMutationCommandAsync(
+        Func<CancellationToken, Task> action,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await action(cancellationToken).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            // The mutation method already stores the structured backend failure in LastError.
+            // Button execution must not rethrow an expected product/runtime failure to WPF Dispatcher.
         }
     }
 

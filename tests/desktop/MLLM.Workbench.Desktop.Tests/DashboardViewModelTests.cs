@@ -30,7 +30,7 @@ public sealed class DashboardViewModelTests
     }
 
     [Fact]
-    public async Task Quick_navigation_commands_emit_all_approved_D1_routes()
+    public async Task Quick_navigation_commands_emit_all_approved_workspace_routes()
     {
         await using var backend = new FakeBackendClient(new DashboardSnapshot(new MachineSnapshot("Windows", "AMD64", "CPU", 1, [], 1), "OFFLINE_CACHE", [], null));
         var vm = new DashboardPageViewModel(backend);
@@ -42,7 +42,8 @@ public sealed class DashboardViewModelTests
             (Property: "OpenDoctorCommand", Route: "doctor"),
             (Property: "OpenInstallationCommand", Route: "installation"),
             (Property: "OpenModelsCommand", Route: "models"),
-            (Property: "OpenServicesCommand", Route: "services")
+            (Property: "OpenServicesCommand", Route: "services"),
+            (Property: "OpenConversationCommand", Route: "conversation")
         })
         {
             var property = typeof(DashboardPageViewModel).GetProperty(pair.Property);

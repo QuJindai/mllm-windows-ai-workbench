@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using MLLM.Workbench.Desktop.Pages.Dashboard;
+using MLLM.Workbench.Desktop.Pages.Conversation;
 using MLLM.Workbench.Desktop.Pages.Doctor;
 using MLLM.Workbench.Desktop.Pages.Installation;
 using MLLM.Workbench.Desktop.Pages.Knowledge;
@@ -22,6 +23,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ModelManagementPageViewModel models,
         LocalServicesPageViewModel services,
         KnowledgePageViewModel knowledge,
+        ConversationPageViewModel conversation,
         WorkbenchRuntimeOptions runtime)
     {
         Dashboard = dashboard;
@@ -30,6 +32,7 @@ public sealed class MainWindowViewModel : ObservableObject
         Models = models;
         Services = services;
         Knowledge = knowledge;
+        Conversation = conversation;
         _currentPage = dashboard;
         NetworkMode = runtime.NetworkMode;
         NavigateDashboardCommand = new RelayCommand(() => Navigate("dashboard"));
@@ -38,6 +41,7 @@ public sealed class MainWindowViewModel : ObservableObject
         NavigateModelsCommand = new RelayCommand(() => Navigate("models"));
         NavigateServicesCommand = new RelayCommand(() => Navigate("services"));
         NavigateKnowledgeCommand = new RelayCommand(() => Navigate("knowledge"));
+        NavigateConversationCommand = new RelayCommand(() => Navigate("conversation"));
         Dashboard.NavigationRequested += Navigate;
         NavigationItems = new ObservableCollection<NavigationItem>
         {
@@ -46,7 +50,8 @@ public sealed class MainWindowViewModel : ObservableObject
             new("installation", "安装中心", NavigateInstallationCommand),
             new("models", "模型管理", NavigateModelsCommand),
             new("services", "本地服务", NavigateServicesCommand),
-            new("knowledge", "知识工作台", NavigateKnowledgeCommand)
+            new("knowledge", "知识工作台", NavigateKnowledgeCommand),
+            new("conversation", "对话测试", NavigateConversationCommand)
         };
     }
 
@@ -56,6 +61,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public ModelManagementPageViewModel Models { get; }
     public LocalServicesPageViewModel Services { get; }
     public KnowledgePageViewModel Knowledge { get; }
+    public ConversationPageViewModel Conversation { get; }
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public string NetworkMode { get; }
     public ICommand NavigateDashboardCommand { get; }
@@ -64,6 +70,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public ICommand NavigateModelsCommand { get; }
     public ICommand NavigateServicesCommand { get; }
     public ICommand NavigateKnowledgeCommand { get; }
+    public ICommand NavigateConversationCommand { get; }
     public object CurrentPage { get => _currentPage; private set => SetProperty(ref _currentPage, value); }
     public string BackendStatus { get => _backendStatus; private set => SetProperty(ref _backendStatus, value); }
     public void SetBackendStatus(string value) => BackendStatus = value;
@@ -77,6 +84,7 @@ public sealed class MainWindowViewModel : ObservableObject
             "models" => Models,
             "services" => Services,
             "knowledge" => Knowledge,
+            "conversation" => Conversation,
             _ => Dashboard
         };
         if (route == "doctor") Doctor.RefreshCommand.Execute(null);
@@ -84,5 +92,6 @@ public sealed class MainWindowViewModel : ObservableObject
         if (route == "models") Models.RefreshCommand.Execute(null);
         if (route == "services") Services.RefreshCommand.Execute(null);
         if (route == "knowledge") Knowledge.RefreshCommand.Execute(null);
+        if (route == "conversation") Conversation.RefreshCommand.Execute(null);
     }
 }

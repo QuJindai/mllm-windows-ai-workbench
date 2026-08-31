@@ -38,6 +38,7 @@ public sealed class DashboardPageViewModel : ObservableObject
         OpenInstallationCommand = new RelayCommand(() => NavigationRequested?.Invoke("installation"));
         OpenModelsCommand = new RelayCommand(() => NavigationRequested?.Invoke("models"));
         OpenServicesCommand = new RelayCommand(() => NavigationRequested?.Invoke("services"));
+        OpenConversationCommand = new RelayCommand(() => NavigationRequested?.Invoke("conversation"));
     }
 
     public event Action<string>? NavigationRequested;
@@ -50,6 +51,7 @@ public sealed class DashboardPageViewModel : ObservableObject
     public ICommand OpenInstallationCommand { get; }
     public ICommand OpenModelsCommand { get; }
     public ICommand OpenServicesCommand { get; }
+    public ICommand OpenConversationCommand { get; }
 
     public string NetworkMode { get => _networkMode; private set => SetProperty(ref _networkMode, value); }
     public string OperatingSystem { get => _operatingSystem; private set => SetProperty(ref _operatingSystem, value); }

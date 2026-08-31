@@ -9,6 +9,7 @@
         xmlns:models="clr-namespace:MLLM.Workbench.Desktop.Pages.Models"
         xmlns:services="clr-namespace:MLLM.Workbench.Desktop.Pages.Services"
         xmlns:knowledge="clr-namespace:MLLM.Workbench.Desktop.Pages.Knowledge"
+        xmlns:conversation="clr-namespace:MLLM.Workbench.Desktop.Pages.Conversation"
         mc:Ignorable="d"
         Title="M-LLM Windows AI Workbench"
         Width="1440" Height="900" MinWidth="1100" MinHeight="700"
@@ -21,6 +22,7 @@
     <DataTemplate DataType="{x:Type models:ModelManagementPageViewModel}"><models:ModelManagementPage /></DataTemplate>
     <DataTemplate DataType="{x:Type services:LocalServicesPageViewModel}"><services:LocalServicesPage /></DataTemplate>
     <DataTemplate DataType="{x:Type knowledge:KnowledgePageViewModel}"><knowledge:KnowledgePage /></DataTemplate>
+    <DataTemplate DataType="{x:Type conversation:ConversationPageViewModel}"><conversation:ConversationPage /></DataTemplate>
   </Window.Resources>
   <Grid>
     <Grid.ColumnDefinitions>
@@ -43,6 +45,7 @@
           <Button x:Name="ModelNavigation" AutomationProperties.AutomationId="ModelNavigation" Style="{StaticResource NavigationButtonStyle}" Content="模型管理" Command="{Binding NavigateModelsCommand}" />
           <Button x:Name="ServicesNavigation" AutomationProperties.AutomationId="ServicesNavigation" Style="{StaticResource NavigationButtonStyle}" Content="本地服务" Command="{Binding NavigateServicesCommand}" />
           <Button x:Name="KnowledgeNavigation" AutomationProperties.AutomationId="KnowledgeNavigation" Style="{StaticResource NavigationButtonStyle}" Content="知识工作台" Command="{Binding NavigateKnowledgeCommand}" />
+          <Button x:Name="ConversationNavigation" AutomationProperties.AutomationId="ConversationNavigation" Style="{StaticResource NavigationButtonStyle}" Content="对话测试" Command="{Binding NavigateConversationCommand}" />
         </StackPanel>
         <Border Grid.Row="2" Style="{StaticResource SafeGateCardStyle}">
           <StackPanel>

@@ -1,0 +1,110 @@
+<UserControl x:Class="MLLM.Workbench.Desktop.Pages.Conversation.ConversationPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AutomationProperties.AutomationId="ConversationPageRoot">
+  <StackPanel>
+    <Grid Margin="0,0,0,16">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+        <TextBlock Text="{Binding Subtitle, Mode=OneWay}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+      </StackPanel>
+      <Button Grid.Column="1" AutomationProperties.AutomationId="ConversationRefreshButton"
+              Content="刷新运行时" Command="{Binding RefreshCommand}" Style="{StaticResource ActionButtonStyle}"/>
+    </Grid>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0"><TextBlock Text="状态" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding RuntimeStatus, Mode=OneWay}" Margin="0,6,0,0" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}"/></StackPanel>
+          <StackPanel Grid.Column="1" Margin="16,0,0,0"><TextBlock Text="端点" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding Endpoint, Mode=OneWay}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
+          <StackPanel Grid.Column="2" Margin="16,0,0,0"><TextBlock Text="活动模型" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding ActiveModel, Mode=OneWay}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
+          <StackPanel Grid.Column="3" Margin="16,0,0,0"><TextBlock Text="服务模型" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding ServiceModel, Mode=OneWay}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}"/></StackPanel>
+        </Grid>
+        <TextBlock Text="{Binding LastError, TargetNullValue=运行时已就绪, Mode=OneWay}" Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+      <StackPanel>
+        <TextBlock Text="提示词与参数" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+        <TextBlock Text="系统提示词" Margin="0,12,0,5" Foreground="{StaticResource MutedTextBrush}"/>
+        <TextBox AutomationProperties.AutomationId="ConversationSystemPrompt"
+                 Text="{Binding SystemPrompt, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                 MinHeight="66" Padding="10" VerticalScrollBarVisibility="Auto"/>
+        <TextBlock Text="用户提示词" Margin="0,12,0,5" Foreground="{StaticResource MutedTextBrush}"/>
+        <TextBox AutomationProperties.AutomationId="ConversationUserPrompt"
+                 Text="{Binding UserPrompt, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                 MinHeight="90" Padding="10" VerticalScrollBarVisibility="Auto"/>
+        <Grid Margin="0,12,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="190"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0"><TextBlock Text="Temperature" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding Temperature, UpdateSourceTrigger=LostFocus}" Margin="0,5,10,0" Padding="8"/></StackPanel>
+          <StackPanel Grid.Column="1"><TextBlock Text="最大输出 tokens" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding MaxOutputTokens, UpdateSourceTrigger=LostFocus}" Margin="0,5,10,0" Padding="8"/></StackPanel>
+          <CheckBox Grid.Column="2" Content="带历史" IsChecked="{Binding IncludeHistory}" VerticalAlignment="Bottom" Margin="0,0,16,8" Foreground="{StaticResource PrimaryTextBrush}"/>
+          <CheckBox Grid.Column="3" Content="Knowledge 证据" IsChecked="{Binding UseKnowledge}" VerticalAlignment="Bottom" Margin="0,0,16,8" Foreground="{StaticResource PrimaryTextBrush}"/>
+          <Button Grid.Column="5" AutomationProperties.AutomationId="ConversationSendButton" Content="发送" Command="{Binding SendCommand}" Style="{StaticResource ActionButtonStyle}" VerticalAlignment="Bottom"/>
+          <Button Grid.Column="6" AutomationProperties.AutomationId="ConversationCancelButton" Content="取消" Command="{Binding CancelCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0" VerticalAlignment="Bottom"/>
+          <Button Grid.Column="7" Content="清空" Command="{Binding ClearCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0" VerticalAlignment="Bottom"/>
+        </Grid>
+      </StackPanel>
+    </Border>
+
+    <Grid Margin="0,0,0,16">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="1.4*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,8,0">
+        <StackPanel>
+          <TextBlock Text="对话记录" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+          <DataGrid AutomationProperties.AutomationId="ConversationTranscript" ItemsSource="{Binding Transcript}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" MinHeight="240" Margin="0,10,0,0" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}" GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="角色" Binding="{Binding Role}" Width="90"/>
+              <DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="130"/>
+              <DataGridTextColumn Header="内容" Binding="{Binding Content}" Width="*"/>
+            </DataGrid.Columns>
+          </DataGrid>
+        </StackPanel>
+      </Border>
+      <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="8,0,0,0">
+        <StackPanel>
+          <TextBlock Text="运行指标" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+          <UniformGrid Columns="2" Margin="0,10,0,12">
+            <TextBlock Text="{Binding TimeToFirstTokenText, StringFormat=TTFT：{0}, Mode=OneWay}" Margin="0,4" Foreground="{StaticResource MutedTextBrush}"/>
+            <TextBlock Text="{Binding TotalLatencyText, StringFormat=总延迟：{0}, Mode=OneWay}" Margin="0,4" Foreground="{StaticResource MutedTextBrush}"/>
+            <TextBlock Text="{Binding CompletionTokensText, StringFormat=输出 tokens：{0}, Mode=OneWay}" Margin="0,4" Foreground="{StaticResource MutedTextBrush}"/>
+            <TextBlock Text="{Binding TokensPerSecondText, StringFormat=tokens/s：{0}, Mode=OneWay}" Margin="0,4" Foreground="{StaticResource MutedTextBrush}"/>
+          </UniformGrid>
+          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="可信证据" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/><Button Grid.Column="1" Content="打开原文" Command="{Binding OpenSelectedEvidenceCommand}" Style="{StaticResource ActionButtonStyle}"/></Grid>
+          <DataGrid AutomationProperties.AutomationId="ConversationEvidenceList" ItemsSource="{Binding Evidence}" SelectedItem="{Binding SelectedEvidence}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" MinHeight="150" Margin="0,8,0,0" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}">
+            <DataGrid.Columns><DataGridTextColumn Header="引用" Binding="{Binding CitationId}" Width="60"/><DataGridTextColumn Header="定位" Binding="{Binding Locator}" Width="90"/><DataGridTextColumn Header="证据" Binding="{Binding Excerpt}" Width="*"/></DataGrid.Columns>
+          </DataGrid>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <Border Style="{StaticResource CardStyle}">
+      <StackPanel>
+        <TextBlock Text="Golden Test" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+        <TextBlock Text="固定提示词、字面断言、禁止片段与延迟上限；测试逐条串行运行。" Margin="0,5,0,12" Foreground="{StaticResource MutedTextBrush}"/>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="280"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0" Margin="0,0,14,0">
+            <ListBox AutomationProperties.AutomationId="GoldenCaseList" ItemsSource="{Binding GoldenCases}" SelectedItem="{Binding SelectedGoldenCase}" DisplayMemberPath="Name" MinHeight="200"/>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0"><Button AutomationProperties.AutomationId="GoldenRunSelectedButton" Content="运行所选" Command="{Binding RunSelectedGoldenCommand}" Style="{StaticResource ActionButtonStyle}"/><Button AutomationProperties.AutomationId="GoldenRunAllButton" Content="运行全部" Command="{Binding RunAllGoldenCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0"/></StackPanel>
+          </StackPanel>
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="名称" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding GoldenName, UpdateSourceTrigger=PropertyChanged}" Padding="8" Margin="0,4,0,8"/>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0"><TextBlock Text="必须包含（每行一项）" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding GoldenMustContain, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="72" Margin="0,4,8,0" Padding="8"/></StackPanel>
+              <StackPanel Grid.Column="1"><TextBlock Text="禁止包含（每行一项）" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding GoldenMustNotContain, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="72" Margin="8,4,8,0" Padding="8"/></StackPanel>
+              <StackPanel Grid.Column="2"><TextBlock Text="最大总延迟（ms）" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding GoldenMaximumLatencyMilliseconds, UpdateSourceTrigger=LostFocus, TargetNullValue=''}" Margin="8,4,0,0" Padding="8"/></StackPanel>
+            </Grid>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0"><Button Content="保存 / 更新" Command="{Binding SaveGoldenCommand}" Style="{StaticResource ActionButtonStyle}"/><Button Content="删除所选" Command="{Binding DeleteGoldenCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0"/></StackPanel>
+          </StackPanel>
+        </Grid>
+        <DataGrid AutomationProperties.AutomationId="GoldenResultList" ItemsSource="{Binding GoldenResults}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" MinHeight="170" Margin="0,14,0,0" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}">
+          <DataGrid.Columns><DataGridCheckBoxColumn Header="通过" Binding="{Binding Passed}" Width="60"/><DataGridTextColumn Header="用例" Binding="{Binding CaseName}" Width="170"/><DataGridTextColumn Header="失败代码" Binding="{Binding FailureCode}" Width="170"/><DataGridTextColumn Header="说明" Binding="{Binding FailureMessage}" Width="*"/><DataGridTextColumn Header="回答" Binding="{Binding ResponseText}" Width="2*"/></DataGrid.Columns>
+        </DataGrid>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

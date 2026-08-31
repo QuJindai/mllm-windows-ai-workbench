@@ -7,7 +7,7 @@ namespace MLLM.Workbench.Desktop.Tests;
 public sealed class ShellContractTests
 {
     [Fact]
-    public void D1_shell_exposes_approved_navigation_and_critical_automation_ids()
+    public void Shell_exposes_approved_navigation_and_critical_automation_ids()
     {
         var root = FindRepositoryRoot();
         var path = Path.Combine(root, "src", "MLLM.Workbench.Desktop", "Shell", "MainWindow.xaml");
@@ -22,12 +22,12 @@ public sealed class ShellContractTests
         {
             "MainNavigation", "BackendStatus", "NetworkModeStatus", "ContentHost",
             "DashboardNavigation", "DoctorNavigation", "InstallationNavigation", "KnowledgeNavigation",
-            "ModelNavigation", "ServicesNavigation"
+            "ModelNavigation", "ServicesNavigation", "ConversationNavigation"
         })
             Assert.True(names.Contains(required) || automationIds.Contains(required), $"Missing shell contract element: {required}");
 
         var xml = File.ReadAllText(path);
-        foreach (var forbidden in new[] { "ConversationNavigation", "RagNavigation", "BenchmarkNavigation", "EvidenceNavigation", "SettingsNavigation", "AboutNavigation" })
+        foreach (var forbidden in new[] { "RagNavigation", "BenchmarkNavigation", "EvidenceNavigation", "SettingsNavigation", "AboutNavigation" })
             Assert.DoesNotContain(forbidden, xml, StringComparison.Ordinal);
     }
 

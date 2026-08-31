@@ -54,6 +54,9 @@ jobs:
       - name: Knowledge page real WPF runtime load
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter KnowledgePageRuntimeLoadTests
+      - name: D2 conversation and golden tests
+        shell: powershell
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter "FullyQualifiedName~LocalConversation|FullyQualifiedName~OpenAiSseReader|FullyQualifiedName~ConversationTestService|FullyQualifiedName~JsonGoldenTestCatalog|FullyQualifiedName~GoldenTestEvaluator|FullyQualifiedName~ConversationPageViewModel|FullyQualifiedName~D2Conversation|FullyQualifiedName~D2InstalledNavigation"
       - name: Full desktop regression
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release

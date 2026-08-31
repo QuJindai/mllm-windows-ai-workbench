@@ -31,6 +31,7 @@ public partial class App : Application
         var smoke = e.Args.Any(x => string.Equals(x, "--smoke", StringComparison.OrdinalIgnoreCase));
         var smokeKnowledge = e.Args.Any(x => string.Equals(x, "--smoke-knowledge", StringComparison.OrdinalIgnoreCase));
         var smokeD1Navigation = e.Args.Any(x => string.Equals(x, "--smoke-d1-navigation", StringComparison.OrdinalIgnoreCase));
+        var smokeD2Navigation = e.Args.Any(x => string.Equals(x, "--smoke-d2-navigation", StringComparison.OrdinalIgnoreCase));
         try
         {
             var runtime = WorkbenchRuntimeOptions.Resolve();
@@ -67,6 +68,14 @@ public partial class App : Application
                 return;
             }
 
+            if (smokeD2Navigation)
+            {
+                await VerifyD2NavigationAsync(viewModel, _host.Services.GetRequiredService<MainWindow>()).ConfigureAwait(true);
+                WriteSmokeDiagnostic("D2_NAVIGATION_SMOKE=PASS");
+                Shutdown(0);
+                return;
+            }
+
             await viewModel.Dashboard.RefreshAsync(CancellationToken.None).ConfigureAwait(true);
 
             var window = _host.Services.GetRequiredService<MainWindow>();
@@ -75,9 +84,11 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            if (smoke || smokeKnowledge || smokeD1Navigation)
+            if (smoke || smokeKnowledge || smokeD1Navigation || smokeD2Navigation)
             {
-                var prefix = smokeD1Navigation
+                var prefix = smokeD2Navigation
+                    ? "D2_NAVIGATION_SMOKE=FAIL"
+                    : smokeD1Navigation
                     ? "D1_NAVIGATION_SMOKE=FAIL"
                     : smokeKnowledge
                         ? "KNOWLEDGE_NAVIGATION_SMOKE=FAIL"
@@ -218,6 +229,42 @@ public partial class App : Application
                 () => viewModel.Knowledge.LastError).ConfigureAwait(true);
             if (dispatcherFailure is not null)
                 throw new InvalidOperationException("Knowledge navigation raised an unhandled dispatcher exception during D1 smoke.", dispatcherFailure);
+
+            window.Close();
+        }
+        finally
+        {
+            DispatcherUnhandledException -= handler;
+        }
+    }
+
+    private async Task VerifyD2NavigationAsync(MainWindowViewModel viewModel, MainWindow window)
+    {
+        Exception? dispatcherFailure = null;
+        DispatcherUnhandledExceptionEventHandler handler = (_, args) =>
+        {
+            dispatcherFailure = args.Exception;
+            args.Handled = true;
+        };
+
+        DispatcherUnhandledException += handler;
+        try
+        {
+            await VerifyBackendPingAsync(_host!.Services.GetRequiredService<IWorkbenchBackendClient>()).ConfigureAwait(true);
+            MainWindow = window;
+            window.Show();
+
+            await VerifyNavigationStepAsync(
+                window,
+                "conversation",
+                viewModel.NavigateConversationCommand,
+                () => ReferenceEquals(viewModel.CurrentPage, viewModel.Conversation),
+                () => viewModel.Conversation.IsBusy,
+                () => string.Equals(viewModel.Conversation.LastErrorCode, "RUNTIME_NOT_READY", StringComparison.Ordinal)
+                    ? null
+                    : viewModel.Conversation.LastError).ConfigureAwait(true);
+            if (dispatcherFailure is not null)
+                throw new InvalidOperationException("Conversation navigation raised an unhandled dispatcher exception.", dispatcherFailure);
 
             window.Close();
         }

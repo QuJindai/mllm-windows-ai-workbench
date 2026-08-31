@@ -15,14 +15,22 @@ $installerName='MLLM_WORKBENCH_C7_OFFLINE_INSTALLER_win-x64.zip'
 $portableName='MLLM_WORKBENCH_C7_PORTABLE_win-x64.zip'
 $installerZip=Join-Path $OutputRoot $installerName
 $portableZip=Join-Path $OutputRoot $portableName
-$extractRoot=Join-Path $env:RUNNER_TEMP ('mllm c7 release extract '+[guid]::NewGuid().ToString('N'))
-$fakeRoot=Join-Path $env:RUNNER_TEMP ('mllm c7 installed '+[guid]::NewGuid().ToString('N'))
+$tempRoot=if([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)){[IO.Path]::GetTempPath()}else{$env:RUNNER_TEMP}
+$extractRoot=Join-Path $tempRoot ('mllm c7 release extract '+[guid]::NewGuid().ToString('N'))
+$fakeRoot=Join-Path $tempRoot ('mllm c7 installed '+[guid]::NewGuid().ToString('N'))
 
 $oldProgramFiles=$env:ProgramFiles
+$oldProgramW6432=$env:ProgramW6432
+$oldProgramFilesX86=${env:ProgramFiles(x86)}
 $oldProgramData=$env:ProgramData
 $oldUserProfile=$env:USERPROFILE
 $oldSmokeDiagnostic=$env:MLLM_SMOKE_DIAGNOSTIC_PATH
 $oldNetworkMode=$env:MLLM_NETWORK_MODE
+$sourceSha=[string]$env:GITHUB_SHA
+if([string]::IsNullOrWhiteSpace($sourceSha)){
+    $sourceSha=([string](& git -C $root rev-parse HEAD 2>$null | Select-Object -First 1)).Trim()
+}
+if([string]::IsNullOrWhiteSpace($sourceSha)){throw 'Unable to resolve release source SHA.'}
 
 function Assert-ShaSidecar {
     param([Parameter(Mandatory=$true)][string]$ZipPath)
@@ -45,7 +53,7 @@ function Invoke-InstalledDesktopSmoke {
     )
     $diag=$null
     if($CaptureDiagnostic){
-        $diag=Join-Path $env:RUNNER_TEMP ('mllm-smoke-'+[guid]::NewGuid().ToString('N')+'.txt')
+        $diag=Join-Path $tempRoot ('mllm-smoke-'+[guid]::NewGuid().ToString('N')+'.txt')
         $env:MLLM_SMOKE_DIAGNOSTIC_PATH=$diag
     }
     try{
@@ -68,7 +76,7 @@ function Invoke-InstalledDesktopSmoke {
 }
 
 try{
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packager -OutputRoot $OutputRoot -SourceSha ([string]$env:GITHUB_SHA)
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packager -OutputRoot $OutputRoot -SourceSha $sourceSha
     if($LASTEXITCODE -ne 0){throw "C7 release packaging failed rc=$LASTEXITCODE"}
 
     $installerSha=Assert-ShaSidecar -ZipPath $installerZip
@@ -105,6 +113,8 @@ try{
     }
 
     $env:ProgramFiles=Join-Path $fakeRoot 'Program Files'
+    $env:ProgramW6432=$env:ProgramFiles
+    ${env:ProgramFiles(x86)}=$env:ProgramFiles
     $env:ProgramData=Join-Path $fakeRoot 'ProgramData'
     $env:USERPROFILE=Join-Path $fakeRoot 'User'
     foreach($dir in @($env:ProgramFiles,$env:ProgramData,$env:USERPROFILE)){
@@ -141,12 +151,15 @@ try{
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke') -Name '--smoke' -TimeoutMs 60000
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-knowledge') -Name '--smoke-knowledge' -TimeoutMs 20000 -CaptureDiagnostic
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-d1-navigation') -Name '--smoke-d1-navigation' -TimeoutMs 30000 -CaptureDiagnostic
+    Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-d2-navigation') -Name '--smoke-d2-navigation' -TimeoutMs 30000 -CaptureDiagnostic
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
-    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS d1_navigation_smoke=PASS smoke_network_mode=OFFLINE_CACHE"
+    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS d1_navigation_smoke=PASS d2_navigation_smoke=PASS smoke_network_mode=OFFLINE_CACHE"
 }finally{
     $env:ProgramFiles=$oldProgramFiles
+    if($null -eq $oldProgramW6432){Remove-Item Env:ProgramW6432 -ErrorAction SilentlyContinue}else{$env:ProgramW6432=$oldProgramW6432}
+    if($null -eq $oldProgramFilesX86){Remove-Item 'Env:ProgramFiles(x86)' -ErrorAction SilentlyContinue}else{${env:ProgramFiles(x86)}=$oldProgramFilesX86}
     $env:ProgramData=$oldProgramData
     $env:USERPROFILE=$oldUserProfile
     if($null -eq $oldSmokeDiagnostic){Remove-Item Env:MLLM_SMOKE_DIAGNOSTIC_PATH -ErrorAction SilentlyContinue}else{$env:MLLM_SMOKE_DIAGNOSTIC_PATH=$oldSmokeDiagnostic}

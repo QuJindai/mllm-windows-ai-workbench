@@ -45,6 +45,8 @@ jobs:
             "ndk;${NDK_VERSION}"
           sudo apt-get update -qq
           sudo apt-get install -y -qq ninja-build ccache
+          rustup target add aarch64-linux-android
+          rustup target list --installed | grep -qx 'aarch64-linux-android'
           test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
           test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
 

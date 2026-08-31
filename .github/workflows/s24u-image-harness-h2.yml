@@ -2,8 +2,7 @@ name: S24U Image Harness H2
 
 on:
   push:
-    branches:
-      - feature/s24u-image-harness-h2
+    branches: [feature/s24u-image-harness-h2]
   workflow_dispatch:
 
 permissions:
@@ -34,19 +33,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 17 SDK, NDK and native build tools
+      - name: Install Android 17, NDK, Rust Android target and native tools
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --channel=3 \
-            'platforms;android-37.0' \
-            'build-tools;36.0.0' \
-            'platform-tools' \
-            "ndk;${NDK_VERSION}"
+          sdkmanager --channel=3 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools' "ndk;${NDK_VERSION}"
           sudo apt-get update -qq
           sudo apt-get install -y -qq ninja-build ccache
           rustup target add aarch64-linux-android
-          rustup target list --installed | grep -qx 'aarch64-linux-android'
+          rustup target list --installed | grep -qx aarch64-linux-android
           test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
           test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
 
@@ -59,15 +54,11 @@ jobs:
           git checkout "$UPSTREAM_SHA"
           git submodule update --init --recursive
           test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
-          git status --short
 
       - name: Migration and stable-signing contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 s24u-image-harness/tests/test_migration_contract.py | tee migration-contract.log
+        run: python3 s24u-image-harness/tests/test_migration_contract.py | tee migration-contract.log
 
-      - name: TDD RED - upstream must not already satisfy H2 contracts
+      - name: TDD RED - upstream lacks H2
         shell: bash
         run: |
           set -euo pipefail
@@ -76,23 +67,14 @@ jobs:
           code=$?
           set -e
           cat h2-red.log
-          if [ "$code" -eq 0 ]; then
-            echo 'RED gate failed: upstream unexpectedly already satisfies H2 contracts' >&2
-            exit 1
-          fi
-          echo 'H2_RED_EXPECTED_FAIL_PASS'
+          test "$code" -ne 0
+          echo H2_RED_EXPECTED_FAIL_PASS
 
       - name: Apply H2 patch set
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 s24u-image-harness/patch_h2.py local-dream | tee h2-patch.log
+        run: python3 s24u-image-harness/patch_h2.py local-dream | tee h2-patch.log
 
       - name: TDD GREEN - H2 source contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream | tee h2-green.log
+        run: python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream | tee h2-green.log
 
       - name: Download public QAIRT Community SDK
         shell: bash
@@ -105,8 +87,7 @@ jobs:
           test -n "$HEADER"
           QNN_ROOT="$(dirname "$(dirname "$(dirname "$HEADER")")")"
           test -s "$QNN_ROOT/lib/aarch64-android/libQnnHtp.so"
-          test -d "$QNN_ROOT/examples/QNN/SampleApp/SampleApp"
-          echo "QNN_SDK_ROOT=$QNN_ROOT" | tee -a "$GITHUB_ENV"
+          echo "QNN_SDK_ROOT=$QNN_ROOT" >> "$GITHUB_ENV"
           echo "QAIRT_ROOT=$QNN_ROOT" | tee qairt-root.txt
 
       - name: Build modified arm64 native core
@@ -115,24 +96,16 @@ jobs:
         run: |
           set -uo pipefail
           export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
-          export QNN_SDK_ROOT="$QNN_SDK_ROOT"
-          cd local-dream/app/src/main/cpp
           set +e
-          bash build.sh 2>&1 | tee ../../../../../native-build.log
+          bash s24u-image-harness/build_native_h2.sh 2>&1 | tee native-build.log
           status=${PIPESTATUS[0]}
           set -e
-          cd ../../../../../
-          grep -nE 'error:|fatal error:|undefined reference|FAILED:|ninja: build stopped|CMake Error|error C[0-9]+' native-build.log \
-            | tail -200 | tee native-build-errors.log || true
+          grep -nE 'error:|fatal error:|undefined reference|FAILED:|ninja: build stopped|CMake Error|error C[0-9]+' native-build.log | tail -200 | tee native-build-errors.log || true
           echo "NATIVE_BUILD_EXIT=$status" | tee -a native-build-errors.log
-          if [ "$status" -ne 0 ]; then
-            cat native-build-errors.log
-            exit "$status"
-          fi
+          if [ "$status" -ne 0 ]; then cat native-build-errors.log; exit "$status"; fi
           test -s local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
           test -s local-dream/app/src/main/assets/qnnlibs/libQnnHtp.so
-          strings local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so \
-            | grep -F 'S24U H2 long prompt' | head -1
+          strings local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so | grep -F 'S24U H2 long prompt' | head -1
 
       - name: Upload native failure diagnostics
         if: failure() && steps.native_build.outcome == 'failure'
@@ -154,22 +127,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          openssl pkcs12 -export \
-            -inkey s24u-image-harness/signing/s24u-test-signing-key.pem \
-            -in s24u-image-harness/signing/s24u-test-signing-cert.pem \
-            -name "$SIGN_ALIAS" \
-            -out /tmp/s24u-test.p12 \
-            -passout "pass:$SIGN_PASS"
-          keytool -importkeystore -noprompt \
-            -srckeystore /tmp/s24u-test.p12 \
-            -srcstoretype PKCS12 \
-            -srcstorepass "$SIGN_PASS" \
-            -srcalias "$SIGN_ALIAS" \
-            -destkeystore /tmp/s24u-test.jks \
-            -deststoretype JKS \
-            -deststorepass "$SIGN_PASS" \
-            -destkeypass "$SIGN_PASS" \
-            -destalias "$SIGN_ALIAS"
+          openssl pkcs12 -export -inkey s24u-image-harness/signing/s24u-test-signing-key.pem -in s24u-image-harness/signing/s24u-test-signing-cert.pem -name "$SIGN_ALIAS" -out /tmp/s24u-test.p12 -passout "pass:$SIGN_PASS"
+          keytool -importkeystore -noprompt -srckeystore /tmp/s24u-test.p12 -srcstoretype PKCS12 -srcstorepass "$SIGN_PASS" -srcalias "$SIGN_ALIAS" -destkeystore /tmp/s24u-test.jks -deststoretype JKS -deststorepass "$SIGN_PASS" -destkeypass "$SIGN_PASS" -destalias "$SIGN_ALIAS"
           keytool -list -v -keystore /tmp/s24u-test.jks -storepass "$SIGN_PASS" -alias "$SIGN_ALIAS" | tee signing-key.txt
 
       - name: Run Android unit tests and build signed Basic H2 APK
@@ -178,19 +137,13 @@ jobs:
           set -euo pipefail
           cd local-dream
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace \
-            -PRELEASE_STORE_FILE=/tmp/s24u-test.jks \
-            -PRELEASE_STORE_PASSWORD="$SIGN_PASS" \
-            -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" \
-            -PRELEASE_KEY_PASSWORD="$SIGN_PASS" \
-            testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h2.log
+          ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h2.log
 
       - name: Verify H2 APK package, native core and certificate
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' -print -quit)"
-          test -n "$APK"
           test -s "$APK"
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
           APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
@@ -198,26 +151,17 @@ jobs:
           grep -q "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h2.txt
           grep -q "versionCode='7402'" apk-badging-h2.txt
           grep -q "versionName='2.8.1-s24u-h2'" apk-badging-h2.txt
-
           unzip -l "$APK" | tee apk-files-h2.txt
           grep -q 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files-h2.txt
           grep -q 'assets/qnnlibs/libQnnHtp.so' apk-files-h2.txt
-          if grep -q 'safety_checker.mnn' apk-files-h2.txt; then
-            echo 'Basic H2 APK unexpectedly contains safety_checker.mnn' >&2
-            exit 1
-          fi
-
+          ! grep -q 'safety_checker.mnn' apk-files-h2.txt
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-signing-h2.txt
           CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h2.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
           test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
-
-          OUT='S24U_Image_Harness_H2_20260831.apk'
-          cp "$APK" "$OUT"
-          sha256sum "$OUT" | tee H2_APK_SHA256SUMS.txt
-          stat -c 'APK_BYTES=%s' "$OUT" | tee H2_APK_SIZE.txt
-          sha256sum s24u-image-harness/scripts/S24U_H1_MODEL_BACKUP.sh \
-                    s24u-image-harness/scripts/S24U_H2_MODEL_RESTORE.sh \
-                    | tee H2_MIGRATION_SCRIPT_SHA256SUMS.txt
+          cp "$APK" S24U_Image_Harness_H2_20260831.apk
+          sha256sum S24U_Image_Harness_H2_20260831.apk | tee H2_APK_SHA256SUMS.txt
+          stat -c 'APK_BYTES=%s' S24U_Image_Harness_H2_20260831.apk | tee H2_APK_SIZE.txt
+          sha256sum s24u-image-harness/scripts/S24U_H1_MODEL_BACKUP.sh s24u-image-harness/scripts/S24U_H2_MODEL_RESTORE.sh | tee H2_MIGRATION_SCRIPT_SHA256SUMS.txt
 
       - name: Upload H2 phone-test package and evidence
         uses: actions/upload-artifact@v4

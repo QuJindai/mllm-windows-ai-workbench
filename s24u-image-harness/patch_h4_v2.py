@@ -71,6 +71,28 @@ def fix_visualizer_contract_and_formula(root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def compile_runtime_marker(root: Path) -> None:
+    """Put the H4 marker in executable Kotlin data, not only a source comment."""
+    path = (
+        root
+        / "app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt"
+    )
+    text = path.read_text(encoding="utf-8")
+    old = '''        val payload = JSONObject().apply {
+            put("phase", microscope.phase)
+'''
+    new = '''        val payload = JSONObject().apply {
+            put("h4_marker", "S24U_H4_VISUAL_MICROSCOPE")
+            put("phase", microscope.phase)
+'''
+    if text.count(old) != 1:
+        raise RuntimeError(
+            "H4 DEX marker fix: expected exactly one microscope JSON payload"
+        )
+    text = text.replace(old, new, 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: patch_h4_v2.py <h3-patched-local-dream-root>", file=sys.stderr)
@@ -83,7 +105,8 @@ def main() -> int:
 
     root = Path(sys.argv[1]).resolve()
     fix_visualizer_contract_and_formula(root)
-    print("S24U_IMAGE_HARNESS_H4_V2_REGION_FORMULA_AND_BUDGET_FIX_APPLIED")
+    compile_runtime_marker(root)
+    print("S24U_IMAGE_HARNESS_H4_V2_REGION_FORMULA_BUDGET_AND_DEX_FIX_APPLIED")
     return 0
 
 

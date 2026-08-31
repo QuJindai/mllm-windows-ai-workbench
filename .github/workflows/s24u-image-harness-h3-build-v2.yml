@@ -99,9 +99,10 @@ jobs:
           CORE=local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
           test -s "$CORE"
           test -s local-dream/app/src/main/assets/qnnlibs/libQnnHtp.so
-          strings "$CORE" | grep -F 'unet_step' | head -1
-          strings "$CORE" | grep -F 'scheduler_step' | head -1
-          strings "$CORE" | grep -F 'event: trace' | head -1
+          strings "$CORE" > native-core-strings-build.txt
+          grep -Fq 'unet_step' native-core-strings-build.txt
+          grep -Fq 'scheduler_step' native-core-strings-build.txt
+          grep -Fq 'event: trace' native-core-strings-build.txt
           echo H3_NATIVE_TRACE_BINARY_PASS
 
       - name: Upload native diagnostics on failure
@@ -157,34 +158,107 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Verify H3 APK package, native trace and certificate
+      - name: Preserve built APK before verification
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' -print -quit)"
           test -s "$APK"
-          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
-          "$AAPT2" dump badging "$APK" | tee apk-badging-h3-v2.txt
-          grep -q "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h3-v2.txt
-          grep -q "versionCode='7403'" apk-badging-h3-v2.txt
-          grep -q "versionName='2.8.1-s24u-h3'" apk-badging-h3-v2.txt
-          unzip -l "$APK" | tee apk-files-h3-v2.txt
-          grep -q 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files-h3-v2.txt
-          grep -q 'assets/qnnlibs/libQnnHtp.so' apk-files-h3-v2.txt
-          ! grep -q 'safety_checker.mnn' apk-files-h3-v2.txt
-          unzip -p "$APK" lib/arm64-v8a/libstable_diffusion_core.so > /tmp/h3-core.so
-          strings /tmp/h3-core.so | grep -F 'unet_step' | head -1
-          strings /tmp/h3-core.so | grep -F 'scheduler_step' | head -1
-          strings /tmp/h3-core.so | grep -F 'event: trace' | head -1
-          unzip -p "$APK" classes.dex | strings | grep -F 'S24U IMAGE MICROSCOPE' | head -1
-          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-signing-h3-v2.txt
-          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h3-v2.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
-          test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
           cp "$APK" S24U_Image_Harness_H3_20260831.apk
           sha256sum S24U_Image_Harness_H3_20260831.apk | tee H3_APK_SHA256SUMS.txt
           stat -c 'APK_BYTES=%s' S24U_Image_Harness_H3_20260831.apk | tee H3_APK_SIZE.txt
-          echo H3_APK_VERIFICATION_PASS
+          echo H3_APK_PRESERVED_PASS
+
+      - name: Upload pre-verification APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h3-preverify
+          path: |
+            S24U_Image_Harness_H3_20260831.apk
+            H3_APK_SHA256SUMS.txt
+            H3_APK_SIZE.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify H3 APK package, native trace, UI marker and certificate
+        id: apk_verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="S24U_Image_Harness_H3_20260831.apk"
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+          echo '[VERIFY][10%] apk exists'
+          test -s "$APK"
+
+          echo '[VERIFY][20%] package/version'
+          "$AAPT2" dump badging "$APK" > apk-badging-h3-v2.txt
+          cat apk-badging-h3-v2.txt
+          grep -Fq "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h3-v2.txt
+          grep -Fq "versionCode='7403'" apk-badging-h3-v2.txt
+          grep -Fq "versionName='2.8.1-s24u-h3'" apk-badging-h3-v2.txt
+          echo '[VERIFY][20%] PASS'
+
+          echo '[VERIFY][35%] packaged native/QNN assets'
+          unzip -Z1 "$APK" > apk-files-h3-v2.txt
+          grep -Fq 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files-h3-v2.txt
+          grep -Fq 'assets/qnnlibs/libQnnHtp.so' apk-files-h3-v2.txt
+          if grep -Fq 'safety_checker.mnn' apk-files-h3-v2.txt; then
+            echo 'Unexpected safety_checker.mnn in Basic APK' >&2
+            exit 35
+          fi
+          echo '[VERIFY][35%] PASS'
+
+          echo '[VERIFY][55%] native microscope trace markers'
+          unzip -p "$APK" lib/arm64-v8a/libstable_diffusion_core.so > /tmp/h3-core.so
+          strings /tmp/h3-core.so > native-core-strings-apk.txt
+          grep -Fq 'unet_step' native-core-strings-apk.txt
+          grep -Fq 'scheduler_step' native-core-strings-apk.txt
+          grep -Fq 'event: trace' native-core-strings-apk.txt
+          grep -Fq 'positive_token_ids' native-core-strings-apk.txt
+          echo '[VERIFY][55%] PASS'
+
+          echo '[VERIFY][70%] compiled UI microscope marker across all dex files'
+          : > dex-strings-h3-v2.txt
+          while IFS= read -r dex; do
+            unzip -p "$APK" "$dex" > /tmp/h3.dex
+            strings /tmp/h3.dex >> dex-strings-h3-v2.txt
+          done < <(grep -E '^classes([0-9]+)?\.dex$' apk-files-h3-v2.txt)
+          grep -Fq 'S24U IMAGE MICROSCOPE' dex-strings-h3-v2.txt
+          grep -Fq 'Prompt / Token' dex-strings-h3-v2.txt
+          echo '[VERIFY][70%] PASS'
+
+          echo '[VERIFY][85%] APK signature'
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-signing-h3-v2.txt
+          cat apk-signing-h3-v2.txt
+          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h3-v2.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          printf 'CERT_SHA256=%s\n' "$CERT_HEX" | tee apk-cert-h3-v2.txt
+          test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
+          echo '[VERIFY][85%] PASS'
+
+          echo '[VERIFY][100%] integrity'
+          sha256sum -c H3_APK_SHA256SUMS.txt
+          echo H3_APK_VERIFICATION_PASS | tee apk-verify-h3-v2.txt
+
+      - name: Upload verification diagnostics on failure
+        if: failure() && steps.apk_verify.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h3-v2-verification-failure
+          path: |
+            S24U_Image_Harness_H3_20260831.apk
+            H3_APK_SHA256SUMS.txt
+            H3_APK_SIZE.txt
+            apk-badging-h3-v2.txt
+            apk-files-h3-v2.txt
+            native-core-strings-apk.txt
+            dex-strings-h3-v2.txt
+            apk-signing-h3-v2.txt
+            apk-cert-h3-v2.txt
+            apk-verify-h3-v2.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload H3 phone-test package and evidence
         uses: actions/upload-artifact@v4
@@ -207,6 +281,10 @@ jobs:
             gradle-h3-v2-status.txt
             apk-badging-h3-v2.txt
             apk-files-h3-v2.txt
+            native-core-strings-apk.txt
+            dex-strings-h3-v2.txt
             apk-signing-h3-v2.txt
+            apk-cert-h3-v2.txt
+            apk-verify-h3-v2.txt
           if-no-files-found: error
           retention-days: 7

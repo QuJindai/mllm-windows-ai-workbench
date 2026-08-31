@@ -108,16 +108,45 @@ jobs:
           echo "QAIRT_ROOT=$QNN_ROOT" | tee qairt-root.txt
 
       - name: Build modified arm64 native core
+        id: native_build
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
           export QNN_SDK_ROOT="$QNN_SDK_ROOT"
           cd local-dream/app/src/main/cpp
+          set +e
           bash build.sh 2>&1 | tee ../../../../../native-build.log
-          test -s ../jniLibs/arm64-v8a/libstable_diffusion_core.so
-          test -s ../assets/qnnlibs/libQnnHtp.so
-          strings ../jniLibs/arm64-v8a/libstable_diffusion_core.so | grep -F 'S24U H2 long prompt' | head -1
+          status=${PIPESTATUS[0]}
+          set -e
+          cd ../../../../../
+          grep -nE 'error:|fatal error:|undefined reference|FAILED:|ninja: build stopped|CMake Error|error C[0-9]+' native-build.log \
+            | tail -200 | tee native-build-errors.log || true
+          echo "NATIVE_BUILD_EXIT=$status" | tee -a native-build-errors.log
+          if [ "$status" -ne 0 ]; then
+            cat native-build-errors.log
+            exit "$status"
+          fi
+          test -s local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
+          test -s local-dream/app/src/main/assets/qnnlibs/libQnnHtp.so
+          strings local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so \
+            | grep -F 'S24U H2 long prompt' | head -1
+
+      - name: Upload native failure diagnostics
+        if: failure() && steps.native_build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h2-native-failure
+          path: |
+            native-build.log
+            native-build-errors.log
+            migration-contract.log
+            h2-red.log
+            h2-patch.log
+            h2-green.log
+            qairt-root.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Create reproducible TEST-ONLY Android keystore
         shell: bash
@@ -206,6 +235,7 @@ jobs:
             h2-green.log
             qairt-root.txt
             native-build.log
+            native-build-errors.log
             signing-key.txt
             gradle-h2.log
             apk-badging-h2.txt

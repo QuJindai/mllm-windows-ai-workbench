@@ -17,6 +17,7 @@ def main() -> int:
     gradle = (root / "app/build.gradle.kts").read_text(encoding="utf-8")
     main_cpp = (root / "app/src/main/cpp/src/main.cpp").read_text(encoding="utf-8")
     pipeline = (root / "app/src/main/cpp/src/Pipeline.hpp").read_text(encoding="utf-8")
+    text_encoder = (root / "app/src/main/cpp/src/TextEncoder.hpp").read_text(encoding="utf-8")
     service = (
         root
         / "app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt"
@@ -26,8 +27,27 @@ def main() -> int:
         / "app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt"
     ).read_text(encoding="utf-8")
 
+    require(gradle, 'applicationId = "io.github.xororz.localdream.s24uharness"', "stable H2+ package id")
     require(gradle, "versionCode = 7403", "H3 versionCode")
     require(gradle, 'versionName = "2.8.1-s24u-h3"', "H3 versionName")
+    require(gradle, 'signingConfig = signingConfigs.getByName("release")', "stable H2+ signing")
+
+    # H3 must preserve the already verified H2 behavior; microscope is additive.
+    require(screen, "S24U HARNESS · PURE RAW", "PURE RAW card")
+    require(screen, 'if (isFirstRun) "" else prefs.prompt', "PURE RAW positive first run")
+    require(screen, 'if (isFirstRun) "" else prefs.negativePrompt', "PURE RAW negative first run")
+    require(screen, 'promptField.replaceText("")', "PURE RAW reset positive")
+    require(screen, 'negativePromptField.replaceText("")', "PURE RAW reset negative")
+    require(screen, "POS CHUNKS", "H2 positive chunk trace")
+    require(screen, "NEG CHUNKS", "H2 negative chunk trace")
+    require(text_encoder, "kS24uClipChunkLen = 77", "fixed CLIP graph length")
+    require(text_encoder, "kS24uClipContentTokens = 75", "content tokens per chunk")
+    require(text_encoder, "kS24uClipChunks = 4", "four real prompt chunks")
+    require(text_encoder, "kS24uClipEffectiveMaxLength", "expanded prompt budget")
+    require(text_encoder, "splitPromptChunks", "native prompt chunking")
+    require(pipeline, "encodePromptChunks", "chunk conditioning")
+    require(pipeline, "for (auto &chunk_cond : conds)", "real per-chunk UNet execution")
+    require(pipeline, "noise_pred = xt::eval(noise_pred / (float)conds.size())", "chunk prediction fusion")
 
     # Native trace protocol must be real SSE emitted by the generation backend.
     require(pipeline, "struct MicroscopeTraceEvent", "native trace event type")

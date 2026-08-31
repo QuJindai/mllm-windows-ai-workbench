@@ -79,6 +79,7 @@ jobs:
           python3 -m py_compile s24u-image-harness/patch_h4.py s24u-image-harness/patch_h4_v2.py s24u-image-harness/tests/test_h4_visual_microscope_contract.py
           grep -F 'const content = Math.max(posInput, 0);' local-dream/app/src/main/assets/s24u_microscope/microscope.js
           grep -F 'Cross-attention：未采集' local-dream/app/src/main/assets/s24u_microscope/index.html
+          grep -F 'put("h4_marker", "S24U_H4_VISUAL_MICROSCOPE")' local-dream/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt
           echo H4_V2_SOURCE_GREEN_PASS
 
       - name: Download QAIRT Community SDK
@@ -109,8 +110,9 @@ jobs:
           test "$status" -eq 0
           CORE=local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
           test -s "$CORE"
-          strings "$CORE" | grep -F 'positive_truncated_tokens' | head -1
-          strings "$CORE" | grep -F 'event: trace' | head -1
+          strings "$CORE" > /tmp/h4-native-strings.txt
+          grep -F -m1 'positive_truncated_tokens' /tmp/h4-native-strings.txt
+          grep -F -m1 'event: trace' /tmp/h4-native-strings.txt
           echo H4_V2_NATIVE_PASS
 
       - name: Native failure evidence
@@ -158,7 +160,7 @@ jobs:
             h4-v2-green.log
           retention-days: 7
 
-      - name: Preserve and verify H4 APK
+      - name: Preserve H4 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -168,44 +170,103 @@ jobs:
           sha256sum S24U_Image_Harness_H4_20260831.apk | tee H4_APK_SHA256SUMS.txt
           stat -c 'APK_BYTES=%s' S24U_Image_Harness_H4_20260831.apk | tee H4_APK_SIZE.txt
 
+      - name: Upload pre-verification H4 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h4-v2-preverify
+          path: |
+            S24U_Image_Harness_H4_20260831.apk
+            H4_APK_SHA256SUMS.txt
+            H4_APK_SIZE.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Deterministic final H4 APK verification
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=S24U_Image_Harness_H4_20260831.apk
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
           APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
-          "$AAPT2" dump badging "$APK" | tee apk-badging-h4-v2.txt
-          grep -q "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h4-v2.txt
-          grep -q "versionCode='7404'" apk-badging-h4-v2.txt
-          grep -q "versionName='2.8.1-s24u-h4'" apk-badging-h4-v2.txt
 
-          zipinfo -1 "$APK" | tee apk-files-h4-v2.txt
-          grep -q '^lib/arm64-v8a/libstable_diffusion_core.so$' apk-files-h4-v2.txt
-          grep -q '^assets/qnnlibs/libQnnHtp.so$' apk-files-h4-v2.txt
-          grep -q '^assets/s24u_microscope/index.html$' apk-files-h4-v2.txt
-          grep -q '^assets/s24u_microscope/microscope.css$' apk-files-h4-v2.txt
-          grep -q '^assets/s24u_microscope/microscope.js$' apk-files-h4-v2.txt
-          ! grep -q 'safety_checker.mnn' apk-files-h4-v2.txt
+          echo '[VERIFY 1/8] package/version'
+          "$AAPT2" dump badging "$APK" > apk-badging-h4-v2.txt
+          cat apk-badging-h4-v2.txt
+          grep -F "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h4-v2.txt
+          grep -F "versionCode='7404'" apk-badging-h4-v2.txt
+          grep -F "versionName='2.8.1-s24u-h4'" apk-badging-h4-v2.txt
 
-          unzip -p "$APK" assets/s24u_microscope/index.html | grep -F 'Cross-attention：未采集'
-          unzip -p "$APK" assets/s24u_microscope/microscope.js | grep -F 'const content = Math.max(posInput, 0);'
-          unzip -p "$APK" assets/s24u_microscope/microscope.js | grep -F 'renderTimeline'
-          unzip -p "$APK" assets/s24u_microscope/microscope.css | grep -F '.timeline-bar'
+          echo '[VERIFY 2/8] packaged files'
+          zipinfo -1 "$APK" > apk-files-h4-v2.txt
+          grep -Fx 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files-h4-v2.txt
+          grep -Fx 'assets/qnnlibs/libQnnHtp.so' apk-files-h4-v2.txt
+          grep -Fx 'assets/s24u_microscope/index.html' apk-files-h4-v2.txt
+          grep -Fx 'assets/s24u_microscope/microscope.css' apk-files-h4-v2.txt
+          grep -Fx 'assets/s24u_microscope/microscope.js' apk-files-h4-v2.txt
+          if grep -Fq 'safety_checker.mnn' apk-files-h4-v2.txt; then exit 41; fi
 
-          unzip -p "$APK" lib/arm64-v8a/libstable_diffusion_core.so > /tmp/h4-core.so
-          strings /tmp/h4-core.so | grep -F 'positive_truncated_tokens' | head -1
-          strings /tmp/h4-core.so | grep -F 'event: trace' | head -1
+          echo '[VERIFY 3/8] offline visualizer'
+          mkdir -p /tmp/h4verify
+          unzip -p "$APK" assets/s24u_microscope/index.html > /tmp/h4verify/index.html
+          unzip -p "$APK" assets/s24u_microscope/microscope.js > /tmp/h4verify/microscope.js
+          unzip -p "$APK" assets/s24u_microscope/microscope.css > /tmp/h4verify/microscope.css
+          grep -F 'Cross-attention：未采集' /tmp/h4verify/index.html
+          grep -F 'const content = Math.max(posInput, 0);' /tmp/h4verify/microscope.js
+          grep -F 'renderTimeline' /tmp/h4verify/microscope.js
+          grep -F '.timeline-bar' /tmp/h4verify/microscope.css
 
+          echo '[VERIFY 4/8] native trace/budget markers'
+          unzip -p "$APK" lib/arm64-v8a/libstable_diffusion_core.so > /tmp/h4verify/core.so
+          strings /tmp/h4verify/core.so > /tmp/h4verify/core.strings
+          grep -F -m1 'positive_truncated_tokens' /tmp/h4verify/core.strings
+          grep -F -m1 'scheduler_step' /tmp/h4verify/core.strings
+          grep -F -m1 'event: trace' /tmp/h4verify/core.strings
+
+          echo '[VERIFY 5/8] compiled DEX marker'
           found=0
+          grep -E '^classes[0-9]*\.dex$' apk-files-h4-v2.txt > /tmp/h4verify/dex-list.txt
           while IFS= read -r dex; do
-            if unzip -p "$APK" "$dex" | strings | grep -Fq 'S24U_H4_VISUAL_MICROSCOPE'; then
+            unzip -p "$APK" "$dex" > /tmp/h4verify/current.dex
+            strings /tmp/h4verify/current.dex > /tmp/h4verify/current.strings
+            if grep -Fq 'S24U_H4_VISUAL_MICROSCOPE' /tmp/h4verify/current.strings; then
+              echo "H4 runtime marker found in $dex"
               found=1
               break
             fi
-          done < <(zipinfo -1 "$APK" | grep -E '^classes[0-9]*\.dex$')
+          done < /tmp/h4verify/dex-list.txt
           test "$found" -eq 1
 
-          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-signing-h4-v2.txt
+          echo '[VERIFY 6/8] signing certificate'
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-signing-h4-v2.txt
+          cat apk-signing-h4-v2.txt
           CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h4-v2.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
           test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
+
+          echo '[VERIFY 7/8] SHA-256 integrity'
           sha256sum -c H4_APK_SHA256SUMS.txt
+
+          echo '[VERIFY 8/8] no runtime network dependency in microscope assets'
+          grep -F "connect-src 'none'" /tmp/h4verify/index.html
+          if grep -Eiq 'https?://' /tmp/h4verify/microscope.js; then exit 42; fi
           echo H4_V2_APK_VERIFICATION_PASS | tee apk-verification-h4-v2.txt
+
+      - name: Verification failure evidence
+        if: failure() && steps.verify.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h4-v2-verification-failure
+          path: |
+            S24U_Image_Harness_H4_20260831.apk
+            H4_APK_SHA256SUMS.txt
+            H4_APK_SIZE.txt
+            apk-badging-h4-v2.txt
+            apk-files-h4-v2.txt
+            apk-signing-h4-v2.txt
+            native-h4-v2.log
+            gradle-h4-v2.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload H4 phone-test package
         uses: actions/upload-artifact@v4

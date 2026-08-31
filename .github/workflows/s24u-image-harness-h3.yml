@@ -9,14 +9,42 @@ permissions:
   contents: read
 
 jobs:
-  tdd-h3:
+  build-h3:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 120
     env:
       UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+      NDK_VERSION: 28.2.13676358
+      QAIRT_URL: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.39.0.250926/v2.39.0.250926.zip
+      SIGN_PASS: s24u-test-public
+      SIGN_ALIAS: s24utest
+      EXPECTED_CERT_SHA256: B60748D6461EF1F5E2681462F08EEBCA287B56B78BFAFC801499CC2BA461E005
+
     steps:
-      - name: Checkout H3 branch
+      - name: Checkout public H3 branch
         uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 17, NDK, Rust Android target and native tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --channel=3 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools' "ndk;${NDK_VERSION}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build ccache
+          rustup target add aarch64-linux-android
+          rustup target list --installed | grep -qx aarch64-linux-android
+          test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
+          echo ANDROID_NATIVE_ENV_PASS
 
       - name: Clone immutable Local Dream v2.8.1 baseline
         shell: bash
@@ -27,6 +55,7 @@ jobs:
           git checkout "$UPSTREAM_SHA"
           git submodule update --init --recursive
           test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+          echo IMMUTABLE_UPSTREAM_PASS
 
       - name: Apply and verify H2 baseline
         shell: bash
@@ -35,7 +64,7 @@ jobs:
           python3 s24u-image-harness/patch_h2.py local-dream | tee h2-patch-for-h3.log
           python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream | tee h2-green-for-h3.log
 
-      - name: TDD RED - H2 baseline lacks live H3 microscope
+      - name: TDD RED - H2 lacks H3 microscope
         shell: bash
         run: |
           set -euo pipefail
@@ -54,27 +83,154 @@ jobs:
           set -euo pipefail
           python3 s24u-image-harness/patch_h3.py local-dream | tee h3-patch.log
 
-      - name: TDD GREEN - H3 microscope source contract
+      - name: TDD GREEN - H3 plus H2 regression contract
         shell: bash
         run: |
           set -euo pipefail
           python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream | tee h3-green.log
+          python3 -m py_compile s24u-image-harness/patch_h2.py s24u-image-harness/patch_h3.py s24u-image-harness/tests/test_h2_source_contract.py s24u-image-harness/tests/test_h3_microscope_contract.py
+          echo H3_SOURCE_GREEN_PASS
 
-      - name: Python syntax gate
+      - name: Download public QAIRT Community SDK
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile s24u-image-harness/patch_h2.py s24u-image-harness/patch_h3.py s24u-image-harness/tests/test_h2_source_contract.py s24u-image-harness/tests/test_h3_microscope_contract.py
-          echo H3_PYTHON_SYNTAX_PASS
+          mkdir -p /tmp/qairt
+          curl -L --fail --retry 4 --retry-all-errors "$QAIRT_URL" -o /tmp/qairt.zip
+          unzip -q /tmp/qairt.zip -d /tmp/qairt
+          HEADER="$(find /tmp/qairt -type f -path '*/include/QNN/QnnTypes.h' -print -quit)"
+          test -n "$HEADER"
+          QNN_ROOT="$(dirname "$(dirname "$(dirname "$HEADER")")")"
+          test -s "$QNN_ROOT/lib/aarch64-android/libQnnHtp.so"
+          echo "QNN_SDK_ROOT=$QNN_ROOT" >> "$GITHUB_ENV"
+          echo "QAIRT_ROOT=$QNN_ROOT" | tee qairt-root.txt
 
-      - name: Upload TDD evidence
+      - name: Build modified H3 arm64 native core
+        id: native_build
+        shell: bash
+        run: |
+          set -uo pipefail
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
+          set +e
+          bash s24u-image-harness/build_native_h2.sh 2>&1 | tee native-build-h3.log
+          status=${PIPESTATUS[0]}
+          set -e
+          grep -nE 'error:|fatal error:|undefined reference|FAILED:|ninja: build stopped|CMake Error|error C[0-9]+' native-build-h3.log | tail -200 | tee native-build-h3-errors.log || true
+          echo "NATIVE_BUILD_EXIT=$status" | tee -a native-build-h3-errors.log
+          if [ "$status" -ne 0 ]; then cat native-build-h3-errors.log; exit "$status"; fi
+          CORE=local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
+          test -s "$CORE"
+          test -s local-dream/app/src/main/assets/qnnlibs/libQnnHtp.so
+          strings "$CORE" | grep -F 'unet_step' | head -1
+          strings "$CORE" | grep -F 'scheduler_step' | head -1
+          strings "$CORE" | grep -F 'event: trace' | head -1
+          echo H3_NATIVE_TRACE_BINARY_PASS
+
+      - name: Upload native failure diagnostics
+        if: failure() && steps.native_build.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: s24u-h3-tdd-evidence
+          name: s24u-h3-native-failure
           path: |
+            native-build-h3.log
+            native-build-h3-errors.log
+            h3-red.log
+            h3-patch.log
+            h3-green.log
+            qairt-root.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Create reproducible TEST-ONLY Android keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl pkcs12 -export -inkey s24u-image-harness/signing/s24u-test-signing-key.pem -in s24u-image-harness/signing/s24u-test-signing-cert.pem -name "$SIGN_ALIAS" -out /tmp/s24u-test.p12 -passout "pass:$SIGN_PASS"
+          keytool -importkeystore -noprompt -srckeystore /tmp/s24u-test.p12 -srcstoretype PKCS12 -srcstorepass "$SIGN_PASS" -srcalias "$SIGN_ALIAS" -destkeystore /tmp/s24u-test.jks -deststoretype JKS -deststorepass "$SIGN_PASS" -destkeypass "$SIGN_PASS" -destalias "$SIGN_ALIAS"
+          keytool -list -v -keystore /tmp/s24u-test.jks -storepass "$SIGN_PASS" -alias "$SIGN_ALIAS" | tee signing-key-h3.txt
+
+      - name: Run Android unit tests and build signed Basic H3 APK
+        id: gradle_build
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd local-dream
+          chmod +x gradlew
+          set +e
+          ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h3.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "GRADLE_BUILD_EXIT=$status" | tee ../gradle-h3-status.txt
+          exit "$status"
+
+      - name: Upload Gradle failure diagnostics
+        if: failure() && steps.gradle_build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h3-gradle-failure
+          path: |
+            gradle-h3.log
+            gradle-h3-status.txt
+            native-build-h3.log
+            h3-patch.log
+            h3-green.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify H3 APK package, native trace and certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' -print -quit)"
+          test -s "$APK"
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$AAPT2" dump badging "$APK" | tee apk-badging-h3.txt
+          grep -q "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h3.txt
+          grep -q "versionCode='7403'" apk-badging-h3.txt
+          grep -q "versionName='2.8.1-s24u-h3'" apk-badging-h3.txt
+
+          unzip -l "$APK" | tee apk-files-h3.txt
+          grep -q 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files-h3.txt
+          grep -q 'assets/qnnlibs/libQnnHtp.so' apk-files-h3.txt
+          ! grep -q 'safety_checker.mnn' apk-files-h3.txt
+
+          unzip -p "$APK" lib/arm64-v8a/libstable_diffusion_core.so > /tmp/h3-core.so
+          strings /tmp/h3-core.so | grep -F 'unet_step' | head -1
+          strings /tmp/h3-core.so | grep -F 'scheduler_step' | head -1
+          strings /tmp/h3-core.so | grep -F 'event: trace' | head -1
+          unzip -p "$APK" classes.dex | strings | grep -F 'S24U IMAGE MICROSCOPE' | head -1
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-signing-h3.txt
+          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h3.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
+
+          cp "$APK" S24U_Image_Harness_H3_20260831.apk
+          sha256sum S24U_Image_Harness_H3_20260831.apk | tee H3_APK_SHA256SUMS.txt
+          stat -c 'APK_BYTES=%s' S24U_Image_Harness_H3_20260831.apk | tee H3_APK_SIZE.txt
+          echo H3_APK_VERIFICATION_PASS
+
+      - name: Upload H3 phone-test package and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h3
+          path: |
+            S24U_Image_Harness_H3_20260831.apk
+            H3_APK_SHA256SUMS.txt
+            H3_APK_SIZE.txt
             h2-patch-for-h3.log
             h2-green-for-h3.log
             h3-red.log
             h3-patch.log
             h3-green.log
+            qairt-root.txt
+            native-build-h3.log
+            native-build-h3-errors.log
+            signing-key-h3.txt
+            gradle-h3.log
+            gradle-h3-status.txt
+            apk-badging-h3.txt
+            apk-files-h3.txt
+            apk-signing-h3.txt
+          if-no-files-found: error
           retention-days: 7

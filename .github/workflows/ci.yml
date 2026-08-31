@@ -155,8 +155,8 @@ jobs:
         run: python ci/materialize.py
       - name: Install pytest only
         run: python -m pip install --disable-pip-version-check pytest
-      - name: Reject metered AI actions, larger runners, and storage uploads
-        run: python -m pytest -q tests/ci/test_ci_billing.py
+      - name: Reject metered AI actions, larger runners, and default-workflow storage uploads
+        run: python -m pytest -q tests/ci/test_ci_billing_policy.py
 
   cold-checkout-bootstrap:
     name: Raw checkout bootstrap / Windows 2022

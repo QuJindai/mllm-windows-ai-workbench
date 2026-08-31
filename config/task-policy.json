@@ -4,7 +4,7 @@
     "Local AI Fast": ["python","modelscope","llama-cpp","qwen35-4b","local-api"],
     "Web Workbench": ["python","modelscope","llama-cpp","qwen35-4b","local-api","web-workbench"],
     "Developer Tools": ["git","git-lfs"],
-    "Full Setup": ["git","git-lfs","python","modelscope","llama-cpp","qwen35-4b","local-api","web-workbench"],
+    "Full Setup": ["python","modelscope","llama-cpp","qwen35-4b","local-api","web-workbench"],
     "Repair Only": []
   }
 }

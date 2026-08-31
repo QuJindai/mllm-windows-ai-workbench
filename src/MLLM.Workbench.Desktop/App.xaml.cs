@@ -167,6 +167,7 @@ public partial class App : Application
                 services.AddSingleton<IPrivilegedInstallerInvoker>(_ => new PrivilegedInstallerInvoker(runtime.ProjectRoot));
                 services.AddSingleton<WorkbenchCoordinator>();
                 services.AddSingleton<WorkbenchMutationGate>();
+                services.AddSingleton<IClipboardService, WpfClipboardService>();
                 services.AddSingleton<IKnowledgeWorkbenchService>(_ =>
                     KnowledgeServiceFactory.Create(runtime.DataRoot, Environment.GetEnvironmentVariable));
                 services.AddSingleton<IEvidenceLauncher, ShellEvidenceLauncher>();

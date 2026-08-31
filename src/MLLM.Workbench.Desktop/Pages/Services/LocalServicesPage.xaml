@@ -7,14 +7,71 @@
     <Grid Margin="0,0,0,20">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <StackPanel>
-        <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
-        <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+        <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+        <TextBlock Text="{Binding Subtitle, Mode=OneWay}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
       </StackPanel>
       <Button Grid.Column="1" x:Name="RefreshServicesButton" AutomationProperties.AutomationId="RefreshServicesButton"
               Content="刷新服务" Style="{StaticResource ActionButtonStyle}" Command="{Binding RefreshCommand}"/>
     </Grid>
-    <Border Style="{StaticResource CardStyle}">
-      <TextBlock Text="本地服务控制将复用现有 Phase B 受限服务后端。" Foreground="White" TextWrapping="Wrap"/>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="受管本地服务" FontSize="17" FontWeight="SemiBold" Foreground="White"/>
+            <TextBlock Text="{Binding NetworkMode, StringFormat=网络模式：{0}, Mode=OneWay}" Margin="0,5,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+          </StackPanel>
+          <WrapPanel Grid.Column="1">
+            <Button x:Name="StartServiceButton" AutomationProperties.AutomationId="StartServiceButton" Content="启动" Style="{StaticResource ActionButtonStyle}" Command="{Binding StartCommand}"/>
+            <Button x:Name="StopServiceButton" AutomationProperties.AutomationId="StopServiceButton" Content="停止" Style="{StaticResource ActionButtonStyle}" Command="{Binding StopCommand}" Margin="8,0,0,0"/>
+            <Button x:Name="RestartServiceButton" AutomationProperties.AutomationId="RestartServiceButton" Content="重启" Style="{StaticResource ActionButtonStyle}" Command="{Binding RestartCommand}" Margin="8,0,0,0"/>
+            <Button x:Name="LoadServiceLogsButton" AutomationProperties.AutomationId="LoadServiceLogsButton" Content="查看日志" Style="{StaticResource ActionButtonStyle}" Command="{Binding LoadLogsCommand}" Margin="8,0,0,0"/>
+            <Button x:Name="CopyServiceEndpointButton" AutomationProperties.AutomationId="CopyServiceEndpointButton" Content="复制端点" Style="{StaticResource ActionButtonStyle}" Command="{Binding CopyEndpointCommand}" Margin="8,0,0,0"/>
+          </WrapPanel>
+        </Grid>
+
+        <DataGrid x:Name="ServiceInventoryGrid" AutomationProperties.AutomationId="ServiceInventoryGrid"
+                  ItemsSource="{Binding Services}" SelectedItem="{Binding SelectedService, Mode=TwoWay}"
+                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  Margin="0,14,0,0" MinHeight="230" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="服务" Binding="{Binding DisplayName}" Width="1.4*"/>
+            <DataGridTextColumn Header="ID" Binding="{Binding ServiceId}" Width="1.2*"/>
+            <DataGridTextColumn Header="状态" Binding="{Binding State}" Width="0.8*"/>
+            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="0.6*"/>
+            <DataGridTextColumn Header="端口" Binding="{Binding Port}" Width="0.6*"/>
+            <DataGridTextColumn Header="端点" Binding="{Binding BaseUrl}" Width="1.6*"/>
+            <DataGridTextColumn Header="模型" Binding="{Binding ModelId}" Width="1.0*"/>
+            <DataGridTextColumn Header="健康" Binding="{Binding HealthSummary}" Width="1.4*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </StackPanel>
     </Border>
+
+    <Grid Margin="0,0,0,14">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,10,0">
+        <StackPanel>
+          <TextBlock Text="所选服务" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+          <TextBlock Text="{Binding SelectedService.DisplayName, Mode=OneWay}" Margin="0,10,0,0" FontSize="18" Foreground="{StaticResource AccentBrush}"/>
+          <TextBlock Text="{Binding SelectedService.BaseUrl, StringFormat=端点：{0}, Mode=OneWay}" Margin="0,7,0,0" Foreground="White" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding SelectedService.ModelPath, StringFormat=模型路径：{0}, Mode=OneWay}" Margin="0,7,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding SelectedService.BlockedReason, StringFormat=阻止原因：{0}, Mode=OneWay}" Margin="0,7,0,0" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding LastError, StringFormat=最近错误：{0}, Mode=OneWay}" Margin="0,7,0,0" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+      <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+        <StackPanel>
+          <TextBlock Text="最近日志（最多 200 行 / backend 受限路径）" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+          <TextBox x:Name="ServiceLogText" AutomationProperties.AutomationId="ServiceLogText"
+                   Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                   MinHeight="210" Margin="0,10,0,0" Padding="10"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <Border Style="{StaticResource SafeGateCardStyle}"><TextBlock Text="服务生命周期只允许 backend 返回的受管 serviceId；不会按用户输入 PID/端口杀进程，也不会在启动服务时静默安装缺失组件。" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Border>
   </StackPanel>
 </UserControl>

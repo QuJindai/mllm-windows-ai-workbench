@@ -7,17 +7,64 @@
     <Grid Margin="0,0,0,20">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <StackPanel>
-        <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
-        <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+        <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+        <TextBlock Text="{Binding Subtitle, Mode=OneWay}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
       </StackPanel>
       <Button Grid.Column="1" x:Name="RefreshModelsButton" AutomationProperties.AutomationId="RefreshModelsButton"
               Content="刷新模型" Style="{StaticResource ActionButtonStyle}" Command="{Binding RefreshCommand}"/>
     </Grid>
-    <Border Style="{StaticResource CardStyle}">
+
+    <Grid Margin="0,0,0,14">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,10,0"><StackPanel><TextBlock Text="当前活动模型" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding ActiveModelDisplay, Mode=OneWay}" Margin="0,7,0,0" FontSize="17" FontWeight="SemiBold" Foreground="White" TextWrapping="Wrap"/></StackPanel></Border>
+      <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="0,0,10,0"><StackPanel><TextBlock Text="模型总数" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding TotalCount, Mode=OneWay}" Margin="0,7,0,0" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}"/></StackPanel></Border>
+      <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,10,0"><StackPanel><TextBlock Text="结构有效" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding StructurallyValidCount, Mode=OneWay}" Margin="0,7,0,0" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}"/></StackPanel></Border>
+      <Border Grid.Column="3" Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="可信 SHA" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding TrustedShaCount, Mode=OneWay}" Margin="0,7,0,0" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}"/></StackPanel></Border>
+    </Grid>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
       <StackPanel>
-        <TextBlock Text="模型管理正在接入现有 Phase B 模型后端。" Foreground="White"/>
-        <TextBlock Text="{Binding ActiveModelDisplay, StringFormat=当前模型：{0}}" Margin="0,8,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel><TextBlock Text="本地模型清单" FontSize="17" FontWeight="SemiBold" Foreground="White"/><TextBlock Text="{Binding NetworkMode, StringFormat=网络模式：{0}, Mode=OneWay}" Margin="0,5,0,0" Foreground="{StaticResource MutedTextBrush}"/></StackPanel>
+          <WrapPanel Grid.Column="1">
+            <Button x:Name="ImportModelButton" AutomationProperties.AutomationId="ImportModelButton" Content="导入本地 GGUF" Style="{StaticResource ActionButtonStyle}" Click="ImportModelButton_OnClick" IsEnabled="{Binding CanImport, Mode=OneWay}"/>
+            <Button x:Name="VerifyModelButton" AutomationProperties.AutomationId="VerifyModelButton" Content="校验" Style="{StaticResource ActionButtonStyle}" Command="{Binding VerifyCommand}" Margin="8,0,0,0"/>
+            <Button x:Name="ActivateModelButton" AutomationProperties.AutomationId="ActivateModelButton" Content="激活" Style="{StaticResource ActionButtonStyle}" Command="{Binding ActivateCommand}" Margin="8,0,0,0"/>
+          </WrapPanel>
+        </Grid>
+        <DataGrid x:Name="ModelInventoryGrid" AutomationProperties.AutomationId="ModelInventoryGrid"
+                  ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
+                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  Margin="0,14,0,0" MinHeight="260" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="名称" Binding="{Binding DisplayName}" Width="1.4*"/>
+            <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="1.2*"/>
+            <DataGridTextColumn Header="来源" Binding="{Binding SourceKind}" Width="0.8*"/>
+            <DataGridTextColumn Header="角色" Binding="{Binding Role}" Width="0.8*"/>
+            <DataGridTextColumn Header="格式" Binding="{Binding Format}" Width="0.7*"/>
+            <DataGridTextColumn Header="量化" Binding="{Binding Quantization}" Width="0.8*"/>
+            <DataGridTextColumn Header="字节" Binding="{Binding SizeBytes}" Width="0.9*"/>
+            <DataGridTextColumn Header="完整性" Binding="{Binding IntegrityState}" Width="1.2*"/>
+            <DataGridCheckBoxColumn Header="活动" Binding="{Binding IsActive}" Width="0.6*"/>
+          </DataGrid.Columns>
+        </DataGrid>
       </StackPanel>
     </Border>
+
+    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+      <StackPanel>
+        <TextBlock Text="所选模型" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+        <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="1.2*"/><ColumnDefinition Width="1.2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0"><TextBlock Text="完整性" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding SelectedModel.IntegrityState, Mode=OneWay}" Margin="0,4,0,0" Foreground="{StaticResource AccentBrush}"/></StackPanel>
+          <StackPanel Grid.Column="1"><TextBlock Text="实际 SHA-256" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding SelectedModel.ActualSha256, Mode=OneWay}" Margin="0,4,0,0" Foreground="White" TextWrapping="Wrap"/></StackPanel>
+          <StackPanel Grid.Column="2"><TextBlock Text="文件路径" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding SelectedModel.FilePath, Mode=OneWay}" Margin="0,4,0,0" Foreground="White" TextWrapping="Wrap"/></StackPanel>
+        </Grid>
+        <TextBlock Text="{Binding SelectedModel.ActivationBlockedReason, StringFormat=激活阻止原因：{0}, Mode=OneWay}" Margin="0,10,0,0" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"/>
+        <TextBlock Text="{Binding BackendError, StringFormat=最近错误：{0}, Mode=OneWay}" Margin="0,7,0,0" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"/>
+      </StackPanel>
+    </Border>
+
+    <Border Style="{StaticResource SafeGateCardStyle}"><TextBlock Text="模型导入仅接受本地 GGUF；文件写入、哈希校验和活动模型切换均由受限 Phase B backend 完成。模型服务运行时不会热切换活动模型。" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></Border>
   </StackPanel>
 </UserControl>

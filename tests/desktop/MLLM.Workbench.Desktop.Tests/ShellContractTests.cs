@@ -7,7 +7,7 @@ namespace MLLM.Workbench.Desktop.Tests;
 public sealed class ShellContractTests
 {
     [Fact]
-    public void Phase_a_shell_exposes_only_approved_navigation_and_critical_automation_ids()
+    public void D1_shell_exposes_approved_navigation_and_critical_automation_ids()
     {
         var root = FindRepositoryRoot();
         var path = Path.Combine(root, "src", "MLLM.Workbench.Desktop", "Shell", "MainWindow.xaml");
@@ -18,11 +18,16 @@ public sealed class ShellContractTests
         var names = document.Descendants().Select(e => (string?)e.Attribute(x + "Name")).Where(v => !string.IsNullOrWhiteSpace(v)).ToHashSet(StringComparer.Ordinal);
         var automationIds = document.Descendants().Select(e => e.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationId")?.Value).Where(v => !string.IsNullOrWhiteSpace(v)).ToHashSet(StringComparer.Ordinal);
 
-        foreach (var required in new[] { "MainNavigation", "BackendStatus", "NetworkModeStatus", "ContentHost", "DashboardNavigation", "DoctorNavigation", "InstallationNavigation" })
+        foreach (var required in new[]
+        {
+            "MainNavigation", "BackendStatus", "NetworkModeStatus", "ContentHost",
+            "DashboardNavigation", "DoctorNavigation", "InstallationNavigation", "KnowledgeNavigation",
+            "ModelNavigation", "ServicesNavigation"
+        })
             Assert.True(names.Contains(required) || automationIds.Contains(required), $"Missing shell contract element: {required}");
 
         var xml = File.ReadAllText(path);
-        foreach (var forbidden in new[] { "ModelNavigation", "ServicesNavigation", "ConversationNavigation", "RagNavigation", "BenchmarkNavigation", "EvidenceNavigation", "SettingsNavigation", "AboutNavigation" })
+        foreach (var forbidden in new[] { "ConversationNavigation", "RagNavigation", "BenchmarkNavigation", "EvidenceNavigation", "SettingsNavigation", "AboutNavigation" })
             Assert.DoesNotContain(forbidden, xml, StringComparison.Ordinal);
     }
 

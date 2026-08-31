@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Windows.Input;
 using MLLM.Workbench.Contracts.Protocol;
 using MLLM.Workbench.Contracts.Snapshots;
 using MLLM.Workbench.Contracts.Status;
@@ -29,12 +30,27 @@ public sealed class DashboardViewModelTests
     }
 
     [Fact]
-    public async Task Quick_navigation_commands_emit_approved_phase_a_routes()
+    public async Task Quick_navigation_commands_emit_all_approved_D1_routes()
     {
         await using var backend = new FakeBackendClient(new DashboardSnapshot(new MachineSnapshot("Windows", "AMD64", "CPU", 1, [], 1), "OFFLINE_CACHE", [], null));
         var vm = new DashboardPageViewModel(backend);
-        string? route = null; vm.NavigationRequested += value => route = value;
-        vm.OpenDoctorCommand.Execute(null); Assert.Equal("doctor", route); vm.OpenInstallationCommand.Execute(null); Assert.Equal("installation", route);
+        string? route = null;
+        vm.NavigationRequested += value => route = value;
+
+        foreach (var pair in new[]
+        {
+            (Property: "OpenDoctorCommand", Route: "doctor"),
+            (Property: "OpenInstallationCommand", Route: "installation"),
+            (Property: "OpenModelsCommand", Route: "models"),
+            (Property: "OpenServicesCommand", Route: "services")
+        })
+        {
+            var property = typeof(DashboardPageViewModel).GetProperty(pair.Property);
+            Assert.NotNull(property);
+            var command = Assert.IsAssignableFrom<ICommand>(property!.GetValue(vm));
+            command.Execute(null);
+            Assert.Equal(pair.Route, route);
+        }
     }
 
     private sealed class FakeBackendClient : IWorkbenchBackendClient

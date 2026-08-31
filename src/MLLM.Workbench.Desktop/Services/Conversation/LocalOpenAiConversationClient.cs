@@ -195,6 +195,7 @@ public sealed class LocalOpenAiConversationClient : ILocalConversationClient, ID
 
     private static SocketsHttpHandler CreateHandler() => new()
     {
+        UseProxy = false,
         AllowAutoRedirect = false,
         UseCookies = false,
         AutomaticDecompression = DecompressionMethods.None,

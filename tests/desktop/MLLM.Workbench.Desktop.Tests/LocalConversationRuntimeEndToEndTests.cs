@@ -1,5 +1,6 @@
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -10,6 +11,23 @@ namespace MLLM.Workbench.Desktop.Tests;
 
 public sealed class LocalConversationRuntimeEndToEndTests
 {
+    [Fact]
+    public void Default_transport_disables_proxy_redirects_cookies_and_decompression()
+    {
+        var factory = typeof(LocalOpenAiConversationClient).GetMethod(
+            "CreateHandler",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(factory);
+
+        using var handler = Assert.IsType<SocketsHttpHandler>(factory!.Invoke(null, null));
+
+        Assert.False(handler.UseProxy);
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.False(handler.UseCookies);
+        Assert.Equal(DecompressionMethods.None, handler.AutomaticDecompression);
+        Assert.Equal(TimeSpan.FromSeconds(10), handler.ConnectTimeout);
+    }
+
     [Fact]
     public async Task Real_loopback_openai_stream_returns_answer_usage_and_measured_latency()
     {

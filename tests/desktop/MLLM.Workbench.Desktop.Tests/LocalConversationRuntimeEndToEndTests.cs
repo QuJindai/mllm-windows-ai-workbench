@@ -75,6 +75,167 @@ public sealed class LocalConversationRuntimeEndToEndTests
         Assert.Equal("Say hello.", messages[2].GetProperty("content").GetString());
     }
 
+    [Fact]
+    public async Task Unversioned_capability_fallback_and_missing_usage_are_reported_without_estimation()
+    {
+        var paths = new List<string>();
+        using var handler = new ScriptedHandler((request, cancellationToken) =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(request.RequestUri.AbsolutePath switch
+            {
+                "/v1/models" => new HttpResponseMessage(HttpStatusCode.NotFound),
+                "/models" => JsonResponse("{\"data\":[]}"),
+                "/chat/completions" => SseResponse(
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+                    "data: [DONE]\n\n"),
+                _ => throw new InvalidOperationException("Unexpected path: " + request.RequestUri.AbsolutePath)
+            });
+        });
+        using var client = new LocalOpenAiConversationClient(handler);
+
+        var result = await client.StreamAsync(
+            LocalConversationEndpoint.FromService(Service("http://127.0.0.1:8080")),
+            Request(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(ConversationRunState.Completed, result.State);
+        Assert.Equal("ok", result.ResponseText);
+        Assert.Null(result.Metrics.CompletionTokens);
+        Assert.Null(result.Metrics.TokensPerSecond);
+        Assert.Equal(["/v1/models", "/models", "/chat/completions"], paths);
+    }
+
+    [Fact]
+    public async Task Http_failure_returns_failed_result_with_elapsed_metrics()
+    {
+        using var handler = new ScriptedHandler((request, cancellationToken) => Task.FromResult(
+            request.Method == HttpMethod.Get
+                ? JsonResponse("{\"data\":[]}")
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("bounded diagnostic")
+                }));
+        using var client = new LocalOpenAiConversationClient(handler);
+
+        var result = await client.StreamAsync(
+            LocalConversationEndpoint.FromService(Service("http://127.0.0.1:8080")),
+            Request(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(ConversationRunState.Failed, result.State);
+        Assert.Equal("CHAT_HTTP_ERROR", result.ErrorCode);
+        Assert.Contains("503", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.True(result.Metrics.TotalLatency > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Transport_operation_cancellation_is_mapped_to_stable_timeout_metrics()
+    {
+        using var handler = new ScriptedHandler((request, cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(new OperationCanceledException("connect timeout")));
+        using var client = new LocalOpenAiConversationClient(handler);
+
+        var result = await client.StreamAsync(
+            LocalConversationEndpoint.FromService(Service("http://127.0.0.1:8080")),
+            Request(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(ConversationRunState.Failed, result.State);
+        Assert.Equal("CHAT_TIMEOUT", result.ErrorCode);
+        Assert.True(result.Metrics.TotalLatency > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Protocol_failure_preserves_partial_text_and_measured_timing()
+    {
+        using var handler = new ScriptedHandler((request, cancellationToken) => Task.FromResult(
+            request.Method == HttpMethod.Get
+                ? JsonResponse("{\"data\":[]}")
+                : SseResponse(
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n" +
+                    "data: {not-json}\n\n")));
+        using var client = new LocalOpenAiConversationClient(handler);
+
+        var result = await client.StreamAsync(
+            LocalConversationEndpoint.FromService(Service("http://127.0.0.1:8080")),
+            Request(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(ConversationRunState.Failed, result.State);
+        Assert.Equal("STREAM_PROTOCOL_ERROR", result.ErrorCode);
+        Assert.Equal("partial", result.ResponseText);
+        Assert.NotNull(result.Metrics.TimeToFirstToken);
+        Assert.True(result.Metrics.TotalLatency >= result.Metrics.TimeToFirstToken);
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_preserves_partial_text_and_returns_cancelled()
+    {
+        var deltaSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var handler = StreamingHandler(new BlockingAfterPrefixStream(PartialEventBytes()));
+        using var client = new LocalOpenAiConversationClient(handler, requestTimeout: TimeSpan.FromSeconds(5));
+        using var cancellation = new CancellationTokenSource();
+
+        var run = client.StreamAsync(
+            LocalConversationEndpoint.FromService(Service("http://127.0.0.1:8080")),
+            Request(),
+            new InlineProgress<ConversationDelta>(_ => deltaSeen.TrySetResult()),
+            cancellation.Token);
+        await deltaSeen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(ConversationRunState.Cancelled, result.State);
+        Assert.Equal("RUN_CANCELLED", result.ErrorCode);
+        Assert.Equal("partial", result.ResponseText);
+        Assert.True(result.Metrics.TotalLatency > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Bounded_request_timeout_preserves_partial_text_and_returns_stable_failure()
+    {
+        using var handler = StreamingHandler(new BlockingAfterPrefixStream(PartialEventBytes()));
+        using var client = new LocalOpenAiConversationClient(handler, requestTimeout: TimeSpan.FromMilliseconds(75));
+
+        var result = await client.StreamAsync(
+            LocalConversationEndpoint.FromService(Service("http://127.0.0.1:8080")),
+            Request(),
+            null,
+            CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(ConversationRunState.Failed, result.State);
+        Assert.Equal("RUN_TIMEOUT", result.ErrorCode);
+        Assert.Equal("partial", result.ResponseText);
+        Assert.NotNull(result.Metrics.TimeToFirstToken);
+        Assert.True(result.Metrics.TotalLatency >= TimeSpan.FromMilliseconds(50));
+    }
+
+    private static ConversationRequest Request() =>
+        new("system", "prompt", [], 0.2, 64, false);
+
+    private static HttpResponseMessage JsonResponse(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+
+    private static HttpResponseMessage SseResponse(string value) =>
+        new(HttpStatusCode.OK)
+        {
+            Content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(value), writable: false))
+        };
+
+    private static ScriptedHandler StreamingHandler(Stream stream) =>
+        new((request, cancellationToken) => Task.FromResult(
+            request.Method == HttpMethod.Get
+                ? JsonResponse("{\"data\":[]}")
+                : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) }));
+
+    private static byte[] PartialEventBytes() => Encoding.UTF8.GetBytes(
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n");
+
     private static ServiceDescriptor Service(string baseUrl) =>
         new(
             "local-model-api",
@@ -98,6 +259,40 @@ public sealed class LocalConversationRuntimeEndToEndTests
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
+    }
+
+    private sealed class ScriptedHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => send(request, cancellationToken);
+    }
+
+    private sealed class BlockingAfterPrefixStream(byte[] prefix) : Stream
+    {
+        private bool _sent;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (!_sent)
+            {
+                _sent = true;
+                prefix.CopyTo(buffer);
+                return prefix.Length;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class LoopbackChatServer : IAsyncDisposable

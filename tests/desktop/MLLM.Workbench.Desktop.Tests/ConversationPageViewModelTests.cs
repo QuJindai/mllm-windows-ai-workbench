@@ -127,6 +127,35 @@ public sealed class ConversationPageViewModelTests
     }
 
     [Fact]
+    public async Task Failed_transport_result_keeps_partial_text_metrics_and_structured_error()
+    {
+        var service = new FakeConversationService
+        {
+            RunHandler = (request, progress, cancellationToken) =>
+            {
+                progress?.Report(new ConversationDelta("partial"));
+                return Task.FromResult(new ConversationRunResult(
+                    ConversationRunState.Failed,
+                    "partial",
+                    new ConversationMetrics(TimeSpan.FromMilliseconds(7), TimeSpan.FromMilliseconds(30), null, null),
+                    [],
+                    "STREAM_PROTOCOL_ERROR",
+                    "Malformed stream."));
+            }
+        };
+        var vm = CreateViewModel(service);
+        vm.UserPrompt = "prompt";
+
+        await vm.SendAsync(CancellationToken.None);
+
+        Assert.Equal("partial", vm.Transcript.Single(item => item.Role == ConversationTranscriptRole.Assistant).Content);
+        Assert.Equal("7 ms", vm.TimeToFirstTokenText);
+        Assert.Equal("30 ms", vm.TotalLatencyText);
+        Assert.Equal("STREAM_PROTOCOL_ERROR", vm.LastErrorCode);
+        Assert.Contains(vm.Transcript, item => item.Role == ConversationTranscriptRole.Status && item.Code == "STREAM_PROTOCOL_ERROR");
+    }
+
+    [Fact]
     public async Task Cancel_keeps_partial_assistant_text_and_disables_competing_runs_while_active()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -189,7 +218,101 @@ public sealed class ConversationPageViewModelTests
     }
 
     [Fact]
-    public async Task Save_update_delete_and_run_golden_cases_preserve_stable_selection()
+    public async Task History_contains_only_recent_successful_pairs_within_explicit_budgets()
+    {
+        var invocation = 0;
+        var service = new FakeConversationService
+        {
+            RunHandler = (request, progress, cancellationToken) =>
+            {
+                invocation++;
+                if (invocation == 1)
+                {
+                    progress?.Report(new ConversationDelta("partial"));
+                    return Task.FromResult(new ConversationRunResult(
+                        ConversationRunState.Cancelled,
+                        "partial",
+                        new ConversationMetrics(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), null, null),
+                        [],
+                        "RUN_CANCELLED",
+                        "Cancelled"));
+                }
+
+                return Task.FromResult(Completed(
+                    new string('x', 1_500) + invocation,
+                    new ConversationMetrics(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), 2, 100),
+                    []));
+            }
+        };
+        var vm = CreateViewModel(service);
+
+        vm.UserPrompt = "cancelled prompt";
+        await vm.SendAsync(CancellationToken.None);
+        for (var index = 0; index < 13; index++)
+        {
+            vm.UserPrompt = "successful prompt " + index;
+            await vm.SendAsync(CancellationToken.None);
+        }
+        vm.UserPrompt = "final prompt";
+        await vm.SendAsync(CancellationToken.None);
+
+        var finalHistory = service.Requests[^1].History;
+        Assert.DoesNotContain(finalHistory, item => item.Content.Contains("cancelled prompt", StringComparison.Ordinal));
+        Assert.DoesNotContain(finalHistory, item => item.Content.Contains("partial", StringComparison.Ordinal));
+        Assert.True(finalHistory.Count <= 20);
+        Assert.True(finalHistory.Sum(item => item.Content.Length) <= 12_000);
+        Assert.Equal(0, finalHistory.Count % 2);
+        Assert.Equal("successful prompt 12", finalHistory[^2].Content);
+    }
+
+    [Fact]
+    public async Task Golden_run_uses_shared_cancel_command_and_releases_active_state()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new FakeConversationService
+        {
+            RunHandler = async (request, progress, cancellationToken) =>
+            {
+                started.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    throw new InvalidOperationException("Cancellation was not observed.");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return new ConversationRunResult(
+                        ConversationRunState.Cancelled,
+                        "partial",
+                        new ConversationMetrics(null, TimeSpan.FromMilliseconds(10), null, null),
+                        [],
+                        "RUN_CANCELLED",
+                        "Cancelled");
+                }
+            }
+        };
+        var vm = CreateViewModel(service, new FakeGoldenCatalog([Case("case-1", "One")]));
+        await vm.RefreshAsync(CancellationToken.None);
+
+        var run = vm.RunAllGoldenAsync(CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(vm.IsRunActive);
+        Assert.True(vm.CancelCommand.CanExecute(null));
+        Assert.False(vm.SendCommand.CanExecute(null));
+
+        vm.CancelCommand.Execute(null);
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(vm.IsRunActive);
+        Assert.False(vm.IsBusy);
+        Assert.Equal("RUN_CANCELLED", vm.LastErrorCode);
+        var cancelled = Assert.Single(vm.GoldenResults);
+        Assert.Equal("RUN_CANCELLED", cancelled.FailureCode);
+        Assert.Equal("partial", cancelled.ResponseText);
+    }
+
+    [Fact]
+    public async Task Save_as_new_update_delete_and_run_golden_cases_preserve_stable_selection()
     {
         var service = new FakeConversationService();
         var catalog = new FakeGoldenCatalog([Case("case-1", "One"), Case("case-2", "Two")]);
@@ -200,17 +323,17 @@ public sealed class ConversationPageViewModelTests
         vm.GoldenMustContain = "answer\nrequired";
         vm.GoldenMustNotContain = "forbidden";
         vm.GoldenMaximumLatencyMilliseconds = 500;
-        vm.SelectedGoldenCase = null;
 
-        await vm.SaveGoldenAsync(CancellationToken.None);
+        await vm.SaveGoldenAsNewAsync(CancellationToken.None);
         var created = catalog.Upserts.Last();
         Assert.False(string.IsNullOrWhiteSpace(created.Id));
+        Assert.DoesNotContain(created.Id, new[] { "case-1", "case-2" });
         Assert.Equal(["answer", "required"], created.MustContain);
         Assert.Equal(["forbidden"], created.MustNotContain);
 
         vm.SelectedGoldenCase = vm.GoldenCases.Single(item => item.Id == "case-1");
         vm.GoldenName = "One updated";
-        await vm.SaveGoldenAsync(CancellationToken.None);
+        await vm.UpdateSelectedGoldenAsync(CancellationToken.None);
         Assert.Equal("case-1", catalog.Upserts.Last().Id);
         Assert.Equal("One updated", catalog.Upserts.Last().Name);
 
@@ -283,6 +406,7 @@ public sealed class ConversationPageViewModelTests
                 []));
         public int RunCallCount { get; private set; }
         public ConversationRequest? LastRequest { get; private set; }
+        public List<ConversationRequest> Requests { get; } = [];
 
         public Task<ConversationRuntimeSnapshot> RefreshRuntimeAsync(CancellationToken cancellationToken) =>
             Task.FromResult(Runtime);
@@ -294,6 +418,7 @@ public sealed class ConversationPageViewModelTests
         {
             RunCallCount++;
             LastRequest = request;
+            Requests.Add(request);
             return RunHandler(request, progress, cancellationToken);
         }
     }

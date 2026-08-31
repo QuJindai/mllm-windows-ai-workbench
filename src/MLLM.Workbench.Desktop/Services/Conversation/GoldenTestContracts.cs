@@ -22,7 +22,15 @@ public sealed record GoldenTestResult(
     string? FailureMessage,
     string ResponseText,
     IReadOnlyList<string> EvidenceIds,
-    ConversationMetrics Metrics);
+    ConversationMetrics Metrics)
+{
+    public string EvidenceSummary => string.Join(", ", EvidenceIds);
+    public string TotalLatencyText =>
+        Math.Round(Metrics.TotalLatency.TotalMilliseconds, MidpointRounding.AwayFromZero)
+            .ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " ms";
+    public string CompletionTokensText =>
+        Metrics.CompletionTokens?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "Unavailable";
+}
 
 public sealed class GoldenCatalogException : ConversationException
 {

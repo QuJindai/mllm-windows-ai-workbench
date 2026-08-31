@@ -12,7 +12,9 @@ namespace MLLM.Workbench.Desktop.Services.Conversation;
 public sealed class LocalOpenAiConversationClient : ILocalConversationClient, IDisposable
 {
     private const int MaximumErrorCharacters = 4096;
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromMinutes(5);
     private readonly HttpClient _httpClient;
+    private readonly TimeSpan _requestTimeout;
     private readonly ConcurrentDictionary<string, string> _chatPaths = new(StringComparer.Ordinal);
     private bool _disposed;
 
@@ -21,9 +23,14 @@ public sealed class LocalOpenAiConversationClient : ILocalConversationClient, ID
     {
     }
 
-    public LocalOpenAiConversationClient(HttpMessageHandler handler)
+    public LocalOpenAiConversationClient(
+        HttpMessageHandler handler,
+        TimeSpan? requestTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(handler);
+        _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
+        if (_requestTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(requestTimeout), "Conversation request timeout must be positive.");
         _httpClient = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = Timeout.InfiniteTimeSpan
@@ -40,28 +47,11 @@ public sealed class LocalOpenAiConversationClient : ILocalConversationClient, ID
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(request);
 
-        var chatPath = await ResolveChatPathAsync(endpoint, cancellationToken).ConfigureAwait(false);
-        var messages = BuildMessages(request);
-        var payload = new
-        {
-            model = string.IsNullOrWhiteSpace(endpoint.ModelId) ? "local" : endpoint.ModelId,
-            messages,
-            temperature = request.Temperature,
-            max_tokens = request.MaxOutputTokens,
-            stream = true,
-            stream_options = new { include_usage = true }
-        };
-
-        var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload);
-        using var content = new ByteArrayContent(payloadBytes);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, new Uri(endpoint.BaseUri, chatPath))
-        {
-            Content = content
-        };
         var stopwatch = Stopwatch.StartNew();
         TimeSpan? timeToFirstToken = null;
         var partial = new StringBuilder();
+        using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        runCancellation.CancelAfter(_requestTimeout);
         var forwardingProgress = new InlineProgress<ConversationDelta>(delta =>
         {
             if (string.IsNullOrEmpty(delta.Content)) return;
@@ -72,20 +62,39 @@ public sealed class LocalOpenAiConversationClient : ILocalConversationClient, ID
 
         try
         {
+            var chatPath = await ResolveChatPathAsync(endpoint, runCancellation.Token).ConfigureAwait(false);
+            var messages = BuildMessages(request);
+            var payload = new
+            {
+                model = string.IsNullOrWhiteSpace(endpoint.ModelId) ? "local" : endpoint.ModelId,
+                messages,
+                temperature = request.Temperature,
+                max_tokens = request.MaxOutputTokens,
+                stream = true,
+                stream_options = new { include_usage = true }
+            };
+
+            var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload);
+            using var content = new ByteArrayContent(payloadBytes);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, new Uri(endpoint.BaseUri, chatPath))
+            {
+                Content = content
+            };
             using var response = await _httpClient
-                .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, runCancellation.Token)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                var diagnostic = await ReadBoundedDiagnosticAsync(response, cancellationToken).ConfigureAwait(false);
+                var diagnostic = await ReadBoundedDiagnosticAsync(response, runCancellation.Token).ConfigureAwait(false);
                 throw new ConversationClientException(
                     "CHAT_HTTP_ERROR",
                     $"Local model API returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. {diagnostic}".Trim());
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            await using var stream = await response.Content.ReadAsStreamAsync(runCancellation.Token).ConfigureAwait(false);
             var parsed = await new OpenAiSseReader()
-                .ReadAsync(stream, forwardingProgress, cancellationToken)
+                .ReadAsync(stream, forwardingProgress, runCancellation.Token)
                 .ConfigureAwait(false);
             stopwatch.Stop();
             var metrics = BuildMetrics(timeToFirstToken, stopwatch.Elapsed, parsed.CompletionTokens);
@@ -97,26 +106,48 @@ public sealed class LocalOpenAiConversationClient : ILocalConversationClient, ID
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            stopwatch.Stop();
-            return new ConversationRunResult(
+            return Finish(
                 ConversationRunState.Cancelled,
-                partial.ToString(),
-                BuildMetrics(timeToFirstToken, stopwatch.Elapsed, null),
-                [],
                 "RUN_CANCELLED",
                 "Conversation request was cancelled.");
         }
-        catch (ConversationException)
+        catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
         {
-            throw;
+            return Finish(
+                ConversationRunState.Failed,
+                "RUN_TIMEOUT",
+                $"Conversation request exceeded the {_requestTimeout.TotalSeconds:0.###} second limit.");
         }
-        catch (HttpRequestException ex)
+        catch (OperationCanceledException)
         {
-            throw new ConversationClientException("CHAT_HTTP_ERROR", "Local model API request failed.", ex);
+            return Finish(
+                ConversationRunState.Failed,
+                "CHAT_TIMEOUT",
+                "Local model API operation timed out.");
         }
-        catch (IOException ex)
+        catch (ConversationException ex)
         {
-            throw new ConversationClientException("CHAT_STREAM_ERROR", "Local model API stream failed.", ex);
+            return Finish(ConversationRunState.Failed, ex.Code, ex.Message);
+        }
+        catch (HttpRequestException)
+        {
+            return Finish(ConversationRunState.Failed, "CHAT_HTTP_ERROR", "Local model API request failed.");
+        }
+        catch (IOException)
+        {
+            return Finish(ConversationRunState.Failed, "CHAT_STREAM_ERROR", "Local model API stream failed.");
+        }
+
+        ConversationRunResult Finish(ConversationRunState state, string code, string message)
+        {
+            stopwatch.Stop();
+            return new ConversationRunResult(
+                state,
+                partial.ToString(),
+                BuildMetrics(timeToFirstToken, stopwatch.Elapsed, null),
+                [],
+                code,
+                message);
         }
     }
 

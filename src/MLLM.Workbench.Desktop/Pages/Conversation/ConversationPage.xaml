@@ -75,7 +75,7 @@
           </UniformGrid>
           <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="可信证据" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/><Button Grid.Column="1" Content="打开原文" Command="{Binding OpenSelectedEvidenceCommand}" Style="{StaticResource ActionButtonStyle}"/></Grid>
           <DataGrid AutomationProperties.AutomationId="ConversationEvidenceList" ItemsSource="{Binding Evidence}" SelectedItem="{Binding SelectedEvidence}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" MinHeight="150" Margin="0,8,0,0" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}">
-            <DataGrid.Columns><DataGridTextColumn Header="引用" Binding="{Binding CitationId}" Width="60"/><DataGridTextColumn Header="定位" Binding="{Binding Locator}" Width="90"/><DataGridTextColumn Header="证据" Binding="{Binding Excerpt}" Width="*"/></DataGrid.Columns>
+            <DataGrid.Columns><DataGridTextColumn Header="引用" Binding="{Binding CitationId}" Width="60"/><DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="120"/><DataGridTextColumn Header="来源" Binding="{Binding SourceUri}" Width="180"/><DataGridTextColumn Header="定位" Binding="{Binding Locator}" Width="90"/><DataGridTextColumn Header="证据" Binding="{Binding Excerpt}" Width="*"/></DataGrid.Columns>
           </DataGrid>
         </StackPanel>
       </Border>
@@ -98,11 +98,11 @@
               <StackPanel Grid.Column="1"><TextBlock Text="禁止包含（每行一项）" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding GoldenMustNotContain, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="72" Margin="8,4,8,0" Padding="8"/></StackPanel>
               <StackPanel Grid.Column="2"><TextBlock Text="最大总延迟（ms）" Foreground="{StaticResource MutedTextBrush}"/><TextBox Text="{Binding GoldenMaximumLatencyMilliseconds, UpdateSourceTrigger=LostFocus, TargetNullValue=''}" Margin="8,4,0,0" Padding="8"/></StackPanel>
             </Grid>
-            <StackPanel Orientation="Horizontal" Margin="0,10,0,0"><Button Content="保存 / 更新" Command="{Binding SaveGoldenCommand}" Style="{StaticResource ActionButtonStyle}"/><Button Content="删除所选" Command="{Binding DeleteGoldenCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0"/></StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0"><Button Content="另存为新用例" Command="{Binding SaveGoldenAsNewCommand}" Style="{StaticResource ActionButtonStyle}"/><Button Content="更新所选" Command="{Binding UpdateSelectedGoldenCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0"/><Button Content="删除所选" Command="{Binding DeleteGoldenCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0"/></StackPanel>
           </StackPanel>
         </Grid>
         <DataGrid AutomationProperties.AutomationId="GoldenResultList" ItemsSource="{Binding GoldenResults}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" MinHeight="170" Margin="0,14,0,0" Background="{StaticResource CardSecondaryBrush}" Foreground="{StaticResource PrimaryTextBrush}" BorderBrush="{StaticResource BorderBrush}">
-          <DataGrid.Columns><DataGridCheckBoxColumn Header="通过" Binding="{Binding Passed}" Width="60"/><DataGridTextColumn Header="用例" Binding="{Binding CaseName}" Width="170"/><DataGridTextColumn Header="失败代码" Binding="{Binding FailureCode}" Width="170"/><DataGridTextColumn Header="说明" Binding="{Binding FailureMessage}" Width="*"/><DataGridTextColumn Header="回答" Binding="{Binding ResponseText}" Width="2*"/></DataGrid.Columns>
+          <DataGrid.Columns><DataGridCheckBoxColumn Header="通过" Binding="{Binding Passed}" Width="60"/><DataGridTextColumn Header="用例" Binding="{Binding CaseName}" Width="150"/><DataGridTextColumn Header="失败代码" Binding="{Binding FailureCode}" Width="150"/><DataGridTextColumn Header="延迟" Binding="{Binding TotalLatencyText}" Width="85"/><DataGridTextColumn Header="输出 tokens" Binding="{Binding CompletionTokensText}" Width="95"/><DataGridTextColumn Header="证据" Binding="{Binding EvidenceSummary}" Width="100"/><DataGridTextColumn Header="说明" Binding="{Binding FailureMessage}" Width="*"/><DataGridTextColumn Header="回答" Binding="{Binding ResponseText}" Width="2*"/></DataGrid.Columns>
         </DataGrid>
       </StackPanel>
     </Border>

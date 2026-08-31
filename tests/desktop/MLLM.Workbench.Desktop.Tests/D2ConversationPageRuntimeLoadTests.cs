@@ -38,6 +38,12 @@ public sealed class D2ConversationPageRuntimeLoadTests
         Assert.Contains("MutedTextBrush", text, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding Evidence}\"", text, StringComparison.Ordinal);
         Assert.Contains("Command=\"{Binding OpenSelectedEvidenceCommand}\"", text, StringComparison.Ordinal);
+        Assert.Contains("Command=\"{Binding SaveGoldenAsNewCommand}\"", text, StringComparison.Ordinal);
+        Assert.Contains("Command=\"{Binding UpdateSelectedGoldenCommand}\"", text, StringComparison.Ordinal);
+        Assert.Contains("Binding=\"{Binding Title}\"", text, StringComparison.Ordinal);
+        Assert.Contains("Binding=\"{Binding SourceUri}\"", text, StringComparison.Ordinal);
+        Assert.Contains("Binding=\"{Binding EvidenceSummary}\"", text, StringComparison.Ordinal);
+        Assert.Contains("Binding=\"{Binding TotalLatencyText}\"", text, StringComparison.Ordinal);
 
         var document = XDocument.Load(path);
         XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";

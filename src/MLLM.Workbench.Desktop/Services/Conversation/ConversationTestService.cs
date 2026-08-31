@@ -79,8 +79,10 @@ public sealed class ConversationTestService : IConversationTestService
     {
         var models = await _backend.GetModelsAsync(cancellationToken).ConfigureAwait(false);
         var services = await _backend.GetServicesAsync(cancellationToken).ConfigureAwait(false);
-        var service = services.Services.FirstOrDefault(
-            item => string.Equals(item.ServiceId, LocalModelServiceId, StringComparison.Ordinal));
+        var matchingServices = services.Services
+            .Where(item => string.Equals(item.ServiceId, LocalModelServiceId, StringComparison.Ordinal))
+            .ToArray();
+        var service = matchingServices.FirstOrDefault();
 
         if (service is null)
         {
@@ -89,6 +91,13 @@ public sealed class ConversationTestService : IConversationTestService
                     false, LocalModelServiceId, "Missing", null, models.ActiveModelId, null,
                     "Local model API service was not returned by the backend."),
                 "SERVICE_NOT_FOUND");
+        }
+
+        if (matchingServices.Length != 1)
+        {
+            return NotReady(
+                Snapshot(service, models, false, "Multiple local model API service descriptors were returned by the backend."),
+                "SERVICE_DESCRIPTOR_AMBIGUOUS");
         }
 
         if (service.State != ManagedServiceState.Running)

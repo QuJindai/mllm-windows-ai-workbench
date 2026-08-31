@@ -10,6 +10,8 @@ namespace MLLM.Workbench.Desktop.Pages.Conversation;
 
 public sealed class ConversationPageViewModel : ObservableObject
 {
+    private const int MaximumHistoryMessages = 20;
+    private const int MaximumHistoryCharacters = 12_000;
     private readonly IConversationTestService _service;
     private readonly IGoldenTestCatalog _catalog;
     private readonly GoldenTestEvaluator _evaluator;
@@ -18,11 +20,13 @@ public sealed class ConversationPageViewModel : ObservableObject
     private readonly AsyncRelayCommand _sendCommand;
     private readonly RelayCommand _cancelCommand;
     private readonly RelayCommand _clearCommand;
-    private readonly AsyncRelayCommand _saveGoldenCommand;
+    private readonly AsyncRelayCommand _saveGoldenAsNewCommand;
+    private readonly AsyncRelayCommand _updateSelectedGoldenCommand;
     private readonly AsyncRelayCommand _deleteGoldenCommand;
     private readonly AsyncRelayCommand _runSelectedGoldenCommand;
     private readonly AsyncRelayCommand _runAllGoldenCommand;
     private readonly AsyncRelayCommand _openEvidenceCommand;
+    private readonly List<ConversationMessage> _completedHistory = [];
     private CancellationTokenSource? _activeRun;
     private string _systemPrompt = string.Empty;
     private string _userPrompt = string.Empty;
@@ -69,8 +73,12 @@ public sealed class ConversationPageViewModel : ObservableObject
         CancelCommand = _cancelCommand;
         _clearCommand = new RelayCommand(ClearConversation, () => !IsRunActive);
         ClearCommand = _clearCommand;
-        _saveGoldenCommand = new AsyncRelayCommand(SaveGoldenAsync, () => !IsBusy);
-        SaveGoldenCommand = _saveGoldenCommand;
+        _saveGoldenAsNewCommand = new AsyncRelayCommand(SaveGoldenAsNewAsync, () => !IsBusy);
+        SaveGoldenAsNewCommand = _saveGoldenAsNewCommand;
+        _updateSelectedGoldenCommand = new AsyncRelayCommand(
+            UpdateSelectedGoldenAsync,
+            () => !IsBusy && SelectedGoldenCase is not null);
+        UpdateSelectedGoldenCommand = _updateSelectedGoldenCommand;
         _deleteGoldenCommand = new AsyncRelayCommand(DeleteGoldenAsync, () => !IsBusy && SelectedGoldenCase is not null);
         DeleteGoldenCommand = _deleteGoldenCommand;
         _runSelectedGoldenCommand = new AsyncRelayCommand(
@@ -96,7 +104,8 @@ public sealed class ConversationPageViewModel : ObservableObject
     public ICommand SendCommand { get; }
     public ICommand CancelCommand { get; }
     public ICommand ClearCommand { get; }
-    public ICommand SaveGoldenCommand { get; }
+    public ICommand SaveGoldenAsNewCommand { get; }
+    public ICommand UpdateSelectedGoldenCommand { get; }
     public ICommand DeleteGoldenCommand { get; }
     public ICommand RunSelectedGoldenCommand { get; }
     public ICommand RunAllGoldenCommand { get; }
@@ -210,9 +219,7 @@ public sealed class ConversationPageViewModel : ObservableObject
         var assistantIndex = Transcript.Count - 1;
         var partial = string.Empty;
 
-        _activeRun = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        IsRunActive = true;
-        SetBusy(true);
+        var activeRun = BeginActiveRun(cancellationToken);
         ClearError();
         ResetMetrics();
         Evidence.Clear();
@@ -234,17 +241,20 @@ public sealed class ConversationPageViewModel : ObservableObject
                     MaxOutputTokens,
                     UseKnowledge),
                 progress,
-                _activeRun.Token).ConfigureAwait(true);
+                activeRun.Token).ConfigureAwait(true);
 
             Transcript[assistantIndex] = assistantEntry with
             {
                 Content = string.IsNullOrEmpty(result.ResponseText) ? partial : result.ResponseText
             };
             ApplyRunResult(result);
+            if (result.State == ConversationRunState.Completed && !string.IsNullOrWhiteSpace(result.ResponseText))
+                AppendCompletedTurn(userText, result.ResponseText);
         }
-        catch (OperationCanceledException) when (_activeRun.IsCancellationRequested)
+        catch (OperationCanceledException) when (activeRun.IsCancellationRequested)
         {
             Transcript[assistantIndex] = assistantEntry with { Content = partial };
+            SetError("RUN_CANCELLED", "对话已取消，已保留部分回答。");
             AddStatus("RUN_CANCELLED", "对话已取消，已保留部分回答。");
         }
         catch (ConversationException ex)
@@ -261,14 +271,26 @@ public sealed class ConversationPageViewModel : ObservableObject
         }
         finally
         {
-            _activeRun.Dispose();
-            _activeRun = null;
-            IsRunActive = false;
-            SetBusy(false);
+            EndActiveRun(activeRun);
         }
     }
 
-    public async Task SaveGoldenAsync(CancellationToken cancellationToken)
+    public Task SaveGoldenAsNewAsync(CancellationToken cancellationToken) =>
+        PersistGoldenAsync(null, cancellationToken);
+
+    public Task UpdateSelectedGoldenAsync(CancellationToken cancellationToken)
+    {
+        if (SelectedGoldenCase is null)
+        {
+            SetError("GOLDEN_SELECTION_REQUIRED", "请先选择要更新的 Golden Test。");
+            return Task.CompletedTask;
+        }
+        return PersistGoldenAsync(SelectedGoldenCase, cancellationToken);
+    }
+
+    private async Task PersistGoldenAsync(
+        GoldenTestCase? existing,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(GoldenName))
         {
@@ -287,7 +309,7 @@ public sealed class ConversationPageViewModel : ObservableObject
         {
             var saved = await _catalog.UpsertAsync(
                 new GoldenTestCase(
-                    SelectedGoldenCase?.Id ?? Guid.NewGuid().ToString("N"),
+                    existing?.Id ?? Guid.NewGuid().ToString("N"),
                     GoldenName.Trim(),
                     SystemPrompt,
                     UserPrompt.Trim(),
@@ -297,7 +319,7 @@ public sealed class ConversationPageViewModel : ObservableObject
                     SplitRules(GoldenMustContain),
                     SplitRules(GoldenMustNotContain),
                     GoldenMaximumLatencyMilliseconds,
-                    SelectedGoldenCase?.CreatedAt ?? default,
+                    existing?.CreatedAt ?? default,
                     default),
                 cancellationToken).ConfigureAwait(true);
             await ReloadGoldenCasesAsync(saved.Id, cancellationToken).ConfigureAwait(true);
@@ -371,15 +393,21 @@ public sealed class ConversationPageViewModel : ObservableObject
         CancellationToken cancellationToken)
     {
         if (cases.Count == 0 || IsBusy) return;
-        SetBusy(true);
+        var activeRun = BeginActiveRun(cancellationToken);
         GoldenResults.Clear();
         try
         {
-            var results = await _evaluator.RunAsync(cases, cancellationToken).ConfigureAwait(true);
+            var results = await _evaluator.RunAsync(cases, activeRun.Token).ConfigureAwait(true);
             foreach (var result in results) GoldenResults.Add(result);
-            ClearError();
+            var batchWasCancelled = activeRun.IsCancellationRequested &&
+                                    (results.Count < cases.Count ||
+                                     results.LastOrDefault()?.FailureCode == "RUN_CANCELLED");
+            if (batchWasCancelled)
+                SetError("RUN_CANCELLED", "Golden Test 已取消，已保留完成及当前用例结果。");
+            else
+                ClearError();
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (activeRun.IsCancellationRequested)
         {
             SetError("RUN_CANCELLED", "Golden Test 已取消。");
         }
@@ -389,7 +417,7 @@ public sealed class ConversationPageViewModel : ObservableObject
         }
         finally
         {
-            SetBusy(false);
+            EndActiveRun(activeRun);
         }
     }
 
@@ -440,14 +468,40 @@ public sealed class ConversationPageViewModel : ObservableObject
         AddStatus(code, message);
     }
 
-    private IReadOnlyList<ConversationMessage> BuildHistory() =>
-        Transcript
-            .Where(item => item.Role is ConversationTranscriptRole.User or ConversationTranscriptRole.Assistant)
-            .Where(item => !string.IsNullOrWhiteSpace(item.Content))
-            .Select(item => new ConversationMessage(
-                item.Role == ConversationTranscriptRole.User ? "user" : "assistant",
-                item.Content))
-            .ToArray();
+    private IReadOnlyList<ConversationMessage> BuildHistory() => _completedHistory.ToArray();
+
+    private void AppendCompletedTurn(string userText, string assistantText)
+    {
+        _completedHistory.Add(new ConversationMessage("user", userText));
+        _completedHistory.Add(new ConversationMessage("assistant", assistantText));
+        while (_completedHistory.Count > MaximumHistoryMessages ||
+               _completedHistory.Sum(item => item.Content.Length) > MaximumHistoryCharacters)
+        {
+            if (_completedHistory.Count < 2)
+            {
+                _completedHistory.Clear();
+                break;
+            }
+            _completedHistory.RemoveRange(0, 2);
+        }
+    }
+
+    private CancellationTokenSource BeginActiveRun(CancellationToken cancellationToken)
+    {
+        var activeRun = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _activeRun = activeRun;
+        IsRunActive = true;
+        SetBusy(true);
+        return activeRun;
+    }
+
+    private void EndActiveRun(CancellationTokenSource activeRun)
+    {
+        if (ReferenceEquals(_activeRun, activeRun)) _activeRun = null;
+        activeRun.Dispose();
+        IsRunActive = false;
+        SetBusy(false);
+    }
 
     private void CancelActiveRun() => _activeRun?.Cancel();
 
@@ -455,6 +509,7 @@ public sealed class ConversationPageViewModel : ObservableObject
     {
         if (IsRunActive) return;
         Transcript.Clear();
+        _completedHistory.Clear();
         Evidence.Clear();
         SelectedEvidence = null;
         GoldenResults.Clear();
@@ -520,7 +575,8 @@ public sealed class ConversationPageViewModel : ObservableObject
         _sendCommand.RaiseCanExecuteChanged();
         _cancelCommand.RaiseCanExecuteChanged();
         _clearCommand.RaiseCanExecuteChanged();
-        _saveGoldenCommand.RaiseCanExecuteChanged();
+        _saveGoldenAsNewCommand.RaiseCanExecuteChanged();
+        _updateSelectedGoldenCommand.RaiseCanExecuteChanged();
         _deleteGoldenCommand.RaiseCanExecuteChanged();
         _runSelectedGoldenCommand.RaiseCanExecuteChanged();
         _runAllGoldenCommand.RaiseCanExecuteChanged();

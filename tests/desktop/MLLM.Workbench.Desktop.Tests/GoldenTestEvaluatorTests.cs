@@ -33,9 +33,29 @@ public sealed class GoldenTestEvaluatorTests
         Assert.Equal("LATENCY_LIMIT_EXCEEDED", results[4].FailureCode);
         Assert.Equal("NO_EVIDENCE", results[5].FailureCode);
         Assert.Equal("RUN_FAILED", results[6].FailureCode);
+        Assert.Equal(TimeSpan.FromMilliseconds(10), results[6].Metrics.TotalLatency);
         Assert.Equal("RUN_CANCELLED", results[7].FailureCode);
         Assert.Equal("answer required [K1]", results[0].ResponseText);
         Assert.Equal(["K1"], results[0].EvidenceIds);
+    }
+
+    [Fact]
+    public async Task Cancellation_preserves_completed_rows_and_cancelled_partial_result_then_stops()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var service = new CancellingConversationService(cancellation);
+        var evaluator = new GoldenTestEvaluator(service);
+
+        var results = await evaluator.RunAsync(
+            [Case("before", [], []), Case("cancel-now", [], []), Case("after", [], [])],
+            cancellation.Token);
+
+        Assert.Equal(["before", "cancel-now"], results.Select(item => item.CaseId));
+        Assert.True(results[0].Passed);
+        Assert.Equal("RUN_CANCELLED", results[1].FailureCode);
+        Assert.Equal("partial", results[1].ResponseText);
+        Assert.Equal(TimeSpan.FromMilliseconds(25), results[1].Metrics.TotalLatency);
+        Assert.Equal(2, service.CallCount);
     }
 
     private static GoldenTestCase Case(
@@ -124,5 +144,38 @@ public sealed class GoldenTestEvaluatorTests
                     "K1", "doc", "chunk", @"C:\doc.md", "Doc", 0, "excerpt", 1)],
                 errorCode,
                 errorCode);
+    }
+
+    private sealed class CancellingConversationService(CancellationTokenSource cancellation) : IConversationTestService
+    {
+        public int CallCount { get; private set; }
+        public Task<ConversationRuntimeSnapshot> RefreshRuntimeAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ConversationRunResult> RunAsync(
+            ConversationRequest request,
+            IProgress<ConversationDelta>? progress,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            if (request.UserPrompt == "cancel-now")
+            {
+                progress?.Report(new ConversationDelta("partial"));
+                cancellation.Cancel();
+                return Task.FromResult(new ConversationRunResult(
+                    ConversationRunState.Cancelled,
+                    "partial",
+                    new ConversationMetrics(TimeSpan.FromMilliseconds(5), TimeSpan.FromMilliseconds(25), null, null),
+                    [],
+                    "RUN_CANCELLED",
+                    "Cancelled"));
+            }
+
+            return Task.FromResult(new ConversationRunResult(
+                ConversationRunState.Completed,
+                "answer",
+                new ConversationMetrics(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(10), 1, 100),
+                []));
+        }
     }
 }

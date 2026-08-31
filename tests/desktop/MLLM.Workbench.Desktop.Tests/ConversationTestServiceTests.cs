@@ -33,6 +33,24 @@ public sealed class ConversationTestServiceTests
         Assert.DoesNotContain(backend.Methods, value => value.Contains("activate", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Duplicate_local_model_service_descriptors_fail_closed_before_http()
+    {
+        await using var backend = new FakeBackend(
+            new ModelSnapshot([], "active-model", "OFFLINE_CACHE"),
+            new ServicesSnapshot([Service("local-model-api"), Service("local-model-api")], "OFFLINE_CACHE"));
+        var client = new FakeConversationClient();
+        var service = new ConversationTestService(backend, client, new FakeKnowledgeService());
+
+        var runtime = await service.RefreshRuntimeAsync(CancellationToken.None);
+        var error = await Assert.ThrowsAsync<ConversationRunException>(
+            () => service.RunAsync(Request(), null, CancellationToken.None));
+
+        Assert.False(runtime.IsReady);
+        Assert.Equal("SERVICE_DESCRIPTOR_AMBIGUOUS", error.Code);
+        Assert.Equal(0, client.CallCount);
+    }
+
     [Theory]
     [InlineData(ManagedServiceState.Stopped, "SERVICE_NOT_RUNNING")]
     [InlineData(ManagedServiceState.Blocked, "SERVICE_NOT_RUNNING")]

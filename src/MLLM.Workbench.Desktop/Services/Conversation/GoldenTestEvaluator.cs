@@ -18,8 +18,20 @@ public sealed class GoldenTestEvaluator
         var results = new List<GoldenTestResult>(cases.Count);
         foreach (var testCase in cases)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await RunCaseAsync(testCase, cancellationToken).ConfigureAwait(false));
+            if (cancellationToken.IsCancellationRequested) break;
+
+            GoldenTestResult result;
+            try
+            {
+                result = await RunCaseAsync(testCase, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                result = Cancelled(testCase);
+            }
+
+            results.Add(result);
+            if (cancellationToken.IsCancellationRequested) break;
         }
         return results;
     }
@@ -105,6 +117,17 @@ public sealed class GoldenTestEvaluator
         ConversationRunResult result,
         string code,
         string? message) => ToResult(testCase, result, false, code, message);
+
+    private static GoldenTestResult Cancelled(GoldenTestCase testCase) =>
+        new(
+            testCase.Id,
+            testCase.Name,
+            false,
+            "RUN_CANCELLED",
+            "Golden Test case was cancelled.",
+            string.Empty,
+            [],
+            EmptyMetrics);
 
     private static GoldenTestResult ToResult(
         GoldenTestCase testCase,

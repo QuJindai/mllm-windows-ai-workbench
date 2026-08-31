@@ -1,0 +1,53 @@
+name: S24U Image Harness H4
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h4-visual-microscope]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h4-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone immutable Local Dream baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+      - name: Apply H2 and H3 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream
+      - name: TDD RED - H3 lacks H4 visual microscope
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream > h4-red.log 2>&1
+          code=$?
+          set -e
+          cat h4-red.log
+          test "$code" -ne 0
+          grep -q 'H4 versionCode' h4-red.log
+          echo H4_RED_EXPECTED_FAILURE_PASS
+      - name: Upload RED evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h4-red-evidence
+          path: h4-red.log
+          retention-days: 7

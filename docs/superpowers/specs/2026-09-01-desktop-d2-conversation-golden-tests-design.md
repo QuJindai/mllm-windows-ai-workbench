@@ -1,7 +1,7 @@
 # M-LLM Windows AI Workbench — D2 Conversation & Golden Tests Design
 
 Date: 2026-09-01  
-Status: PROPOSED FOR USER REVIEW  
+Status: APPROVED  
 Branch: `feature/knowledge-phase-c`  
 Baseline: `befce72348ac0003d01a22cf3c64be2d015918dd`  
 Parent design: `docs/superpowers/specs/2026-08-31-desktop-d1-model-services-gui-design.md`

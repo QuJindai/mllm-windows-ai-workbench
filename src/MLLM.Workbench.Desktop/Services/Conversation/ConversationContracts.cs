@@ -65,3 +65,19 @@ public sealed class ConversationEndpointException : ConversationException
     {
     }
 }
+
+public sealed class ConversationProtocolException : ConversationException
+{
+    public ConversationProtocolException(string code, string message, Exception? innerException = null)
+        : base(code, message, innerException)
+    {
+    }
+}
+
+public sealed class ConversationClientException : ConversationException
+{
+    public ConversationClientException(string code, string message, Exception? innerException = null)
+        : base(code, message, innerException)
+    {
+    }
+}

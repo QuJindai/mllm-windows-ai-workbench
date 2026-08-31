@@ -30,9 +30,9 @@ jobs:
       - name: Desktop runtime network mode
         shell: powershell
         run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter WorkbenchRuntimeOptionsTests
-      - name: D1 model and services shell
+      - name: D1 model and services desktop
         shell: powershell
-        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter "FullyQualifiedName~ShellContractTests|FullyQualifiedName~ModelManagementShellTests"
+        run: dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release --filter "FullyQualifiedName~ShellContractTests|FullyQualifiedName~ModelManagementShellTests|FullyQualifiedName~ModelManagementViewModelTests|FullyQualifiedName~LocalServicesViewModelTests|FullyQualifiedName~D1PageRuntimeLoadTests"
       - name: Knowledge core tests
         shell: powershell
         run: dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release

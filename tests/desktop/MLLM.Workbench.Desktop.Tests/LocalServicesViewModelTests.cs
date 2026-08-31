@@ -4,6 +4,7 @@ using MLLM.Workbench.Contracts.Services;
 using MLLM.Workbench.Contracts.Snapshots;
 using MLLM.Workbench.Desktop.Pages.Services;
 using MLLM.Workbench.Desktop.Services;
+using MLLM.Workbench.Desktop.Shell;
 using MLLM.Workbench.Infrastructure.Backend;
 
 namespace MLLM.Workbench.Desktop.Tests;
@@ -88,6 +89,25 @@ public sealed class LocalServicesViewModelTests
         Assert.Equal("http://127.0.0.1:8080", clipboard.LastText);
     }
 
+    [Fact]
+    public async Task Command_failure_is_captured_as_page_error_and_does_not_escape_async_command()
+    {
+        await using var backend = new FakeBackend(new ServicesSnapshot([RunningApi(), StoppedWeb()], "AUTO_CN_FIRST"))
+        {
+            ServiceActionFailure = new BackendRpcException("SERVICE_RUNTIME_MISSING", "llama runtime missing")
+        };
+        var vm = new LocalServicesPageViewModel(backend, new WorkbenchMutationGate(), new FakeClipboard());
+        await vm.RefreshAsync(CancellationToken.None);
+        vm.SelectedService = vm.Services.Single(x => x.ServiceId == "web-workbench");
+
+        var command = Assert.IsType<AsyncRelayCommand>(vm.StartCommand);
+        var escaped = await Record.ExceptionAsync(command.ExecuteAsync);
+
+        Assert.Null(escaped);
+        Assert.Contains("llama runtime missing", vm.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.False(vm.IsBusy);
+    }
+
     private static ServiceDescriptor RunningApi() =>
         new("local-model-api", "Local Model API", ManagedServiceState.Running, 42, 8080, "http://127.0.0.1:8080", DateTimeOffset.UtcNow, 10, "qwen", @"C:\Models\qwen.gguf", "Healthy", null, null, false, true, true, null);
 
@@ -111,6 +131,7 @@ public sealed class LocalServicesViewModelTests
         public FakeBackend(ServicesSnapshot services) => Services = services;
         public ServicesSnapshot Services { get; set; }
         public ServiceLogTail Logs { get; set; } = new("local-model-api", null, null, [], []);
+        public Exception? ServiceActionFailure { get; set; }
         public int ServiceSnapshotCalls { get; private set; }
         public List<ServiceActionRequest> Starts { get; } = [];
         public List<ServiceActionRequest> Stops { get; } = [];
@@ -122,6 +143,9 @@ public sealed class LocalServicesViewModelTests
 
         public Task<TResponse> InvokeAsync<TResponse>(string method, object? payload, CancellationToken cancellationToken)
         {
+            if (ServiceActionFailure is not null && method is "service.start" or "service.stop" or "service.restart")
+                return Task.FromException<TResponse>(ServiceActionFailure);
+
             object result = method switch
             {
                 "services.snapshot" => Snapshot(),

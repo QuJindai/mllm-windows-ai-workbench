@@ -36,6 +36,8 @@ public sealed class DashboardPageViewModel : ObservableObject
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         OpenDoctorCommand = new RelayCommand(() => NavigationRequested?.Invoke("doctor"));
         OpenInstallationCommand = new RelayCommand(() => NavigationRequested?.Invoke("installation"));
+        OpenModelsCommand = new RelayCommand(() => NavigationRequested?.Invoke("models"));
+        OpenServicesCommand = new RelayCommand(() => NavigationRequested?.Invoke("services"));
     }
 
     public event Action<string>? NavigationRequested;
@@ -46,6 +48,8 @@ public sealed class DashboardPageViewModel : ObservableObject
     public ICommand RefreshCommand { get; }
     public ICommand OpenDoctorCommand { get; }
     public ICommand OpenInstallationCommand { get; }
+    public ICommand OpenModelsCommand { get; }
+    public ICommand OpenServicesCommand { get; }
 
     public string NetworkMode { get => _networkMode; private set => SetProperty(ref _networkMode, value); }
     public string OperatingSystem { get => _operatingSystem; private set => SetProperty(ref _operatingSystem, value); }

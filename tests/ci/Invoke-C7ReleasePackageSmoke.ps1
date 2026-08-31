@@ -136,15 +136,15 @@ try{
     $installedExe=Join-Path $installedRoot 'desktop\MLLM.Workbench.Desktop.exe'
     if(-not(Test-Path -LiteralPath $installedExe -PathType Leaf)){throw "Installed desktop executable missing: $installedExe"}
 
-    # Release smoke must remain network-isolated even though the normal product default
-    # now permits component acquisition through AUTO_CN_FIRST.
+    # Release smoke remains network-isolated even though normal product startup may use AUTO_CN_FIRST.
     $env:MLLM_NETWORK_MODE='OFFLINE_CACHE'
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke') -Name '--smoke' -TimeoutMs 60000
     Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-knowledge') -Name '--smoke-knowledge' -TimeoutMs 20000 -CaptureDiagnostic
+    Invoke-InstalledDesktopSmoke -Exe $installedExe -Arguments @('--smoke-d1-navigation') -Name '--smoke-d1-navigation' -TimeoutMs 30000 -CaptureDiagnostic
 
     $installerBytes=(Get-Item -LiteralPath $installerZip).Length
     $portableBytes=(Get-Item -LiteralPath $portableZip).Length
-    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS smoke_network_mode=OFFLINE_CACHE"
+    Write-Host "C7_RELEASE_INSTALL_SMOKE=PASS version=$versionId installer_bytes=$installerBytes installer_sha256=$installerSha portable_bytes=$portableBytes portable_sha256=$portableSha runtime_complete=PASS web_runtime_complete=PASS activated=PASS installed_desktop_smoke=PASS knowledge_navigation_smoke=PASS d1_navigation_smoke=PASS smoke_network_mode=OFFLINE_CACHE"
 }finally{
     $env:ProgramFiles=$oldProgramFiles
     $env:ProgramData=$oldProgramData

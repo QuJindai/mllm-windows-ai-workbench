@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -27,6 +28,7 @@ public partial class App : Application
         base.OnStartup(e);
         var smoke = e.Args.Any(x => string.Equals(x, "--smoke", StringComparison.OrdinalIgnoreCase));
         var smokeKnowledge = e.Args.Any(x => string.Equals(x, "--smoke-knowledge", StringComparison.OrdinalIgnoreCase));
+        var smokeD1Navigation = e.Args.Any(x => string.Equals(x, "--smoke-d1-navigation", StringComparison.OrdinalIgnoreCase));
         try
         {
             var runtime = WorkbenchRuntimeOptions.Resolve();
@@ -55,6 +57,14 @@ public partial class App : Application
                 return;
             }
 
+            if (smokeD1Navigation)
+            {
+                await VerifyD1NavigationAsync(viewModel, _host.Services.GetRequiredService<MainWindow>()).ConfigureAwait(true);
+                WriteSmokeDiagnostic("D1_NAVIGATION_SMOKE=PASS");
+                Shutdown(0);
+                return;
+            }
+
             await viewModel.Dashboard.RefreshAsync(CancellationToken.None).ConfigureAwait(true);
 
             var window = _host.Services.GetRequiredService<MainWindow>();
@@ -63,9 +73,13 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            if (smoke || smokeKnowledge)
+            if (smoke || smokeKnowledge || smokeD1Navigation)
             {
-                var prefix = smokeKnowledge ? "KNOWLEDGE_NAVIGATION_SMOKE=FAIL" : "DESKTOP_SMOKE=FAIL";
+                var prefix = smokeD1Navigation
+                    ? "D1_NAVIGATION_SMOKE=FAIL"
+                    : smokeKnowledge
+                        ? "KNOWLEDGE_NAVIGATION_SMOKE=FAIL"
+                        : "DESKTOP_SMOKE=FAIL";
                 WriteSmokeDiagnostic(prefix + Environment.NewLine + ex);
                 try { Console.Error.WriteLine(prefix + " " + ex); } catch { }
                 Shutdown(2);
@@ -155,6 +169,88 @@ public partial class App : Application
         {
             DispatcherUnhandledException -= handler;
         }
+    }
+
+    private async Task VerifyD1NavigationAsync(MainWindowViewModel viewModel, MainWindow window)
+    {
+        Exception? dispatcherFailure = null;
+        DispatcherUnhandledExceptionEventHandler handler = (_, args) =>
+        {
+            dispatcherFailure = args.Exception;
+            args.Handled = true;
+        };
+
+        DispatcherUnhandledException += handler;
+        try
+        {
+            await VerifyBackendPingAsync(_host!.Services.GetRequiredService<IWorkbenchBackendClient>()).ConfigureAwait(true);
+            MainWindow = window;
+            window.Show();
+
+            await VerifyNavigationStepAsync(
+                window,
+                "models",
+                viewModel.NavigateModelsCommand,
+                () => ReferenceEquals(viewModel.CurrentPage, viewModel.Models),
+                () => viewModel.Models.IsBusy,
+                () => viewModel.Models.BackendError).ConfigureAwait(true);
+            if (dispatcherFailure is not null)
+                throw new InvalidOperationException("Model Management navigation raised an unhandled dispatcher exception.", dispatcherFailure);
+
+            await VerifyNavigationStepAsync(
+                window,
+                "services",
+                viewModel.NavigateServicesCommand,
+                () => ReferenceEquals(viewModel.CurrentPage, viewModel.Services),
+                () => viewModel.Services.IsBusy,
+                () => viewModel.Services.LastError).ConfigureAwait(true);
+            if (dispatcherFailure is not null)
+                throw new InvalidOperationException("Local Services navigation raised an unhandled dispatcher exception.", dispatcherFailure);
+
+            await VerifyNavigationStepAsync(
+                window,
+                "knowledge",
+                viewModel.NavigateKnowledgeCommand,
+                () => ReferenceEquals(viewModel.CurrentPage, viewModel.Knowledge),
+                () => viewModel.Knowledge.IsBusy,
+                () => viewModel.Knowledge.LastError).ConfigureAwait(true);
+            if (dispatcherFailure is not null)
+                throw new InvalidOperationException("Knowledge navigation raised an unhandled dispatcher exception during D1 smoke.", dispatcherFailure);
+
+            window.Close();
+        }
+        finally
+        {
+            DispatcherUnhandledException -= handler;
+        }
+    }
+
+    private async Task VerifyNavigationStepAsync(
+        MainWindow window,
+        string route,
+        ICommand command,
+        Func<bool> isActive,
+        Func<bool> isBusy,
+        Func<string?> getError)
+    {
+        command.Execute(null);
+        await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background);
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (isBusy() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(40).ConfigureAwait(true);
+            await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background);
+        }
+
+        await Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
+        if (!isActive())
+            throw new InvalidOperationException($"D1 navigation did not keep route '{route}' active.");
+        if (isBusy())
+            throw new TimeoutException($"D1 route '{route}' refresh did not complete within 10 seconds.");
+        var error = getError();
+        if (!string.IsNullOrWhiteSpace(error))
+            throw new InvalidOperationException($"D1 route '{route}' refresh failed: {error}");
     }
 
     private static IHost BuildHost(WorkbenchRuntimeOptions runtime) =>

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows.Input;
 using MLLM.Workbench.Contracts.Models;
 using MLLM.Workbench.Contracts.Services;
 using MLLM.Workbench.Desktop.Services;
@@ -32,11 +33,13 @@ public sealed class ModelManagementPageViewModel : ObservableObject
     {
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
         _mutationGate = mutationGate ?? throw new ArgumentNullException(nameof(mutationGate));
+        RefreshCommand = new AsyncRelayCommand(RefreshAsync);
     }
 
     public string Title => "模型管理";
     public string Subtitle => "本地 GGUF 模型发现、校验、导入和激活";
     public ObservableCollection<ModelDescriptor> Models { get; } = [];
+    public ICommand RefreshCommand { get; }
 
     public ModelDescriptor? SelectedModel
     {

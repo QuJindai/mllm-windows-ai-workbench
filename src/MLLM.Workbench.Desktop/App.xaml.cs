@@ -8,6 +8,8 @@ using MLLM.Workbench.Desktop.Pages.Dashboard;
 using MLLM.Workbench.Desktop.Pages.Doctor;
 using MLLM.Workbench.Desktop.Pages.Installation;
 using MLLM.Workbench.Desktop.Pages.Knowledge;
+using MLLM.Workbench.Desktop.Pages.Models;
+using MLLM.Workbench.Desktop.Pages.Services;
 using MLLM.Workbench.Desktop.Services;
 using MLLM.Workbench.Desktop.Services.Knowledge;
 using MLLM.Workbench.Desktop.Shell;
@@ -164,12 +166,15 @@ public partial class App : Application
                 services.AddSingleton<IWorkbenchBackendClient>(sp => new NamedPipeBackendClient(sp.GetRequiredService<BackendProcessHost>().Options));
                 services.AddSingleton<IPrivilegedInstallerInvoker>(_ => new PrivilegedInstallerInvoker(runtime.ProjectRoot));
                 services.AddSingleton<WorkbenchCoordinator>();
+                services.AddSingleton<WorkbenchMutationGate>();
                 services.AddSingleton<IKnowledgeWorkbenchService>(_ =>
                     KnowledgeServiceFactory.Create(runtime.DataRoot, Environment.GetEnvironmentVariable));
                 services.AddSingleton<IEvidenceLauncher, ShellEvidenceLauncher>();
                 services.AddSingleton<DashboardPageViewModel>();
                 services.AddSingleton<DoctorPageViewModel>();
                 services.AddSingleton<InstallationPageViewModel>();
+                services.AddSingleton<ModelManagementPageViewModel>();
+                services.AddSingleton<LocalServicesPageViewModel>();
                 services.AddSingleton<KnowledgePageViewModel>();
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();

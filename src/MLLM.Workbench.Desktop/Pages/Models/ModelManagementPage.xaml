@@ -1,0 +1,23 @@
+<UserControl x:Class="MLLM.Workbench.Desktop.Pages.Models.ModelManagementPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="ModelManagementPageRoot"
+             AutomationProperties.AutomationId="ModelManagementPageRoot">
+  <StackPanel>
+    <Grid Margin="0,0,0,20">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+        <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+      </StackPanel>
+      <Button Grid.Column="1" x:Name="RefreshModelsButton" AutomationProperties.AutomationId="RefreshModelsButton"
+              Content="刷新模型" Style="{StaticResource ActionButtonStyle}" Command="{Binding RefreshCommand}"/>
+    </Grid>
+    <Border Style="{StaticResource CardStyle}">
+      <StackPanel>
+        <TextBlock Text="模型管理正在接入现有 Phase B 模型后端。" Foreground="White"/>
+        <TextBlock Text="{Binding ActiveModelDisplay, StringFormat=当前模型：{0}}" Margin="0,8,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

@@ -6,6 +6,8 @@
         xmlns:dashboard="clr-namespace:MLLM.Workbench.Desktop.Pages.Dashboard"
         xmlns:doctor="clr-namespace:MLLM.Workbench.Desktop.Pages.Doctor"
         xmlns:installation="clr-namespace:MLLM.Workbench.Desktop.Pages.Installation"
+        xmlns:models="clr-namespace:MLLM.Workbench.Desktop.Pages.Models"
+        xmlns:services="clr-namespace:MLLM.Workbench.Desktop.Pages.Services"
         xmlns:knowledge="clr-namespace:MLLM.Workbench.Desktop.Pages.Knowledge"
         mc:Ignorable="d"
         Title="M-LLM Windows AI Workbench"
@@ -16,6 +18,8 @@
     <DataTemplate DataType="{x:Type dashboard:DashboardPageViewModel}"><dashboard:DashboardPage /></DataTemplate>
     <DataTemplate DataType="{x:Type doctor:DoctorPageViewModel}"><doctor:DoctorPage /></DataTemplate>
     <DataTemplate DataType="{x:Type installation:InstallationPageViewModel}"><installation:InstallationPage /></DataTemplate>
+    <DataTemplate DataType="{x:Type models:ModelManagementPageViewModel}"><models:ModelManagementPage /></DataTemplate>
+    <DataTemplate DataType="{x:Type services:LocalServicesPageViewModel}"><services:LocalServicesPage /></DataTemplate>
     <DataTemplate DataType="{x:Type knowledge:KnowledgePageViewModel}"><knowledge:KnowledgePage /></DataTemplate>
   </Window.Resources>
   <Grid>
@@ -36,6 +40,8 @@
           <Button x:Name="DashboardNavigation" AutomationProperties.AutomationId="DashboardNavigation" Style="{StaticResource NavigationButtonStyle}" Content="工作台" Command="{Binding NavigateDashboardCommand}" />
           <Button x:Name="DoctorNavigation" AutomationProperties.AutomationId="DoctorNavigation" Style="{StaticResource NavigationButtonStyle}" Content="系统体检 (Doctor)" Command="{Binding NavigateDoctorCommand}" />
           <Button x:Name="InstallationNavigation" AutomationProperties.AutomationId="InstallationNavigation" Style="{StaticResource NavigationButtonStyle}" Content="安装中心" Command="{Binding NavigateInstallationCommand}" />
+          <Button x:Name="ModelNavigation" AutomationProperties.AutomationId="ModelNavigation" Style="{StaticResource NavigationButtonStyle}" Content="模型管理" Command="{Binding NavigateModelsCommand}" />
+          <Button x:Name="ServicesNavigation" AutomationProperties.AutomationId="ServicesNavigation" Style="{StaticResource NavigationButtonStyle}" Content="本地服务" Command="{Binding NavigateServicesCommand}" />
           <Button x:Name="KnowledgeNavigation" AutomationProperties.AutomationId="KnowledgeNavigation" Style="{StaticResource NavigationButtonStyle}" Content="知识工作台" Command="{Binding NavigateKnowledgeCommand}" />
         </StackPanel>
         <Border Grid.Row="2" Style="{StaticResource SafeGateCardStyle}">

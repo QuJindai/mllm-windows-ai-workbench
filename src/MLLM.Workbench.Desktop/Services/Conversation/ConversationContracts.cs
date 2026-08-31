@@ -81,3 +81,11 @@ public sealed class ConversationClientException : ConversationException
     {
     }
 }
+
+public sealed class ConversationRunException : ConversationException
+{
+    public ConversationRunException(string code, string message, Exception? innerException = null)
+        : base(code, message, innerException)
+    {
+    }
+}

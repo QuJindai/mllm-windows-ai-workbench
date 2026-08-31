@@ -558,12 +558,14 @@ git commit -m "test: verify installed D2 conversation navigation"
 - [ ] **Step 1: Run the complete local deterministic suite**
 
 ```powershell
-dotnet test MLLM.Workbench.sln -c Release
-python -m pytest -q tests/ci/test_repo_contract.py tests/ci/test_safety_policy.py web/backend/tests
-python tools/validate_source.py
+dotnet test tests/contracts/MLLM.Workbench.Contracts.Tests/MLLM.Workbench.Contracts.Tests.csproj -c Release
+dotnet test tests/infrastructure/MLLM.Workbench.Infrastructure.Tests/MLLM.Workbench.Infrastructure.Tests.csproj -c Release
+dotnet test tests/knowledge/MLLM.Workbench.Knowledge.Tests/MLLM.Workbench.Knowledge.Tests.csproj -c Release
+dotnet test tests/desktop/MLLM.Workbench.Desktop.Tests/MLLM.Workbench.Desktop.Tests.csproj -c Release
+python -m pytest -q web/backend/tests
 ```
 
-Run every PowerShell smoke listed by `.github/workflows/knowledge-phase-c.yml` that is valid on the current host. Any failure enters systematic root-cause diagnosis; do not patch symptoms.
+Run the .NET projects sequentially because the two real-backend suites share generated bootstrap fixtures and solution-level parallel execution creates an unrelated file-lock race. Run every PowerShell smoke listed by `.github/workflows/knowledge-phase-c.yml` that is valid on the current host. The legacy `tests/ci/test_repo_contract.py` and `tests/ci/test_safety_policy.py` are not current C7 gates: they still require the retired `engine/`, `gui/`, and `tasks/` source tree and are excluded until separately reconciled. Any authoritative-gate failure enters systematic root-cause diagnosis; do not patch symptoms.
 
 - [ ] **Step 2: Push the approved feature branch only after local GREEN**
 

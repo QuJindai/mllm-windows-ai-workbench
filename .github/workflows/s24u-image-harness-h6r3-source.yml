@@ -11,7 +11,7 @@ permissions:
 jobs:
   h6r3-source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
     steps:
@@ -49,7 +49,7 @@ jobs:
           python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
           echo H2_THROUGH_H6R2_STAGED_BASELINE_PASS
 
-      - name: Verify Task 2 RED before H6R3 patch
+      - name: Task 2 RED then GREEN
         shell: bash
         run: |
           set -euo pipefail
@@ -59,32 +59,20 @@ jobs:
           set -e
           test "$red" -ne 0
           grep -Fq "H6R3 versionCode: missing 'versionCode = 7409'" h6r3-cfg-red.log
-          echo H6R3_CFG_RED_PASS
-
-      - name: Apply H6R3 CFG truth patch
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 s24u-image-harness/patch_h6_v6_semantic_fidelity.py local-dream | tee h6r3-cfg-patch.log
-          python3 -m py_compile s24u-image-harness/patch_h6_v6_semantic_fidelity.py
-
-      - name: Task 2 GREEN and monotonic H6 regression
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream | tee h6r3-cfg-green.log
           python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
-          echo H6R3_TASK2_MONOTONIC_REGRESSION_PASS
+          echo H6R3_TASK2_PASS
 
-      - name: Verify Task 3 fusion RED and capture inference call sites
+      - name: Task 3 fusion RED and inference call-site baseline
         shell: bash
         run: |
           set -euo pipefail
           PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
-          grep -c 'runUnetStep(' "$PIPE" > unet-step-before.txt
-          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-before.txt
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-before-fusion.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-before-fusion.txt
           set +e
           python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream > h6r3-fusion-red.log 2>&1
           red=$?
@@ -93,33 +81,75 @@ jobs:
           grep -Fq "equal-mean production default: missing 'std::string fusion_mode = \"equal_mean\";'" h6r3-fusion-red.log
           echo H6R3_FUSION_RED_PASS
 
-      - name: Apply H6R3 controlled fusion lab
+      - name: Task 3 fusion GREEN
         shell: bash
         run: |
           set -euo pipefail
           python3 s24u-image-harness/patch_h6_v7_fusion_core_v2.py local-dream | tee h6r3-fusion-core.log
           python3 s24u-image-harness/patch_h6_v7_fusion_android.py local-dream | tee h6r3-fusion-android.log
-          python3 -m py_compile \
-            s24u-image-harness/patch_h6_v7_fusion_core_v2.py \
-            s24u-image-harness/patch_h6_v7_fusion_android.py
-
-      - name: Task 3 GREEN with zero new inference call sites
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream | tee h6r3-fusion-green.log
           PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
-          grep -c 'runUnetStep(' "$PIPE" > unet-step-after.txt
-          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-after.txt
-          diff -u unet-step-before.txt unet-step-after.txt
-          diff -u unet-tiled-before.txt unet-tiled-after.txt
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-after-fusion.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-after-fusion.txt
+          diff -u unet-step-before-fusion.txt unet-step-after-fusion.txt
+          diff -u unet-tiled-before-fusion.txt unet-tiled-after-fusion.txt
           python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
-          echo H6R3_TASK3_MONOTONIC_REGRESSION_PASS
+          echo H6R3_TASK3_PASS
 
-      - name: Prove remaining H6R3 work is still RED at Process Dynamics
+      - name: Task 4 Process Dynamics RED and model-call baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-before-dynamics.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-before-dynamics.txt
+          grep -c 'encodePromptChunks(' "$PIPE" > clip-before-dynamics.txt
+          grep -c 'vaeDecode(' "$PIPE" > vae-before-dynamics.txt
+          set +e
+          python3 s24u-image-harness/tests/test_h6r3_process_dynamics_contract.py local-dream > h6r3-dynamics-red.log 2>&1
+          red=$?
+          set -e
+          test "$red" -ne 0
+          grep -Fq "native latent_delta: missing 'latent_delta'" h6r3-dynamics-red.log
+          echo H6R3_DYNAMICS_RED_PASS
+
+      - name: Apply H6R3 Process Dynamics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v8_dynamics_core.py local-dream | tee h6r3-dynamics-core.log
+          python3 s24u-image-harness/patch_h6_v8_dynamics_android.py local-dream | tee h6r3-dynamics-android.log
+          python3 s24u-image-harness/patch_h6_v8_dynamics_ui.py local-dream | tee h6r3-dynamics-ui.log
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v8_dynamics_core.py \
+            s24u-image-harness/patch_h6_v8_dynamics_android.py \
+            s24u-image-harness/patch_h6_v8_dynamics_ui.py
+
+      - name: Task 4 GREEN with zero extra model calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r3_process_dynamics_contract.py local-dream | tee h6r3-dynamics-green.log
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-after-dynamics.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-after-dynamics.txt
+          grep -c 'encodePromptChunks(' "$PIPE" > clip-after-dynamics.txt
+          grep -c 'vaeDecode(' "$PIPE" > vae-after-dynamics.txt
+          diff -u unet-step-before-dynamics.txt unet-step-after-dynamics.txt
+          diff -u unet-tiled-before-dynamics.txt unet-tiled-after-dynamics.txt
+          diff -u clip-before-dynamics.txt clip-after-dynamics.txt
+          diff -u vae-before-dynamics.txt vae-after-dynamics.txt
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
+          echo H6R3_TASK4_PASS
+
+      - name: Prove remaining H6R3 work is RED at Latent State Inspector
         shell: bash
         run: |
           set -euo pipefail
@@ -128,23 +158,16 @@ jobs:
           red=$?
           set -e
           test "$red" -ne 0
-          grep -Fq "latent delta telemetry: missing 'latent_delta'" h6r3-remaining-red.log
-          echo H6R3_REMAINING_RED_AT_DYNAMICS_PASS
+          grep -Fq "channel statistics telemetry: missing 'channel_stats'" h6r3-remaining-red.log
+          echo H6R3_REMAINING_RED_AT_LATENT_INSPECTOR_PASS
 
-      - name: Upload H6R3 Task 2-3 source evidence
+      - name: Upload H6R3 Task 2-4 source evidence
         uses: actions/upload-artifact@v4
         with:
-          name: h6r3-task2-task3-source-evidence
+          name: h6r3-task2-task4-source-evidence
           path: |
-            h6r3-cfg-red.log
-            h6r3-cfg-patch.log
-            h6r3-cfg-green.log
-            h6r3-fusion-red.log
-            h6r3-fusion-core.log
-            h6r3-fusion-android.log
-            h6r3-fusion-green.log
-            h6r3-remaining-red.log
-            unet-*-before.txt
-            unet-*-after.txt
+            h6r3-*.log
+            *-before-*.txt
+            *-after-*.txt
           if-no-files-found: error
           retention-days: 7

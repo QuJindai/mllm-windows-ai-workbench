@@ -1,0 +1,107 @@
+name: S24U Image Harness H6R3 Source Gate
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r3-semantic-fidelity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h6r3-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone pinned Local Dream source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Apply H2 through H6R2 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h5_process_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
+          echo H6R2_BASELINE_PASS
+
+      - name: Verify Task 2 RED before H6R3 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream > h6r3-cfg-red.log 2>&1
+          red=$?
+          set -e
+          test "$red" -ne 0
+          grep -Fq "H6R3 versionCode: missing 'versionCode = 7409'" h6r3-cfg-red.log
+          echo H6R3_CFG_RED_PASS
+
+      - name: Apply H6R3 CFG truth patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v6_semantic_fidelity.py local-dream | tee h6r3-cfg-patch.log
+          python3 -m py_compile s24u-image-harness/patch_h6_v6_semantic_fidelity.py
+
+      - name: Task 2 GREEN and H2-H6R2 regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream | tee h6r3-cfg-green.log
+          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h5_process_microscope_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
+          echo H6R3_TASK2_REGRESSION_PASS
+
+      - name: Prove remaining H6R3 work is still RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h6r3_semantic_fidelity_contract.py local-dream > h6r3-remaining-red.log 2>&1
+          red=$?
+          set -e
+          test "$red" -ne 0
+          grep -Fq "latent delta telemetry: missing 'latent_delta'" h6r3-remaining-red.log
+          echo H6R3_REMAINING_RED_AT_DYNAMICS_PASS
+
+      - name: Upload Task 2 source evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: h6r3-task2-source-evidence
+          path: |
+            h6r3-cfg-red.log
+            h6r3-cfg-patch.log
+            h6r3-cfg-green.log
+            h6r3-remaining-red.log
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,85 @@
+name: S24U Image Harness H6R3 Replay Debug
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r3-semantic-fidelity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay-debug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Replay patches with isolated evidence
+        id: replay
+        shell: bash
+        run: |
+          set +e
+          : > h6r3-replay-debug.txt
+          failed=""
+          run_patch() {
+            label="$1"; shift
+            echo "=== START $label ===" >> h6r3-replay-debug.txt
+            "$@" >> h6r3-replay-debug.txt 2>&1
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "=== FAIL $label rc=$rc ===" >> h6r3-replay-debug.txt
+              failed="$label"
+              return "$rc"
+            fi
+            echo "=== PASS $label ===" >> h6r3-replay-debug.txt
+            return 0
+          }
+
+          run_patch H2 python3 s24u-image-harness/patch_h2.py local-dream || true
+          [ -n "$failed" ] || run_patch H3 python3 s24u-image-harness/patch_h3.py local-dream || true
+          [ -n "$failed" ] || run_patch H3_CAPTURE python3 s24u-image-harness/patch_h3_capture_fix.py local-dream || true
+          [ -n "$failed" ] || run_patch H4 python3 s24u-image-harness/patch_h4_v2.py local-dream || true
+          [ -n "$failed" ] || run_patch H5 python3 s24u-image-harness/patch_h5_v2.py local-dream || true
+          [ -n "$failed" ] || run_patch H6 python3 s24u-image-harness/patch_h6.py local-dream || true
+          [ -n "$failed" ] || run_patch H6_V2 python3 s24u-image-harness/patch_h6_v2.py local-dream || true
+          [ -n "$failed" ] || run_patch H6_V3 python3 s24u-image-harness/patch_h6_v3.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R1 python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R2 python3 s24u-image-harness/patch_h6_v5_observability.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_CFG python3 s24u-image-harness/patch_h6_v6_semantic_fidelity.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_FUSION_CORE python3 s24u-image-harness/patch_h6_v7_fusion_core_v2.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_FUSION_ANDROID python3 s24u-image-harness/patch_h6_v7_fusion_android.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_DYNAMICS_CORE python3 s24u-image-harness/patch_h6_v8_dynamics_core.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_DYNAMICS_ANDROID python3 s24u-image-harness/patch_h6_v8_dynamics_android.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_DYNAMICS_UI python3 s24u-image-harness/patch_h6_v8_dynamics_ui.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_LATENT_CORE python3 s24u-image-harness/patch_h6_v9_latent_core.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_LATENT_ANDROID python3 s24u-image-harness/patch_h6_v9_latent_android.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_LATENT_UI python3 s24u-image-harness/patch_h6_v9_latent_ui.py local-dream || true
+          [ -n "$failed" ] || run_patch H6R3_RUNTIME_GRAPH python3 s24u-image-harness/patch_h6_v10_runtime_graph.py local-dream || true
+
+          if [ -n "$failed" ]; then
+            echo "FAILED_PATCH=$failed" | tee -a h6r3-replay-debug.txt
+            tail -n 80 h6r3-replay-debug.txt
+            exit 1
+          fi
+          echo "ALL_PATCHES_REPLAY_PASS" | tee -a h6r3-replay-debug.txt
+
+      - name: Upload replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h6r3-replay-debug-evidence
+          path: h6r3-replay-debug.txt
+          if-no-files-found: error
+          retention-days: 7

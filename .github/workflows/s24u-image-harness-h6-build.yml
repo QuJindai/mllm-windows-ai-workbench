@@ -9,13 +9,38 @@ permissions:
   contents: read
 
 jobs:
-  h6-source-green:
+  build-h6:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 120
     env:
       UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+      NDK_VERSION: 28.2.13676358
+      QAIRT_URL: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.39.0.250926/v2.39.0.250926.zip
+      SIGN_PASS: s24u-test-public
+      SIGN_ALIAS: s24utest
+      EXPECTED_CERT_SHA256: B60748D6461EF1F5E2681462F08EEBCA287B56B78BFAFC801499CC2BA461E005
+
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android/native environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --channel=3 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools' "ndk;${NDK_VERSION}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build ccache
+          rustup target add aarch64-linux-android
+          test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
+          echo H6_ENV_PASS
 
       - name: Clone pinned Local Dream
         shell: bash
@@ -31,15 +56,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 s24u-image-harness/patch_h2.py local-dream
-          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream
-          python3 s24u-image-harness/patch_h3.py local-dream
-          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
-          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream
-          python3 s24u-image-harness/patch_h4_v2.py local-dream
-          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream
-          python3 s24u-image-harness/patch_h5_v2.py local-dream
-          python3 s24u-image-harness/tests/test_h5_process_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h2.py local-dream | tee h2-patch.log
+          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream | tee h2-green.log
+          python3 s24u-image-harness/patch_h3.py local-dream | tee h3-patch.log
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream | tee h3-capture-fix.log
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream | tee h3-green.log
+          python3 s24u-image-harness/patch_h4_v2.py local-dream | tee h4-patch.log
+          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream | tee h4-green.log
+          python3 s24u-image-harness/patch_h5_v2.py local-dream | tee h5-patch.log
+          python3 s24u-image-harness/tests/test_h5_process_microscope_contract.py local-dream | tee h5-green.log
 
       - name: H6 RED then GREEN source contract
         shell: bash
@@ -57,14 +82,239 @@ jobs:
           python3 -m py_compile s24u-image-harness/patch_h6.py s24u-image-harness/tests/test_h6_conditioning_influence_contract.py
           echo H6_SOURCE_GREEN_PASS
 
-      - name: Source failure evidence
-        if: failure()
+      - name: Download QAIRT Community SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/qairt
+          curl -L --fail --retry 4 --retry-all-errors "$QAIRT_URL" -o /tmp/qairt.zip
+          unzip -q /tmp/qairt.zip -d /tmp/qairt
+          HEADER="$(find /tmp/qairt -type f -path '*/include/QNN/QnnTypes.h' -print -quit)"
+          test -n "$HEADER"
+          QNN_ROOT="$(dirname "$(dirname "$(dirname "$HEADER")")")"
+          test -s "$QNN_ROOT/lib/aarch64-android/libQnnHtp.so"
+          echo "QNN_SDK_ROOT=$QNN_ROOT" >> "$GITHUB_ENV"
+
+      - name: Build H6 QNN native core
+        id: native
+        shell: bash
+        run: |
+          set -uo pipefail
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
+          set +e
+          bash s24u-image-harness/build_native_h2.sh 2>&1 | tee native-h6.log
+          status=${PIPESTATUS[0]}
+          set -e
+          grep -nE 'error:|fatal error:|undefined reference|FAILED:|ninja: build stopped|CMake Error' native-h6.log | tail -160 | tee native-h6-errors.log || true
+          echo "NATIVE_EXIT=$status" >> native-h6-errors.log
+          test "$status" -eq 0
+          CORE=local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
+          test -s "$CORE"
+          strings "$CORE" > /tmp/h6-native-strings.txt
+          grep -F -m1 'conditioning_influence' /tmp/h6-native-strings.txt
+          grep -F -m1 'influence_delta_l2' /tmp/h6-native-strings.txt
+          grep -F -m1 'Conditioning influence preview failed' /tmp/h6-native-strings.txt
+          grep -F -m1 'latent_map' /tmp/h6-native-strings.txt
+          grep -F -m1 'image_base64' /tmp/h6-native-strings.txt
+          grep -F -m1 'event: trace' /tmp/h6-native-strings.txt
+          echo H6_NATIVE_PASS
+
+      - name: Native failure evidence
+        if: failure() && steps.native.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: s24u-h6-source-failure
+          name: s24u-h6-native-failure
           path: |
+            native-h6.log
+            native-h6-errors.log
             h6-red.log
             h6-patch.log
             h6-green.log
+          retention-days: 7
+
+      - name: Stable TEST-ONLY keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl pkcs12 -export -inkey s24u-image-harness/signing/s24u-test-signing-key.pem -in s24u-image-harness/signing/s24u-test-signing-cert.pem -name "$SIGN_ALIAS" -out /tmp/s24u-test.p12 -passout "pass:$SIGN_PASS"
+          keytool -importkeystore -noprompt -srckeystore /tmp/s24u-test.p12 -srcstoretype PKCS12 -srcstorepass "$SIGN_PASS" -srcalias "$SIGN_ALIAS" -destkeystore /tmp/s24u-test.jks -deststoretype JKS -deststorepass "$SIGN_PASS" -destkeypass "$SIGN_PASS" -destalias "$SIGN_ALIAS"
+
+      - name: Gradle tests and H6 APK
+        id: gradle
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd local-dream
+          chmod +x gradlew
+          set +e
+          ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h6.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "GRADLE_EXIT=$status" | tee ../gradle-h6-status.txt
+          exit "$status"
+
+      - name: Gradle failure evidence
+        if: failure() && steps.gradle.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h6-gradle-failure
+          path: |
+            gradle-h6.log
+            gradle-h6-status.txt
+            h6-green.log
+          retention-days: 7
+
+      - name: Preserve H6 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' -print -quit)"
+          test -s "$APK"
+          cp "$APK" S24U_Image_Harness_H6_20260901.apk
+          sha256sum S24U_Image_Harness_H6_20260901.apk | tee H6_APK_SHA256SUMS.txt
+          stat -c 'APK_BYTES=%s' S24U_Image_Harness_H6_20260901.apk | tee H6_APK_SIZE.txt
+
+      - name: Upload pre-verification H6 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h6-preverify
+          path: |
+            S24U_Image_Harness_H6_20260901.apk
+            H6_APK_SHA256SUMS.txt
+            H6_APK_SIZE.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Deterministic final H6 APK verification
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=S24U_Image_Harness_H6_20260901.apk
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          mkdir -p /tmp/h6verify
+
+          echo '[VERIFY 1/9] package/version'
+          "$AAPT2" dump badging "$APK" > apk-badging-h6.txt
+          grep -F "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h6.txt
+          grep -F "versionCode='7406'" apk-badging-h6.txt
+          grep -F "versionName='2.8.1-s24u-h6'" apk-badging-h6.txt
+
+          echo '[VERIFY 2/9] packaged runtime/assets'
+          zipinfo -1 "$APK" > apk-files-h6.txt
+          grep -Fx 'lib/arm64-v8a/libstable_diffusion_core.so' apk-files-h6.txt
+          grep -Fx 'assets/qnnlibs/libQnnHtp.so' apk-files-h6.txt
+          grep -Fx 'assets/s24u_microscope/index.html' apk-files-h6.txt
+          grep -Fx 'assets/s24u_microscope/microscope.css' apk-files-h6.txt
+          grep -Fx 'assets/s24u_microscope/microscope.js' apk-files-h6.txt
+          if grep -Fq 'safety_checker.mnn' apk-files-h6.txt; then exit 61; fi
+
+          unzip -p "$APK" assets/s24u_microscope/index.html > /tmp/h6verify/index.html
+          unzip -p "$APK" assets/s24u_microscope/microscope.css > /tmp/h6verify/microscope.css
+          unzip -p "$APK" assets/s24u_microscope/microscope.js > /tmp/h6verify/microscope.js
+
+          echo '[VERIFY 3/9] five microscope panels + Local Dream style'
+          grep -F 'data-panel="overview"' /tmp/h6verify/index.html
+          grep -F 'data-panel="process"' /tmp/h6verify/index.html
+          grep -F 'data-panel="influence"' /tmp/h6verify/index.html
+          grep -F 'data-panel="mechanism"' /tmp/h6verify/index.html
+          grep -F 'data-panel="expert"' /tmp/h6verify/index.html
+          grep -F -- '--primary: #4285f4' /tmp/h6verify/microscope.css
+          grep -F -- '--page: #f7f7fa' /tmp/h6verify/microscope.css
+
+          echo '[VERIFY 4/9] truthful H6 influence UI'
+          grep -F 'id="influence-main-image"' /tmp/h6verify/index.html
+          grep -F 'id="influence-step-scrubber"' /tmp/h6verify/index.html
+          grep -F 'id="influence-chunks"' /tmp/h6verify/index.html
+          grep -F '不是 cross-attention' /tmp/h6verify/index.html
+          grep -F 'Cross-attention 未采集' /tmp/h6verify/index.html
+          grep -F 'influence_samples' /tmp/h6verify/microscope.js
+          grep -F 'influence_sample' /tmp/h6verify/microscope.js
+          grep -F 'renderInfluence' /tmp/h6verify/microscope.js
+          grep -F "activePanel==='influence'" /tmp/h6verify/microscope.js
+
+          echo '[VERIFY 5/9] H5 process/latent + smooth renderer retained'
+          grep -F 'id="process-main-image"' /tmp/h6verify/index.html
+          grep -F 'id="latent-main-image"' /tmp/h6verify/index.html
+          grep -F 'requestAnimationFrame' /tmp/h6verify/microscope.js
+          grep -F 'Object.assign({},pendingSnapshot||{},snapshot||{})' /tmp/h6verify/microscope.js
+          grep -F 'process_previews' /tmp/h6verify/microscope.js
+          grep -F 'latent_maps' /tmp/h6verify/microscope.js
+
+          echo '[VERIFY 6/9] native influence telemetry'
+          unzip -p "$APK" lib/arm64-v8a/libstable_diffusion_core.so > /tmp/h6verify/core.so
+          strings /tmp/h6verify/core.so > /tmp/h6verify/core.strings
+          grep -F -m1 'conditioning_influence' /tmp/h6verify/core.strings
+          grep -F -m1 'influence_delta_l2' /tmp/h6verify/core.strings
+          grep -F -m1 'Conditioning influence preview failed' /tmp/h6verify/core.strings
+          grep -F -m1 'latent_map' /tmp/h6verify/core.strings
+          grep -F -m1 'event: trace' /tmp/h6verify/core.strings
+
+          echo '[VERIFY 7/9] compiled H6 DEX marker'
+          found=0
+          grep -E '^classes[0-9]*\.dex$' apk-files-h6.txt > /tmp/h6verify/dex-list.txt
+          while IFS= read -r dex; do
+            unzip -p "$APK" "$dex" > /tmp/h6verify/current.dex
+            strings /tmp/h6verify/current.dex > /tmp/h6verify/current.strings
+            if grep -Fq 'S24U_H6_CONDITIONING_INFLUENCE' /tmp/h6verify/current.strings; then
+              echo "H6 runtime marker found in $dex"
+              found=1
+              break
+            fi
+          done < /tmp/h6verify/dex-list.txt
+          test "$found" -eq 1
+
+          echo '[VERIFY 8/9] signing certificate'
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-signing-h6.txt
+          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h6.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
+
+          echo '[VERIFY 9/9] integrity/offline microscope'
+          sha256sum -c H6_APK_SHA256SUMS.txt
+          grep -F "connect-src 'none'" /tmp/h6verify/index.html
+          if grep -Eiq 'https?://' /tmp/h6verify/microscope.js; then exit 62; fi
+          echo H6_APK_VERIFICATION_PASS | tee apk-verification-h6.txt
+
+      - name: Verification failure evidence
+        if: failure() && steps.verify.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-h6-verification-failure
+          path: |
+            S24U_Image_Harness_H6_20260901.apk
+            H6_APK_SHA256SUMS.txt
+            H6_APK_SIZE.txt
+            apk-badging-h6.txt
+            apk-files-h6.txt
+            apk-signing-h6.txt
+            native-h6.log
+            gradle-h6.log
           if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload H6 phone-test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h6
+          path: |
+            S24U_Image_Harness_H6_20260901.apk
+            H6_APK_SHA256SUMS.txt
+            H6_APK_SIZE.txt
+            h2-green.log
+            h3-green.log
+            h4-green.log
+            h5-green.log
+            h6-red.log
+            h6-patch.log
+            h6-green.log
+            native-h6.log
+            native-h6-errors.log
+            gradle-h6.log
+            gradle-h6-status.txt
+            apk-badging-h6.txt
+            apk-files-h6.txt
+            apk-signing-h6.txt
+            apk-verification-h6.txt
+          if-no-files-found: error
           retention-days: 7

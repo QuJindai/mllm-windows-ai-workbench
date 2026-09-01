@@ -85,6 +85,7 @@ jobs:
 
           python3 s24u-image-harness/patch_h6.py local-dream | tee h6-patch.log
           python3 s24u-image-harness/patch_h6_v2.py local-dream | tee h6-v2.log
+          python3 s24u-image-harness/patch_h6_v3.py local-dream | tee h6-v3.log
           python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream | tee h6-green.log
 
           h6_unet_step_calls=$(grep -Fo 'runUnetStep(' "$PIPE" | wc -l)
@@ -106,6 +107,7 @@ jobs:
           python3 -m py_compile \
             s24u-image-harness/patch_h6.py \
             s24u-image-harness/patch_h6_v2.py \
+            s24u-image-harness/patch_h6_v3.py \
             s24u-image-harness/tests/test_h6_conditioning_influence_contract.py
           echo H6_SOURCE_GREEN_PASS
 
@@ -157,6 +159,7 @@ jobs:
             h6-red.log
             h6-patch.log
             h6-v2.log
+            h6-v3.log
             h6-green.log
             h6-inference-counts.log
           retention-days: 7
@@ -253,14 +256,15 @@ jobs:
           grep -F -- '--primary: #4285f4' /tmp/h6verify/microscope.css
           grep -F -- '--page: #f7f7fa' /tmp/h6verify/microscope.css
 
-          echo '[VERIFY 4/9] truthful H6 influence UI'
+          echo '[VERIFY 4/9] truthful and drop-free H6 influence UI'
           grep -F 'id="influence-main-image"' /tmp/h6verify/index.html
           grep -F 'id="influence-step-scrubber"' /tmp/h6verify/index.html
           grep -F 'id="influence-chunks"' /tmp/h6verify/index.html
           grep -F '不是 cross-attention' /tmp/h6verify/index.html
           grep -F 'Cross-attention 未采集' /tmp/h6verify/index.html
           grep -F 'influence_samples' /tmp/h6verify/microscope.js
-          grep -F 'influence_sample' /tmp/h6verify/microscope.js
+          grep -F 'influence_samples_delta' /tmp/h6verify/microscope.js
+          grep -F 'influence_samples_delta.forEach' /tmp/h6verify/microscope.js
           grep -F 'renderInfluence' /tmp/h6verify/microscope.js
           grep -F "activePanel==='influence'" /tmp/h6verify/microscope.js
 
@@ -339,6 +343,7 @@ jobs:
             h6-red.log
             h6-patch.log
             h6-v2.log
+            h6-v3.log
             h6-green.log
             h6-inference-counts.log
             native-h6.log

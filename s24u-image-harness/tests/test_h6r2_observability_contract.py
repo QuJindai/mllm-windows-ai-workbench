@@ -13,6 +13,11 @@ def require_any(text: str, needles: tuple[str, ...], label: str) -> None:
         raise AssertionError(f"{label}: missing one of {needles!r}")
 
 
+def forbid(text: str, needle: str, label: str) -> None:
+    if needle in text:
+        raise AssertionError(f"{label}: forbidden {needle!r}")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: test_h6r2_observability_contract.py <local-dream-root>", file=sys.stderr)
@@ -31,24 +36,30 @@ def main() -> int:
     )
     require(screen, "S24U_H6R2_OBSERVABILITY_FALLBACK", "H6R2 DEX marker")
 
-    # Before H6R3 Process Dynamics lands, H6R2's low-RAM fallback remains
-    # mandatory and truthful. Task 4 will intentionally evolve this contract
-    # from duplicate latent fallback to adjacent-latent dynamics.
-    require(html, "PROCESS EVIDENCE", "process evidence heading")
-    require(html, "自动回退显示同一步真实 scheduler latent", "truthful lowram explanation")
-    require(js, "usingLatentFallback=previews.length===0 && latents.length>0", "lowram fallback selection")
-    require(js, "const processFrames=usingLatentFallback?latents:previews", "process fallback source")
-    require(js, "LATENT FALLBACK", "fallback metadata label")
-    require(js, "真实 scheduler latent · 非 VAE decode", "fallback semantic guard")
-    require(js, "previews.length?previews:latents", "process scrub fallback")
+    if "versionCode = 7408" in gradle:
+        # Historical H6R2 behavior: low-RAM used a truthful latent fallback.
+        require(html, "PROCESS EVIDENCE", "H6R2 process evidence heading")
+        require(html, "自动回退显示同一步真实 scheduler latent", "H6R2 lowram explanation")
+        require(js, "usingLatentFallback=previews.length===0 && latents.length>0", "H6R2 lowram fallback selection")
+        require(js, "const processFrames=usingLatentFallback?latents:previews", "H6R2 process fallback source")
+        require(js, "LATENT FALLBACK", "H6R2 fallback metadata label")
+        require(js, "真实 scheduler latent · 非 VAE decode", "H6R2 fallback semantic guard")
+    else:
+        # H6R3 deliberately removes the duplicate view: Process = Δlatent
+        # dynamics; the old 2x2 latent contact sheet remains only in Latent.
+        require(html, "PROCESS DYNAMICS", "H6R3 process dynamics heading")
+        require(html, "DECODED PREVIEW", "H6R3 decoded preview boundary")
+        require(js, "renderProcessDynamics", "H6R3 dynamics renderer")
+        forbid(js, "const processFrames=usingLatentFallback?latents:previews", "no duplicate H6R2 fallback")
+        forbid(js, "showFrame('process',previews.length?previews:latents", "no latent-as-decoded preview")
 
     # A single chunk is mathematically identical to the fused prediction.
     require(js, "const singleChunk=int(sample.chunk_count,1)===1", "single chunk detection")
     require(js, "ε̄ₜ = εₜ⁽¹⁾", "single chunk formula explanation")
     require(js, "不再显示没有信息量的全黑图", "black-map explanation")
 
-    # Cross-attention remains unavailable in the Production graph. H6R3 may
-    # improve wording, but must not claim token-level attention was captured.
+    # Cross-attention remains unavailable in the Production graph. Later H6R3
+    # wording may point explicitly to H7, but must never claim attention capture.
     require(html, "ATTRIBUTION · CAPABILITY", "attribution capability heading")
     require_any(
         html,

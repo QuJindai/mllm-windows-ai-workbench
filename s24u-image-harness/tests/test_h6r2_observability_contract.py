@@ -8,6 +8,11 @@ def require(text: str, needle: str, label: str) -> None:
         raise AssertionError(f"{label}: missing {needle!r}")
 
 
+def require_any(text: str, needles: tuple[str, ...], label: str) -> None:
+    if not any(needle in text for needle in needles):
+        raise AssertionError(f"{label}: missing one of {needles!r}")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: test_h6r2_observability_contract.py <local-dream-root>", file=sys.stderr)
@@ -18,12 +23,17 @@ def main() -> int:
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
-    require(gradle, "versionCode = 7408", "H6R2 versionCode")
-    require(gradle, 'versionName = "2.8.1-s24u-h6r2"', "H6R2 versionName")
+    require_any(gradle, ("versionCode = 7408", "versionCode = 7409"), "H6R2-compatible versionCode")
+    require_any(
+        gradle,
+        ('versionName = "2.8.1-s24u-h6r2"', 'versionName = "2.8.1-s24u-h6r3"'),
+        "H6R2-compatible versionName",
+    )
     require(screen, "S24U_H6R2_OBSERVABILITY_FALLBACK", "H6R2 DEX marker")
 
-    # Process view must remain truthful: prefer real VAE previews, otherwise
-    # use the already-captured scheduler latent maps. Never claim fallback is VAE.
+    # Before H6R3 Process Dynamics lands, H6R2's low-RAM fallback remains
+    # mandatory and truthful. Task 4 will intentionally evolve this contract
+    # from duplicate latent fallback to adjacent-latent dynamics.
     require(html, "PROCESS EVIDENCE", "process evidence heading")
     require(html, "自动回退显示同一步真实 scheduler latent", "truthful lowram explanation")
     require(js, "usingLatentFallback=previews.length===0 && latents.length>0", "lowram fallback selection")
@@ -33,16 +43,23 @@ def main() -> int:
     require(js, "previews.length?previews:latents", "process scrub fallback")
 
     # A single chunk is mathematically identical to the fused prediction.
-    # Avoid presenting the resulting all-zero map as an unexplained black box.
     require(js, "const singleChunk=int(sample.chunk_count,1)===1", "single chunk detection")
     require(js, "ε̄ₜ = εₜ⁽¹⁾", "single chunk formula explanation")
     require(js, "不再显示没有信息量的全黑图", "black-map explanation")
 
-    # Cross-attention remains unavailable and must be shown as a capability
-    # boundary rather than an apparent rendering failure.
+    # Cross-attention remains unavailable in the Production graph. H6R3 may
+    # improve wording, but must not claim token-level attention was captured.
     require(html, "ATTRIBUTION · CAPABILITY", "attribution capability heading")
-    require(html, "当前不可观测：Cross-attention 未导出", "cross attention capability state")
-    require(html, "这是当前 QNN 编译图的能力缺口，不是页面加载失败", "cross attention non-bug explanation")
+    require_any(
+        html,
+        ("当前不可观测：Cross-attention 未导出", "Production QNN 图未导出"),
+        "cross attention capability state",
+    )
+    require_any(
+        html,
+        ("这是当前 QNN 编译图的能力缺口，不是页面加载失败", "Debug UNet Graph"),
+        "cross attention non-bug explanation",
+    )
 
     print("H6R2_OBSERVABILITY_CONTRACT_PASS")
     return 0

@@ -15,6 +15,12 @@ def patch_pipeline(root: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = replace_once(
         text,
+        "#include <iostream>\n#include <memory>\n",
+        "#include <iostream>\n#include <limits>\n#include <memory>\n",
+        "numeric_limits include",
+    )
+    text = replace_once(
+        text,
         '''  int64_t dynamics_unet_ms = 0;
   int64_t dynamics_scheduler_ms = 0;
 };

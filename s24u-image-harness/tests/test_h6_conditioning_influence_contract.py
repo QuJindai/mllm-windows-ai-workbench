@@ -42,7 +42,7 @@ def main() -> int:
     require(pipeline, "influence_fused_cosine", "influence cosine")
     require(pipeline, "influence_delta_l2", "influence delta L2")
     require(pipeline, "renderConditioningInfluencePreview", "real spatial influence renderer")
-    require(pipeline, "std::abs(chunk_pred", "real chunk/fused difference")
+    require(pipeline, "xt::abs(chunk_pred - fused_pred)", "real chunk/fused difference")
     require(main_cpp, '"influence_chunk_index"', "native SSE influence serialization")
     require(main_cpp, '"influence_delta_l2"', "native SSE influence metric serialization")
 

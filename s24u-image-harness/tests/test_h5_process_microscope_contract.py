@@ -59,18 +59,23 @@ def main() -> int:
     require(css, "--page: #f7f7fa", "Local Dream light page")
     require(css, "content-visibility:auto", "offscreen render containment")
 
-    # Smoothness: coalesce rapid native trace updates and only render changed
-    # sections / active panel instead of rebuilding the whole document per SSE.
+    # Smoothness: coalesce rapid native trace updates, render only the active
+    # panel, and transfer only the newest heavy image instead of media history.
     require(js, "requestAnimationFrame", "RAF coalescing")
     require(js, "pendingSnapshot", "coalesced snapshot state")
     require(js, "Object.assign({},pendingSnapshot||{},snapshot||{})", "partial snapshot merge")
+    require(js, "addMedia(media)", "incremental media receiver")
     require(js, "activePanel", "panel virtualization")
     require(js, "renderProcess", "process image renderer")
-    require(js, "process_previews", "process preview bridge")
-    require(js, "latent_maps", "latent map bridge")
+    require(js, "process_previews", "process preview local history")
+    require(js, "latent_maps", "latent map local history")
     require(js, "lastEventCount", "timeline diff gate")
     require(screen, "mediaRevision", "media telemetry bridge split")
     require(screen, "microscope.events.takeLast(48)", "bounded Android event bridge")
+    require(screen, "microscope.processPreviews.lastOrNull()", "latest process frame bridge")
+    require(screen, "microscope.latentMaps.lastOrNull()", "latest latent frame bridge")
+    require(screen, 'put("process_preview", previewJson(it))', "incremental process JSON")
+    require(screen, 'put("latent_map", previewJson(it))', "incremental latent JSON")
 
     # Attribution remains evidence-based: no fake attention heatmap.
     require(html, "Cross-attention 未采集", "honest attention state")

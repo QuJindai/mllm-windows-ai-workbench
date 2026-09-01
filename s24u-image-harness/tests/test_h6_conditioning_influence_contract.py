@@ -8,6 +8,13 @@ def require(text: str, needle: str, label: str) -> None:
         raise AssertionError(f"{label}: missing {needle!r}")
 
 
+def require_order(text: str, first: str, second: str, label: str) -> None:
+    first_index = text.find(first)
+    second_index = text.find(second)
+    if first_index < 0 or second_index < 0 or first_index >= second_index:
+        raise AssertionError(f"{label}: expected {first!r} before {second!r}")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: test_h6_conditioning_influence_contract.py <local-dream-root>", file=sys.stderr)
@@ -45,6 +52,17 @@ def main() -> int:
     require(pipeline, "xt::abs(chunk_pred - fused_pred)", "real chunk/fused difference")
     require(main_cpp, '"influence_chunk_index"', "native SSE influence serialization")
     require(main_cpp, '"influence_delta_l2"', "native SSE influence metric serialization")
+
+    # The temporary raw prediction tensors are needed only to compute H6
+    # telemetry. Release them before scheduler work so H6 does not carry their
+    # memory through the rest of the diffusion iteration.
+    require(pipeline, "chunk_predictions.clear();", "release per-step chunk tensors")
+    require_order(
+        pipeline,
+        "chunk_predictions.clear();",
+        "auto scheduler_start = std::chrono::high_resolution_clock::now();",
+        "chunk tensor release before scheduler",
+    )
 
     # Android stores compact metrics/images only; no raw prediction tensors
     # cross the native boundary.

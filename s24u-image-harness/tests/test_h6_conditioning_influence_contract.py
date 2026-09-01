@@ -41,13 +41,21 @@ def main() -> int:
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
-    # H6R1 changes only gesture arbitration and carries the exact H6 inference
-    # stack forward. Accept both the original H6 package version and the H6R1
-    # package version while keeping all H6 behavioral assertions identical.
-    require_any(gradle, ("versionCode = 7406", "versionCode = 7407"), "H6 versionCode")
+    # Later H6 revisions may change only UI/gesture/observability packaging while
+    # carrying the exact H6 inference stack forward. Package version bumps are
+    # allowed; every H6 behavioral assertion below remains mandatory.
     require_any(
         gradle,
-        ('versionName = "2.8.1-s24u-h6"', 'versionName = "2.8.1-s24u-h6r1"'),
+        ("versionCode = 7406", "versionCode = 7407", "versionCode = 7408"),
+        "H6 versionCode",
+    )
+    require_any(
+        gradle,
+        (
+            'versionName = "2.8.1-s24u-h6"',
+            'versionName = "2.8.1-s24u-h6r1"',
+            'versionName = "2.8.1-s24u-h6r2"',
+        ),
         "H6 versionName",
     )
 
@@ -104,14 +112,20 @@ def main() -> int:
     require(js, "media.influence_samples_delta", "batched influence delta receiver")
     require(js, "influence_samples_delta.forEach", "batched influence delta replay")
 
-    # UI is explicit about semantics: contribution difference is not attention.
+    # UI must stay explicit that conditioning-difference evidence is not
+    # cross-attention. H6R2 may improve the wording, but may not claim that
+    # token-level attention was captured.
     require(html, 'data-panel="influence"', "Influence panel")
     require(html, 'data-tab="influence"', "Influence tab")
     require(html, 'id="influence-main-image"', "Influence image")
     require(html, 'id="influence-step-scrubber"', "Influence step scrubber")
     require(html, 'id="influence-chunks"', "Influence chunk selector")
     require(html, "不是 cross-attention", "truthful influence wording")
-    require(html, "Cross-attention 未采集", "preserved honest attribution state")
+    require_any(
+        html,
+        ("Cross-attention 未采集", "当前不可观测：Cross-attention 未导出"),
+        "preserved honest attribution state",
+    )
     require(js, "influence_samples", "Influence local history")
     require(js, "renderInfluence", "Influence renderer")
     require(js, "activePanel==='influence'", "Influence active-panel virtualization")

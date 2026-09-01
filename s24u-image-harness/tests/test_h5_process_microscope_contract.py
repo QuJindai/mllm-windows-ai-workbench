@@ -37,7 +37,9 @@ def main() -> int:
 
     # Cheap internal-state imagery: every diffusion step emits a real 4-channel
     # latent visualization without pretending it is an UNet feature map.
+    require(pipeline, "#include <limits>", "numeric limits include")
     require(pipeline, "renderLatentChannelsPreview", "latent channel renderer")
+    require(pipeline, "std::numeric_limits<float>", "latent normalization limits")
     require(pipeline, 'phase = "latent_map"', "latent map trace phase")
     require(pipeline, "image_base64", "trace image payload")
     require(main_cpp, '"image_base64"', "latent image SSE serialization")
@@ -54,17 +56,20 @@ def main() -> int:
     require(html, 'id="latent-main-image"', "latent map viewer")
     require(css, "--primary: #4285f4", "Local Dream blue")
     require(css, "--page: #f7f7fa", "Local Dream light page")
-    require(css, "content-visibility: auto", "offscreen render containment")
+    require(css, "content-visibility:auto", "offscreen render containment")
 
     # Smoothness: coalesce rapid native trace updates and only render changed
     # sections / active panel instead of rebuilding the whole document per SSE.
     require(js, "requestAnimationFrame", "RAF coalescing")
     require(js, "pendingSnapshot", "coalesced snapshot state")
+    require(js, "Object.assign({},pendingSnapshot||{},snapshot||{})", "partial snapshot merge")
     require(js, "activePanel", "panel virtualization")
     require(js, "renderProcess", "process image renderer")
     require(js, "process_previews", "process preview bridge")
     require(js, "latent_maps", "latent map bridge")
     require(js, "lastEventCount", "timeline diff gate")
+    require(screen, "mediaRevision", "media telemetry bridge split")
+    require(screen, "microscope.events.takeLast(48)", "bounded Android event bridge")
 
     # Attribution remains evidence-based: no fake attention heatmap.
     require(html, "Cross-attention 未采集", "honest attention state")

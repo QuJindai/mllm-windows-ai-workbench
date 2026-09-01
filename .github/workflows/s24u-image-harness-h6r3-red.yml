@@ -61,10 +61,24 @@ jobs:
           grep -Fq "H6R3 versionCode: missing 'versionCode = 7409'" h6r3-red.log
           echo H6R3_RED_PASS
 
+      - name: Require CFG truth RED on H6R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream > h6r3-cfg-red.log 2>&1
+          red=$?
+          set -e
+          test "$red" -ne 0
+          grep -Fq "H6R3 versionCode: missing 'versionCode = 7409'" h6r3-cfg-red.log
+          echo H6R3_CFG_RED_PASS
+
       - name: Upload RED evidence
         uses: actions/upload-artifact@v4
         with:
           name: h6r3-red-evidence
-          path: h6r3-red.log
+          path: |
+            h6r3-red.log
+            h6r3-cfg-red.log
           if-no-files-found: error
           retention-days: 7

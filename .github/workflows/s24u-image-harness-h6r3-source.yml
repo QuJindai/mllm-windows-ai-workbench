@@ -73,15 +73,53 @@ jobs:
         run: |
           set -euo pipefail
           python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream | tee h6r3-cfg-green.log
-          # H2-H5 were already verified at their exact staged revisions above.
-          # After H6R3, only monotonic contracts are re-run: H6 inference/
-          # influence, H6R1 gesture arbitration, and H6R2 observability.
           python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
           python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
           echo H6R3_TASK2_MONOTONIC_REGRESSION_PASS
 
-      - name: Prove remaining H6R3 work is still RED
+      - name: Verify Task 3 fusion RED and capture inference call sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-before.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-before.txt
+          set +e
+          python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream > h6r3-fusion-red.log 2>&1
+          red=$?
+          set -e
+          test "$red" -ne 0
+          grep -Fq "equal-mean production default: missing 'std::string fusion_mode = \"equal_mean\";'" h6r3-fusion-red.log
+          echo H6R3_FUSION_RED_PASS
+
+      - name: Apply H6R3 controlled fusion lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v7_fusion_core_v2.py local-dream | tee h6r3-fusion-core.log
+          python3 s24u-image-harness/patch_h6_v7_fusion_android.py local-dream | tee h6r3-fusion-android.log
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v7_fusion_core_v2.py \
+            s24u-image-harness/patch_h6_v7_fusion_android.py
+
+      - name: Task 3 GREEN with zero new inference call sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream | tee h6r3-fusion-green.log
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-after.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-after.txt
+          diff -u unet-step-before.txt unet-step-after.txt
+          diff -u unet-tiled-before.txt unet-tiled-after.txt
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
+          echo H6R3_TASK3_MONOTONIC_REGRESSION_PASS
+
+      - name: Prove remaining H6R3 work is still RED at Process Dynamics
         shell: bash
         run: |
           set -euo pipefail
@@ -93,14 +131,20 @@ jobs:
           grep -Fq "latent delta telemetry: missing 'latent_delta'" h6r3-remaining-red.log
           echo H6R3_REMAINING_RED_AT_DYNAMICS_PASS
 
-      - name: Upload Task 2 source evidence
+      - name: Upload H6R3 Task 2-3 source evidence
         uses: actions/upload-artifact@v4
         with:
-          name: h6r3-task2-source-evidence
+          name: h6r3-task2-task3-source-evidence
           path: |
             h6r3-cfg-red.log
             h6r3-cfg-patch.log
             h6r3-cfg-green.log
+            h6r3-fusion-red.log
+            h6r3-fusion-core.log
+            h6r3-fusion-android.log
+            h6r3-fusion-green.log
             h6r3-remaining-red.log
+            unet-*-before.txt
+            unet-*-after.txt
           if-no-files-found: error
           retention-days: 7

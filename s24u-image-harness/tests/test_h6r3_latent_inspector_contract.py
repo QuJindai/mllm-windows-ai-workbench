@@ -20,6 +20,7 @@ def main() -> int:
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
+    require(pipeline, "#include <limits>", "numeric_limits header")
     for field in ("channel_stats", "channel_correlation", "channel_histograms"):
         require(pipeline, field, f"native {field}")
         require(main_cpp, f'"{field}"', f"serialized {field}")

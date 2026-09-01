@@ -41,12 +41,12 @@ def main() -> int:
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
-    # Later H6 revisions may change only UI/gesture/observability packaging while
-    # carrying the exact H6 inference stack forward. Package version bumps are
-    # allowed; every H6 behavioral assertion below remains mandatory.
+    # Later H6 revisions may extend semantics and microscope UI while carrying
+    # the same H6 influence observation path forward. Version bumps are allowed;
+    # every behavioral assertion below remains mandatory.
     require_any(
         gradle,
-        ("versionCode = 7406", "versionCode = 7407", "versionCode = 7408"),
+        ("versionCode = 7406", "versionCode = 7407", "versionCode = 7408", "versionCode = 7409"),
         "H6 versionCode",
     )
     require_any(
@@ -55,13 +55,15 @@ def main() -> int:
             'versionName = "2.8.1-s24u-h6"',
             'versionName = "2.8.1-s24u-h6r1"',
             'versionName = "2.8.1-s24u-h6r2"',
+            'versionName = "2.8.1-s24u-h6r3"',
         ),
         "H6 versionName",
     )
 
-    # H2 fusion must remain numerically unchanged. H6 only observes the
-    # already-computed per-chunk predictions before scheduler execution.
-    require(pipeline, "noise_pred = xt::eval(noise_pred / (float)conds.size())", "unchanged H2 fusion")
+    # H2 equal-mean fusion remains the default until H6R3 phone evidence
+    # explicitly approves another mode. The diagnostic lab may add alternatives,
+    # but this production default must still exist.
+    require(pipeline, "noise_pred = xt::eval(noise_pred / (float)conds.size())", "unchanged H2 default fusion")
     require(pipeline, "std::vector<xt::xarray<float>> chunk_predictions", "current-step chunk prediction retention")
     require(pipeline, "chunk_predictions.reserve(conds.size())", "bounded chunk prediction reserve")
     require(pipeline, "chunk_predictions.push_back(chunk_pred)", "per-chunk prediction capture")
@@ -80,9 +82,7 @@ def main() -> int:
     require(main_cpp, '"influence_chunk_index"', "native SSE influence serialization")
     require(main_cpp, '"influence_delta_l2"', "native SSE influence metric serialization")
 
-    # The temporary raw prediction tensors are needed only to compute H6
-    # telemetry. Release them before scheduler work so H6 does not carry their
-    # memory through the rest of the diffusion iteration.
+    # Temporary raw predictions must be released before scheduler work.
     require(pipeline, "chunk_predictions.clear();", "release per-step chunk tensors")
     require_order(
         pipeline,
@@ -100,9 +100,8 @@ def main() -> int:
     require(screen, "S24U_H6_CONDITIONING_INFLUENCE", "compiled H6 marker")
     require(screen, 'put("influence_samples"', "influence bootstrap JSON")
 
-    # StateFlow is intentionally conflated, so multiple native chunk events may
-    # become one Compose update. The bridge must therefore send every retained
-    # influence sample newer than the last WebView revision, not only lastOrNull.
+    # StateFlow is intentionally conflated. The bridge must batch every retained
+    # influence sample newer than the last WebView revision.
     require(screen, "previousInfluenceRevision", "drop-free influence revision")
     require(screen, "influenceSamples.filter", "drop-free influence delta selection")
     require(screen, "it.diffusionStep * 100 + it.chunkIndex + 1 > previousInfluenceRevision", "monotonic influence delta filter")
@@ -112,9 +111,7 @@ def main() -> int:
     require(js, "media.influence_samples_delta", "batched influence delta receiver")
     require(js, "influence_samples_delta.forEach", "batched influence delta replay")
 
-    # UI must stay explicit that conditioning-difference evidence is not
-    # cross-attention. H6R2 may improve the wording, but may not claim that
-    # token-level attention was captured.
+    # Conditioning difference is never labeled as token-level attention.
     require(html, 'data-panel="influence"', "Influence panel")
     require(html, 'data-tab="influence"', "Influence tab")
     require(html, 'id="influence-main-image"', "Influence image")
@@ -123,7 +120,7 @@ def main() -> int:
     require(html, "不是 cross-attention", "truthful influence wording")
     require_any(
         html,
-        ("Cross-attention 未采集", "当前不可观测：Cross-attention 未导出"),
+        ("Cross-attention 未采集", "当前不可观测：Cross-attention 未导出", "Production QNN 图未导出"),
         "preserved honest attribution state",
     )
     require(js, "influence_samples", "Influence local history")

@@ -15,8 +15,8 @@ def patch_pipeline(root: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = replace_once(
         text,
-        "#include <iostream>\n#include <memory>\n",
-        "#include <iostream>\n#include <limits>\n#include <memory>\n",
+        "#include <iostream>\n",
+        "#include <iostream>\n#include <limits>\n",
         "numeric_limits include",
     )
     text = replace_once(

@@ -73,12 +73,28 @@ jobs:
           grep -Fq "H6R3 versionCode: missing 'versionCode = 7409'" h6r3-cfg-red.log
           echo H6R3_CFG_RED_PASS
 
-      - name: Upload RED evidence
+      - name: Stage patched H6R2 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p h6r2-source/app/src/main/cpp/src
+          mkdir -p h6r2-source/app/src/main/java/io/github/xororz/localdream/service
+          mkdir -p h6r2-source/app/src/main/java/io/github/xororz/localdream/ui/screens
+          mkdir -p h6r2-source/app/src/main/assets/s24u_microscope
+          cp local-dream/app/build.gradle.kts h6r2-source/app/
+          cp local-dream/app/src/main/cpp/src/Pipeline.hpp h6r2-source/app/src/main/cpp/src/
+          cp local-dream/app/src/main/cpp/src/main.cpp h6r2-source/app/src/main/cpp/src/
+          cp local-dream/app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt h6r2-source/app/src/main/java/io/github/xororz/localdream/service/
+          cp local-dream/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt h6r2-source/app/src/main/java/io/github/xororz/localdream/ui/screens/
+          cp local-dream/app/src/main/assets/s24u_microscope/* h6r2-source/app/src/main/assets/s24u_microscope/
+
+      - name: Upload RED evidence and H6R2 source snapshot
         uses: actions/upload-artifact@v4
         with:
           name: h6r3-red-evidence
           path: |
             h6r3-red.log
             h6r3-cfg-red.log
+            h6r2-source/**
           if-no-files-found: error
           retention-days: 7

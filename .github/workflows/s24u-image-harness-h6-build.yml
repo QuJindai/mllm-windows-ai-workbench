@@ -77,9 +77,36 @@ jobs:
           test "$red" -ne 0
           grep -Fq "H6 versionCode: missing 'versionCode = 7406'" h6-red.log
           echo H6_RED_PASS
+
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          h5_unet_step_calls=$(grep -Fo 'runUnetStep(' "$PIPE" | wc -l)
+          h5_unet_tiled_calls=$(grep -Fo 'runUnetTiled(' "$PIPE" | wc -l)
+          h5_encode_chunks_calls=$(grep -Fo 'encodePromptChunks(' "$PIPE" | wc -l)
+
           python3 s24u-image-harness/patch_h6.py local-dream | tee h6-patch.log
+          python3 s24u-image-harness/patch_h6_v2.py local-dream | tee h6-v2.log
           python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream | tee h6-green.log
-          python3 -m py_compile s24u-image-harness/patch_h6.py s24u-image-harness/tests/test_h6_conditioning_influence_contract.py
+
+          h6_unet_step_calls=$(grep -Fo 'runUnetStep(' "$PIPE" | wc -l)
+          h6_unet_tiled_calls=$(grep -Fo 'runUnetTiled(' "$PIPE" | wc -l)
+          h6_encode_chunks_calls=$(grep -Fo 'encodePromptChunks(' "$PIPE" | wc -l)
+          {
+            echo "H5_RUN_UNET_STEP_CALLS=$h5_unet_step_calls"
+            echo "H6_RUN_UNET_STEP_CALLS=$h6_unet_step_calls"
+            echo "H5_RUN_UNET_TILED_CALLS=$h5_unet_tiled_calls"
+            echo "H6_RUN_UNET_TILED_CALLS=$h6_unet_tiled_calls"
+            echo "H5_ENCODE_PROMPT_CHUNKS_CALLS=$h5_encode_chunks_calls"
+            echo "H6_ENCODE_PROMPT_CHUNKS_CALLS=$h6_encode_chunks_calls"
+          } | tee h6-inference-counts.log
+          test "$h5_unet_step_calls" -eq "$h6_unet_step_calls"
+          test "$h5_unet_tiled_calls" -eq "$h6_unet_tiled_calls"
+          test "$h5_encode_chunks_calls" -eq "$h6_encode_chunks_calls"
+          echo H6_NO_EXTRA_INFERENCE_CALLS_PASS | tee -a h6-inference-counts.log
+
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6.py \
+            s24u-image-harness/patch_h6_v2.py \
+            s24u-image-harness/tests/test_h6_conditioning_influence_contract.py
           echo H6_SOURCE_GREEN_PASS
 
       - name: Download QAIRT Community SDK
@@ -129,7 +156,9 @@ jobs:
             native-h6-errors.log
             h6-red.log
             h6-patch.log
+            h6-v2.log
             h6-green.log
+            h6-inference-counts.log
           retention-days: 7
 
       - name: Stable TEST-ONLY keystore
@@ -162,6 +191,7 @@ jobs:
             gradle-h6.log
             gradle-h6-status.txt
             h6-green.log
+            h6-inference-counts.log
           retention-days: 7
 
       - name: Preserve H6 APK
@@ -290,6 +320,7 @@ jobs:
             apk-signing-h6.txt
             native-h6.log
             gradle-h6.log
+            h6-inference-counts.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -307,7 +338,9 @@ jobs:
             h5-green.log
             h6-red.log
             h6-patch.log
+            h6-v2.log
             h6-green.log
+            h6-inference-counts.log
             native-h6.log
             native-h6-errors.log
             gradle-h6.log

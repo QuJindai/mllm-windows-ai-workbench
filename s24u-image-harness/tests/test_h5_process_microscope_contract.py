@@ -47,6 +47,7 @@ def main() -> int:
 
     # H5 UI must look like the Local Dream host instead of a separate dark demo.
     require(screen, "S24U_H5_PROCESS_MICROSCOPE", "H5 runtime marker")
+    require(screen, 'put("h5_marker", "S24U_H5_PROCESS_MICROSCOPE")', "compiled H5 marker")
     require(html, 'data-panel="overview"', "overview panel")
     require(html, 'data-panel="process"', "process panel")
     require(html, 'data-panel="mechanism"', "mechanism panel")

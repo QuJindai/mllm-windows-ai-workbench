@@ -69,7 +69,10 @@ def fix_h5_runtime_contract(root: Path) -> None:
         raise RuntimeError("H5 DEX marker: expected exactly one inherited H4 runtime marker")
     text = text.replace(old, new, 1)
 
-    old_media = '''                            val mediaPayload = JSONObject().apply {
+    old_media = '''                        val mediaRevision = microscope.processPreviews.size * 100 + microscope.latentMaps.size
+                        if (webView.tag != mediaRevision) {
+                            webView.tag = mediaRevision
+                            val mediaPayload = JSONObject().apply {
                                 put(
                                     "process_previews",
                                     JSONArray().apply { microscope.processPreviews.forEach { put(previewJson(it)) } },
@@ -83,22 +86,49 @@ def fix_h5_runtime_contract(root: Path) -> None:
                                 "window.S24UMicroscope && window.S24UMicroscope.update($mediaPayload);",
                                 null,
                             )
+                        }
 '''
-    new_media = '''                            val mediaPayload = JSONObject().apply {
-                                microscope.processPreviews.lastOrNull()?.let {
-                                    put("process_preview", previewJson(it))
-                                }
-                                microscope.latentMaps.lastOrNull()?.let {
-                                    put("latent_map", previewJson(it))
-                                }
-                            }.toString()
-                            webView.evaluateJavascript(
-                                "window.S24UMicroscope && window.S24UMicroscope.addMedia($mediaPayload);",
-                                null,
-                            )
+    new_media = '''                        val mediaRevision = microscope.processPreviews.size * 100 + microscope.latentMaps.size
+                        val previousMediaRevision = webView.tag as? Int
+                        if (previousMediaRevision != mediaRevision) {
+                            webView.tag = mediaRevision
+                            if (previousMediaRevision == null) {
+                                // First WebView attach may happen after generation. Bootstrap
+                                // the bounded history once so the scrubber has every saved frame.
+                                val mediaPayload = JSONObject().apply {
+                                    put(
+                                        "process_previews",
+                                        JSONArray().apply { microscope.processPreviews.forEach { put(previewJson(it)) } },
+                                    )
+                                    put(
+                                        "latent_maps",
+                                        JSONArray().apply { microscope.latentMaps.forEach { put(previewJson(it)) } },
+                                    )
+                                }.toString()
+                                webView.evaluateJavascript(
+                                    "window.S24UMicroscope && window.S24UMicroscope.update($mediaPayload);",
+                                    null,
+                                )
+                            } else {
+                                // Once attached, stream only the newest heavy frame. The JS
+                                // side appends/deduplicates it into its bounded local history.
+                                val mediaPayload = JSONObject().apply {
+                                    microscope.processPreviews.lastOrNull()?.let {
+                                        put("process_preview", previewJson(it))
+                                    }
+                                    microscope.latentMaps.lastOrNull()?.let {
+                                        put("latent_map", previewJson(it))
+                                    }
+                                }.toString()
+                                webView.evaluateJavascript(
+                                    "window.S24UMicroscope && window.S24UMicroscope.addMedia($mediaPayload);",
+                                    null,
+                                )
+                            }
+                        }
 '''
     if text.count(old_media) != 1:
-        raise RuntimeError("H5 incremental media bridge: full-history media block not unique")
+        raise RuntimeError("H5 bootstrap+delta media bridge: original full-history block not unique")
     text = text.replace(old_media, new_media, 1)
     screen.write_text(text, encoding="utf-8")
 

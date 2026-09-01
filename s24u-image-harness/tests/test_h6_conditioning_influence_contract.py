@@ -8,6 +8,13 @@ def require(text: str, needle: str, label: str) -> None:
         raise AssertionError(f"{label}: missing {needle!r}")
 
 
+def require_any(text: str, needles: tuple[str, ...], label: str) -> None:
+    if not any(needle in text for needle in needles):
+        # Keep the original H6 failure text stable because the H6 RED workflow
+        # intentionally greps it before the H6 patch is applied.
+        raise AssertionError(f"{label}: missing {needles[0]!r}")
+
+
 def forbid(text: str, needle: str, label: str) -> None:
     if needle in text:
         raise AssertionError(f"{label}: forbidden {needle!r}")
@@ -34,8 +41,15 @@ def main() -> int:
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
-    require(gradle, "versionCode = 7406", "H6 versionCode")
-    require(gradle, 'versionName = "2.8.1-s24u-h6"', "H6 versionName")
+    # H6R1 changes only gesture arbitration and carries the exact H6 inference
+    # stack forward. Accept both the original H6 package version and the H6R1
+    # package version while keeping all H6 behavioral assertions identical.
+    require_any(gradle, ("versionCode = 7406", "versionCode = 7407"), "H6 versionCode")
+    require_any(
+        gradle,
+        ('versionName = "2.8.1-s24u-h6"', 'versionName = "2.8.1-s24u-h6r1"'),
+        "H6 versionName",
+    )
 
     # H2 fusion must remain numerically unchanged. H6 only observes the
     # already-computed per-chunk predictions before scheduler execution.

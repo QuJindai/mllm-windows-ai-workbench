@@ -1,0 +1,162 @@
+name: S24U Image Harness H6R3 Final Source Gate
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r3-semantic-fidelity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h6r3-final-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Apply and verify H2 through H6R2 staged baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h5_process_microscope_contract.py local-dream
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
+          echo H6R2_BASELINE_PASS
+
+      - name: Capture baseline model-call sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-before-h6r3.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-before-h6r3.txt
+          grep -c 'encodePromptChunks(' "$PIPE" > clip-before-h6r3.txt
+          grep -c 'vaeDecode(' "$PIPE" > vae-before-h6r3.txt
+
+      - name: Apply H6R3 Task 2 CFG truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v6_semantic_fidelity.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream
+
+      - name: Apply H6R3 Task 3 controlled fusion lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v7_fusion_core_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v7_fusion_android.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream
+
+      - name: Apply H6R3 Task 4 Process Dynamics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v8_dynamics_core.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_ui.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_process_dynamics_contract.py local-dream
+
+      - name: Apply H6R3 Task 5 Latent State Inspector
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v9_latent_core.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_ui.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_latent_inspector_contract.py local-dream
+
+      - name: Apply H6R3 Task 6 Runtime Compute Graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v10_runtime_graph.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_runtime_graph_contract.py local-dream
+
+      - name: Compile patch scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v6_semantic_fidelity.py \
+            s24u-image-harness/patch_h6_v7_fusion_core_v2.py \
+            s24u-image-harness/patch_h6_v7_fusion_android.py \
+            s24u-image-harness/patch_h6_v8_dynamics_core.py \
+            s24u-image-harness/patch_h6_v8_dynamics_android.py \
+            s24u-image-harness/patch_h6_v8_dynamics_ui.py \
+            s24u-image-harness/patch_h6_v9_latent_core.py \
+            s24u-image-harness/patch_h6_v9_latent_android.py \
+            s24u-image-harness/patch_h6_v9_latent_ui.py \
+            s24u-image-harness/patch_h6_v10_runtime_graph.py
+
+      - name: Full H6R3 source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_process_dynamics_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_latent_inspector_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_runtime_graph_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_semantic_fidelity_contract.py local-dream
+          echo H6R3_ALL_SOURCE_CONTRACTS_PASS
+
+      - name: Monotonic H6 regression contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream
+          echo H6R3_MONOTONIC_REGRESSION_PASS
+
+      - name: Prove H6R3 adds zero model-call sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -c 'runUnetStep(' "$PIPE" > unet-step-after-h6r3.txt
+          grep -c 'runUnetTiled(' "$PIPE" > unet-tiled-after-h6r3.txt
+          grep -c 'encodePromptChunks(' "$PIPE" > clip-after-h6r3.txt
+          grep -c 'vaeDecode(' "$PIPE" > vae-after-h6r3.txt
+          diff -u unet-step-before-h6r3.txt unet-step-after-h6r3.txt
+          diff -u unet-tiled-before-h6r3.txt unet-tiled-after-h6r3.txt
+          diff -u clip-before-h6r3.txt clip-after-h6r3.txt
+          diff -u vae-before-h6r3.txt vae-after-h6r3.txt
+          echo H6R3_ZERO_EXTRA_MODEL_CALL_SITES_PASS
+
+      - name: Upload final source evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: h6r3-final-source-evidence
+          path: |
+            *-before-h6r3.txt
+            *-after-h6r3.txt
+          if-no-files-found: error
+          retention-days: 7

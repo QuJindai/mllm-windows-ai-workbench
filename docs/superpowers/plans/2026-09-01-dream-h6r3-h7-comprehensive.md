@@ -599,7 +599,12 @@ Debug UNet Graph
 - `s24u-image-harness/h7/ATTENTION_GRAPH_SPEC.md`
 - `s24u-image-harness/tests/test_h7_attention_graph_contract.py`
 - `s24u-image-harness/patch_h7_attention_debug.py`
-- Debug graph export / compile scripts（按最终 ONNX/QNN 导出链的实际路径创建，不覆盖 Production assets）。
+- `s24u-image-harness/h7/export_attention_debug_graph.py`
+- `s24u-image-harness/h7/compile_attention_debug_qnn.sh`
+- `s24u-image-harness/h7/verify_attention_parity.py`
+- `s24u-image-harness/h7/attention_graph_manifest.json`
+
+以上 H7 资产均使用独立 Debug 命名，不覆盖 Production `unet.bin`。
 
 ---
 
@@ -692,8 +697,12 @@ positive_effective_weight
 ## Task 5: Latent State Inspector
 
 **Files:**
-- Modify: native latent renderer / telemetry
-- Modify: microscope UI assets
+- Modify: `app/src/main/cpp/src/Pipeline.hpp`
+- Modify: `app/src/main/cpp/src/main.cpp`
+- Modify: `app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt`
+- Modify: `app/src/main/assets/s24u_microscope/index.html`
+- Modify: `app/src/main/assets/s24u_microscope/microscope.js`
+- Modify: `app/src/main/assets/s24u_microscope/microscope.css`
 
 **Produces:** 4-channel 独立观测。
 
@@ -803,6 +812,13 @@ positive_effective_weight
 
 ## Task 10: H7 Debug UNet Graph
 
+**Files:**
+- Create: `s24u-image-harness/h7/export_attention_debug_graph.py`
+- Create: `s24u-image-harness/h7/compile_attention_debug_qnn.sh`
+- Create: `s24u-image-harness/h7/verify_attention_parity.py`
+- Create: `s24u-image-harness/h7/attention_graph_manifest.json`
+- Modify: `s24u-image-harness/patch_h7_attention_debug.py`
+
 - [ ] 从可重建的 UNet 源图/ONNX 起点导出 Debug graph。
 - [ ] 仅增加 3 个代表层的聚合 attention outputs。
 - [ ] 编译独立 `debug_unet.bin`。
@@ -814,6 +830,16 @@ positive_effective_weight
 ---
 
 ## Task 11: H7 Attention Microscope UI
+
+**Files:**
+- Modify: `app/src/main/cpp/src/QnnModel.hpp`
+- Modify: `app/src/main/cpp/src/Pipeline.hpp`
+- Modify: `app/src/main/cpp/src/main.cpp`
+- Modify: `app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt`
+- Modify: `app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt`
+- Modify: `app/src/main/assets/s24u_microscope/index.html`
+- Modify: `app/src/main/assets/s24u_microscope/microscope.js`
+- Modify: `app/src/main/assets/s24u_microscope/microscope.css`
 
 - [ ] Token strip 与 CLIP slot 映射。
 - [ ] Layer selector：Down/Mid/Up。

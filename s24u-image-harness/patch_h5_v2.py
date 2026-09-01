@@ -32,7 +32,30 @@ def fix_h5_runtime_contract(root: Path) -> None:
     js = root / "app/src/main/assets/s24u_microscope/microscope.js"
     text = js.read_text(encoding="utf-8")
     old = "window.S24UMicroscope={update(snapshot){pendingSnapshot=snapshot||{};if(!rafId)rafId=requestAnimationFrame(flush);}};"
-    new = "window.S24UMicroscope={update(snapshot){pendingSnapshot=Object.assign({},pendingSnapshot||{},snapshot||{});if(!rafId)rafId=requestAnimationFrame(flush);}};"
+    new = '''window.S24UMicroscope={
+    update(snapshot){
+      pendingSnapshot=Object.assign({},pendingSnapshot||{},snapshot||{});
+      if(!rafId)rafId=requestAnimationFrame(flush);
+    },
+    addMedia(media){
+      pendingSnapshot=Object.assign({},pendingSnapshot||{});
+      if(media&&media.process_preview){
+        const frame=media.process_preview;
+        const frames=arr(pendingSnapshot.process_previews).slice();
+        const key=int(frame.preview_index,frames.length+1);
+        if(!frames.some((x)=>int(x.preview_index)===key))frames.push(frame);
+        pendingSnapshot.process_previews=frames.slice(-8);
+      }
+      if(media&&media.latent_map){
+        const frame=media.latent_map;
+        const frames=arr(pendingSnapshot.latent_maps).slice();
+        const key=int(frame.diffusion_step,frames.length+1);
+        if(!frames.some((x)=>int(x.diffusion_step)===key))frames.push(frame);
+        pendingSnapshot.latent_maps=frames.slice(-8);
+      }
+      if(!rafId)rafId=requestAnimationFrame(flush);
+    }
+  };'''
     if text.count(old) != 1:
         raise RuntimeError("H5 partial-update merge: update() anchor not unique")
     text = text.replace(old, new, 1)
@@ -45,6 +68,38 @@ def fix_h5_runtime_contract(root: Path) -> None:
     if text.count(old) != 1:
         raise RuntimeError("H5 DEX marker: expected exactly one inherited H4 runtime marker")
     text = text.replace(old, new, 1)
+
+    old_media = '''                            val mediaPayload = JSONObject().apply {
+                                put(
+                                    "process_previews",
+                                    JSONArray().apply { microscope.processPreviews.forEach { put(previewJson(it)) } },
+                                )
+                                put(
+                                    "latent_maps",
+                                    JSONArray().apply { microscope.latentMaps.forEach { put(previewJson(it)) } },
+                                )
+                            }.toString()
+                            webView.evaluateJavascript(
+                                "window.S24UMicroscope && window.S24UMicroscope.update($mediaPayload);",
+                                null,
+                            )
+'''
+    new_media = '''                            val mediaPayload = JSONObject().apply {
+                                microscope.processPreviews.lastOrNull()?.let {
+                                    put("process_preview", previewJson(it))
+                                }
+                                microscope.latentMaps.lastOrNull()?.let {
+                                    put("latent_map", previewJson(it))
+                                }
+                            }.toString()
+                            webView.evaluateJavascript(
+                                "window.S24UMicroscope && window.S24UMicroscope.addMedia($mediaPayload);",
+                                null,
+                            )
+'''
+    if text.count(old_media) != 1:
+        raise RuntimeError("H5 incremental media bridge: full-history media block not unique")
+    text = text.replace(old_media, new_media, 1)
     screen.write_text(text, encoding="utf-8")
 
 

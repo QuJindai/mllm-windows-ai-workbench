@@ -36,8 +36,11 @@ def main() -> int:
     )
     require(screen, "S24U_H6R2_OBSERVABILITY_FALLBACK", "H6R2 DEX marker")
 
-    if "versionCode = 7408" in gradle:
-        # Historical H6R2 behavior: low-RAM used a truthful latent fallback.
+    dynamics_enabled = "PROCESS DYNAMICS" in html and "renderProcessDynamics" in js
+    if not dynamics_enabled:
+        # Historical H6R2 behavior remains valid through early H6R3 tasks until
+        # Task 4 actually replaces it. Package version alone is not a capability
+        # marker because H6R3 bumps to 7409 at Task 2.
         require(html, "PROCESS EVIDENCE", "H6R2 process evidence heading")
         require(html, "自动回退显示同一步真实 scheduler latent", "H6R2 lowram explanation")
         require(js, "usingLatentFallback=previews.length===0 && latents.length>0", "H6R2 lowram fallback selection")
@@ -45,21 +48,18 @@ def main() -> int:
         require(js, "LATENT FALLBACK", "H6R2 fallback metadata label")
         require(js, "真实 scheduler latent · 非 VAE decode", "H6R2 fallback semantic guard")
     else:
-        # H6R3 deliberately removes the duplicate view: Process = Δlatent
-        # dynamics; the old 2x2 latent contact sheet remains only in Latent.
+        # H6R3 Task 4 removes the duplicate view: Process = Δlatent dynamics;
+        # the old 2x2 contact sheet remains only under Latent State.
         require(html, "PROCESS DYNAMICS", "H6R3 process dynamics heading")
         require(html, "DECODED PREVIEW", "H6R3 decoded preview boundary")
         require(js, "renderProcessDynamics", "H6R3 dynamics renderer")
         forbid(js, "const processFrames=usingLatentFallback?latents:previews", "no duplicate H6R2 fallback")
         forbid(js, "showFrame('process',previews.length?previews:latents", "no latent-as-decoded preview")
 
-    # A single chunk is mathematically identical to the fused prediction.
     require(js, "const singleChunk=int(sample.chunk_count,1)===1", "single chunk detection")
     require(js, "ε̄ₜ = εₜ⁽¹⁾", "single chunk formula explanation")
     require(js, "不再显示没有信息量的全黑图", "black-map explanation")
 
-    # Cross-attention remains unavailable in the Production graph. Later H6R3
-    # wording may point explicitly to H7, but must never claim attention capture.
     require(html, "ATTRIBUTION · CAPABILITY", "attribution capability heading")
     require_any(
         html,

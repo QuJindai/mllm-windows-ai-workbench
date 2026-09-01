@@ -1,0 +1,198 @@
+name: S24U Image Harness H6R2 Observability Fix
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6-conditioning-influence]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-h6r2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+      NDK_VERSION: 28.2.13676358
+      QAIRT_URL: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.39.0.250926/v2.39.0.250926.zip
+      SIGN_PASS: s24u-test-public
+      SIGN_ALIAS: s24utest
+      EXPECTED_CERT_SHA256: B60748D6461EF1F5E2681462F08EEBCA287B56B78BFAFC801499CC2BA461E005
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+
+      - name: Android and native environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --channel=3 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools' "ndk;${NDK_VERSION}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build ccache
+          rustup target add aarch64-linux-android
+          test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
+
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Apply H2 through H6R1 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/tests/test_h2_source_contract.py local-dream | tee h2-green.log
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/tests/test_h3_microscope_contract.py local-dream | tee h3-green.log
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h4_visual_microscope_contract.py local-dream | tee h4-green.log
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h5_process_microscope_contract.py local-dream | tee h5-green.log
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream | tee h6-green.log
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream | tee h6r1-green.log
+
+      - name: H6R2 RED then GREEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream > h6r2-red.log 2>&1
+          red=$?
+          set -e
+          test "$red" -ne 0
+          grep -Fq "H6R2 versionCode: missing 'versionCode = 7408'" h6r2-red.log
+          echo H6R2_RED_PASS
+
+          PIPE=local-dream/app/src/main/cpp/src/Pipeline.hpp
+          SERVICE=local-dream/app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt
+          MAINCPP=local-dream/app/src/main/cpp/src/main.cpp
+          pipe_before="$(sha256sum "$PIPE" | awk '{print $1}')"
+          service_before="$(sha256sum "$SERVICE" | awk '{print $1}')"
+          main_before="$(sha256sum "$MAINCPP" | awk '{print $1}')"
+
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream | tee h6r2-patch.log
+          python3 s24u-image-harness/tests/test_h6r2_observability_contract.py local-dream | tee h6r2-green.log
+          python3 s24u-image-harness/tests/test_h6r1_gesture_contract.py local-dream | tee h6r1-regression.log
+          python3 s24u-image-harness/tests/test_h6_conditioning_influence_contract.py local-dream | tee h6-regression.log
+
+          pipe_after="$(sha256sum "$PIPE" | awk '{print $1}')"
+          service_after="$(sha256sum "$SERVICE" | awk '{print $1}')"
+          main_after="$(sha256sum "$MAINCPP" | awk '{print $1}')"
+          test "$pipe_before" = "$pipe_after"
+          test "$service_before" = "$service_after"
+          test "$main_before" = "$main_after"
+          echo H6R2_NO_NATIVE_OR_SERVICE_MUTATION_PASS | tee h6r2-no-core-mutation.log
+          python3 -m py_compile s24u-image-harness/patch_h6_v5_observability.py s24u-image-harness/tests/test_h6r2_observability_contract.py
+
+      - name: Download QAIRT Community SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/qairt
+          curl -L --fail --retry 4 --retry-all-errors "$QAIRT_URL" -o /tmp/qairt.zip
+          unzip -q /tmp/qairt.zip -d /tmp/qairt
+          HEADER="$(find /tmp/qairt -type f -path '*/include/QNN/QnnTypes.h' -print -quit)"
+          test -n "$HEADER"
+          QNN_ROOT="$(dirname "$(dirname "$(dirname "$HEADER")")")"
+          test -s "$QNN_ROOT/lib/aarch64-android/libQnnHtp.so"
+          echo "QNN_SDK_ROOT=$QNN_ROOT" >> "$GITHUB_ENV"
+
+      - name: Build H6R2 QNN native core
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
+          bash s24u-image-harness/build_native_h2.sh 2>&1 | tee native-h6r2.log
+          CORE=local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
+          test -s "$CORE"
+          strings "$CORE" | grep -F -m1 'conditioning_influence'
+
+      - name: Stable TEST-ONLY keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl pkcs12 -export -inkey s24u-image-harness/signing/s24u-test-signing-key.pem -in s24u-image-harness/signing/s24u-test-signing-cert.pem -name "$SIGN_ALIAS" -out /tmp/s24u-test.p12 -passout "pass:$SIGN_PASS"
+          keytool -importkeystore -noprompt -srckeystore /tmp/s24u-test.p12 -srcstoretype PKCS12 -srcstorepass "$SIGN_PASS" -srcalias "$SIGN_ALIAS" -destkeystore /tmp/s24u-test.jks -deststoretype JKS -deststorepass "$SIGN_PASS" -destkeypass "$SIGN_PASS" -destalias "$SIGN_ALIAS"
+
+      - name: Gradle tests and H6R2 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd local-dream
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h6r2.log
+
+      - name: Preserve and verify H6R2 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_SRC="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' -print -quit)"
+          test -s "$APK_SRC"
+          APK=S24U_Image_Harness_H6R2_20260901.apk
+          cp "$APK_SRC" "$APK"
+          sha256sum "$APK" | tee H6R2_APK_SHA256SUMS.txt
+          stat -c 'APK_BYTES=%s' "$APK" | tee H6R2_APK_SIZE.txt
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$AAPT2" dump badging "$APK" > apk-badging-h6r2.txt
+          grep -F "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h6r2.txt
+          grep -F "versionCode='7408'" apk-badging-h6r2.txt
+          grep -F "versionName='2.8.1-s24u-h6r2'" apk-badging-h6r2.txt
+          zipinfo -1 "$APK" > apk-files-h6r2.txt
+          unzip -p "$APK" assets/s24u_microscope/index.html > /tmp/index-h6r2.html
+          unzip -p "$APK" assets/s24u_microscope/microscope.js > /tmp/js-h6r2.js
+          grep -F 'PROCESS EVIDENCE' /tmp/index-h6r2.html
+          grep -F 'LATENT FALLBACK' /tmp/js-h6r2.js
+          grep -F '不再显示没有信息量的全黑图' /tmp/js-h6r2.js
+          grep -F '当前不可观测：Cross-attention 未导出' /tmp/index-h6r2.html
+          found=0
+          while IFS= read -r dex; do
+            unzip -p "$APK" "$dex" > /tmp/current.dex
+            strings /tmp/current.dex > /tmp/current.strings
+            if grep -Fq 'S24U_H6R2_OBSERVABILITY_FALLBACK' /tmp/current.strings; then found=1; break; fi
+          done < <(grep -E '^classes[0-9]*\.dex$' apk-files-h6r2.txt)
+          test "$found" -eq 1
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-signing-h6r2.txt
+          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h6r2.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
+          sha256sum -c H6R2_APK_SHA256SUMS.txt
+          echo H6R2_APK_VERIFICATION_PASS | tee apk-verification-h6r2.txt
+
+      - name: Upload H6R2 phone-test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h6r2-observability-fix
+          path: |
+            S24U_Image_Harness_H6R2_20260901.apk
+            H6R2_APK_SHA256SUMS.txt
+            H6R2_APK_SIZE.txt
+            h6r2-red.log
+            h6r2-patch.log
+            h6r2-green.log
+            h6r2-no-core-mutation.log
+            native-h6r2.log
+            gradle-h6r2.log
+            apk-badging-h6r2.txt
+            apk-files-h6r2.txt
+            apk-signing-h6r2.txt
+            apk-verification-h6r2.txt
+          if-no-files-found: error
+          retention-days: 7

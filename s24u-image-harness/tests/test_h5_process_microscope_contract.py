@@ -60,7 +60,8 @@ def main() -> int:
     require(css, "content-visibility:auto", "offscreen render containment")
 
     # Smoothness: coalesce rapid native trace updates, render only the active
-    # panel, and transfer only the newest heavy image instead of media history.
+    # panel, bootstrap bounded media once on a late WebView attach, then transfer
+    # only the newest heavy image for live updates.
     require(js, "requestAnimationFrame", "RAF coalescing")
     require(js, "pendingSnapshot", "coalesced snapshot state")
     require(js, "Object.assign({},pendingSnapshot||{},snapshot||{})", "partial snapshot merge")
@@ -71,6 +72,9 @@ def main() -> int:
     require(js, "latent_maps", "latent map local history")
     require(js, "lastEventCount", "timeline diff gate")
     require(screen, "mediaRevision", "media telemetry bridge split")
+    require(screen, "previousMediaRevision == null", "late attach media bootstrap")
+    require(screen, '"process_previews"', "bootstrap process history")
+    require(screen, '"latent_maps"', "bootstrap latent history")
     require(screen, "microscope.events.takeLast(48)", "bounded Android event bridge")
     require(screen, "microscope.processPreviews.lastOrNull()", "latest process frame bridge")
     require(screen, "microscope.latentMaps.lastOrNull()", "latest latent frame bridge")

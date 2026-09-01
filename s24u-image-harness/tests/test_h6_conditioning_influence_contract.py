@@ -8,6 +8,11 @@ def require(text: str, needle: str, label: str) -> None:
         raise AssertionError(f"{label}: missing {needle!r}")
 
 
+def forbid(text: str, needle: str, label: str) -> None:
+    if needle in text:
+        raise AssertionError(f"{label}: forbidden {needle!r}")
+
+
 def require_order(text: str, first: str, second: str, label: str) -> None:
     first_index = text.find(first)
     second_index = text.find(second)
@@ -72,7 +77,18 @@ def main() -> int:
     require(service, "takeLast(32)", "bounded influence history cap")
     require(screen, "S24U_H6_CONDITIONING_INFLUENCE", "compiled H6 marker")
     require(screen, 'put("influence_samples"', "influence bootstrap JSON")
-    require(screen, 'put("influence_sample"', "influence delta JSON")
+
+    # StateFlow is intentionally conflated, so multiple native chunk events may
+    # become one Compose update. The bridge must therefore send every retained
+    # influence sample newer than the last WebView revision, not only lastOrNull.
+    require(screen, "previousInfluenceRevision", "drop-free influence revision")
+    require(screen, "influenceSamples.filter", "drop-free influence delta selection")
+    require(screen, "it.diffusionStep * 100 + it.chunkIndex + 1 > previousInfluenceRevision", "monotonic influence delta filter")
+    require(screen, 'put("influence_samples_delta"', "batched influence delta JSON")
+    require(screen, "mediaRolledBack", "generation restart revision rollback")
+    forbid(screen, 'put("influence_sample", influenceJson(it))', "forbid last-only influence bridge")
+    require(js, "media.influence_samples_delta", "batched influence delta receiver")
+    require(js, "influence_samples_delta.forEach", "batched influence delta replay")
 
     # UI is explicit about semantics: contribution difference is not attention.
     require(html, 'data-panel="influence"', "Influence panel")
@@ -83,7 +99,6 @@ def main() -> int:
     require(html, "不是 cross-attention", "truthful influence wording")
     require(html, "Cross-attention 未采集", "preserved honest attribution state")
     require(js, "influence_samples", "Influence local history")
-    require(js, "influence_sample", "Influence incremental sample")
     require(js, "renderInfluence", "Influence renderer")
     require(js, "activePanel==='influence'", "Influence active-panel virtualization")
 

@@ -38,6 +38,15 @@ def fix_h5_runtime_contract(root: Path) -> None:
     text = text.replace(old, new, 1)
     js.write_text(text, encoding="utf-8")
 
+    screen = root / "app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt"
+    text = screen.read_text(encoding="utf-8")
+    old = '            put("h4_marker", "S24U_H4_VISUAL_MICROSCOPE")\n'
+    new = '            put("h5_marker", "S24U_H5_PROCESS_MICROSCOPE")\n'
+    if text.count(old) != 1:
+        raise RuntimeError("H5 DEX marker: expected exactly one inherited H4 runtime marker")
+    text = text.replace(old, new, 1)
+    screen.write_text(text, encoding="utf-8")
+
 
 def main() -> int:
     if len(sys.argv) != 2:

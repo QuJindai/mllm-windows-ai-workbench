@@ -10,6 +10,11 @@ def require(text: str, needle: str, label: str) -> None:
         raise AssertionError(f"{label}: missing {needle!r}")
 
 
+def require_any(text: str, needles: tuple[str, ...], label: str) -> None:
+    if not any(needle in text for needle in needles):
+        raise AssertionError(f"{label}: missing one of {needles!r}")
+
+
 def forbid(text: str, needle: str, label: str) -> None:
     if needle in text:
         raise AssertionError(f"{label}: forbidden {needle!r}")
@@ -33,8 +38,15 @@ def main() -> int:
         encoding="utf-8"
     )
 
-    require(gradle, "versionCode = 7407", "H6R1 versionCode")
-    require(gradle, 'versionName = "2.8.1-s24u-h6r1"', "H6R1 versionName")
+    # H6R1 behavior must remain present in later package revisions. Package
+    # version bumps (for example H6R2 observability) are allowed, but none of
+    # the gesture arbitration assertions below are relaxed.
+    require_any(gradle, ("versionCode = 7407", "versionCode = 7408"), "H6R1-compatible versionCode")
+    require_any(
+        gradle,
+        ('versionName = "2.8.1-s24u-h6r1"', 'versionName = "2.8.1-s24u-h6r2"'),
+        "H6R1-compatible versionName",
+    )
 
     require(screen, "pageCount = { 4 }", "four-page pager retained")
     require(

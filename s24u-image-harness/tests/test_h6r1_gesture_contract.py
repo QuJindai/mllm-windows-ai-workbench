@@ -39,12 +39,20 @@ def main() -> int:
     )
 
     # H6R1 behavior must remain present in later package revisions. Package
-    # version bumps (for example H6R2 observability) are allowed, but none of
-    # the gesture arbitration assertions below are relaxed.
-    require_any(gradle, ("versionCode = 7407", "versionCode = 7408"), "H6R1-compatible versionCode")
+    # version bumps are allowed, but none of the gesture arbitration assertions
+    # below are relaxed.
     require_any(
         gradle,
-        ('versionName = "2.8.1-s24u-h6r1"', 'versionName = "2.8.1-s24u-h6r2"'),
+        ("versionCode = 7407", "versionCode = 7408", "versionCode = 7409"),
+        "H6R1-compatible versionCode",
+    )
+    require_any(
+        gradle,
+        (
+            'versionName = "2.8.1-s24u-h6r1"',
+            'versionName = "2.8.1-s24u-h6r2"',
+            'versionName = "2.8.1-s24u-h6r3"',
+        ),
         "H6R1-compatible versionName",
     )
 

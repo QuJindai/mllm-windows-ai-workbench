@@ -39,6 +39,14 @@ def main() -> int:
     require(pipeline, "fusion_effective_weights", "effective fusion weight vector")
     require(pipeline, "anchor + req.fusion_alpha * residual", "anchor residual fusion")
 
+    # CFG=1 QNN fast path makes Negative ineffective. Token-weighted fusion
+    # must therefore derive its weights from Positive only in that mode; when
+    # guidance is active, paired Positive/Negative token lengths may both
+    # matter because each chunk prediction contains both branches.
+    require(pipeline, "const bool request_skip_uncond", "request skip-uncond fact")
+    require(pipeline, "request_skip_uncond\n                                         ? pos_tokens", "cfg1 positive-only fusion weighting")
+    require(pipeline, ": std::max(pos_tokens, neg_tokens)", "guided paired-chunk weighting")
+
     # Request wiring must be explicit from phone UI to native request parser.
     require(screen, "var fusionMode by remember", "fusion selector state")
     require(screen, 'putExtra("fusion_mode", fusionMode)', "fusion mode intent extra")

@@ -23,8 +23,12 @@ def main() -> int:
     screen = (root / "app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
-    require(gradle, "versionCode = 7409", "H6R3 versionCode")
-    require(gradle, 'versionName = "2.8.1-s24u-h6r3"', "H6R3 versionName")
+    # H6R4 is a monotonic successor of H6R3. Do not use an old package version
+    # as a behavior gate: preserve all H6R3 semantic assertions below.
+    if "versionCode = 7409" not in gradle and "versionCode = 7410" not in gradle:
+        raise AssertionError("H6R3+ versionCode: expected 7409 or 7410")
+    if 'versionName = "2.8.1-s24u-h6r3"' not in gradle and 'versionName = "2.8.1-s24u-h6r4"' not in gradle:
+        raise AssertionError("H6R3+ versionName: expected h6r3 or h6r4")
     require(screen, 'put("h6r3_marker", "S24U_H6R3_SEMANTIC_FIDELITY")', "H6R3 DEX marker")
 
     for field in (
@@ -36,8 +40,6 @@ def main() -> int:
         require(pipeline, field, f"native {field}")
         require(main_cpp, f'"{field}"', f"serialized {field}")
 
-    # Effective negative guidance is a magnitude. For the QNN cfg=1 fast path
-    # the unconditional UNet call is skipped, therefore the value must be 0.
     require(pipeline, "skip_uncond ? 0.0f", "cfg=1 zero negative effective weight")
     require(pipeline, "std::max(req.cfg - 1.0f, 0.0f)", "guided negative magnitude")
 

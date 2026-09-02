@@ -65,9 +65,22 @@ def install_stable_service_patch() -> None:
     base.patch_service = namespace["patch_service"]
 
 
+def install_stable_js_patch() -> None:
+    source = inspect.getsource(base.patch_js)
+    source = source.replace(
+        '    needle = "  function renderBudget(s){"',
+        '    needle = "  function renderBudget(s) {"',
+        1,
+    )
+    namespace = base.__dict__
+    exec(source, namespace)
+    base.patch_js = namespace["patch_js"]
+
+
 def main() -> int:
     base.replace_once = stable_replace_once
     install_stable_service_patch()
+    install_stable_js_patch()
     rc = base.main()
     if rc == 0:
         print("S24U_IMAGE_HARNESS_H6R4_TOKEN_TRUTH_V2_APPLIED")

@@ -132,6 +132,14 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h6r5.log
 
+      - name: Upload H6R5 pre-verification APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: s24u-image-harness-h6r5-preverify
+          path: local-dream/app/build/outputs/apk/basic/debug/*.apk
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Preserve and verify H6R5 APK
         shell: bash
         run: |
@@ -164,8 +172,12 @@ jobs:
             unzip -p "$APK" "$dex" > /tmp/current.dex
             strings /tmp/current.dex > /tmp/current.strings
             if grep -Fq 'S24U_H6R5_SEMANTIC_FIDELITY' /tmp/current.strings; then
-              grep -F '4 Fusion · same seed' /tmp/current.strings
-              grep -F '8 / 16 / 24 · same seed' /tmp/current.strings
+              # GNU strings scans DEX as ASCII by default. The UI's UTF-8
+              # middle dot intentionally splits the human label, so verify the
+              # stable ASCII portions here; the full Unicode labels are already
+              # covered by the H6R5 source/UI contract above.
+              grep -F '4 Fusion' /tmp/current.strings
+              grep -F '8 / 16 / 24' /tmp/current.strings
               found=1
               break
             fi

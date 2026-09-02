@@ -1,8 +1,6 @@
 name: S24U Image Harness H6R5 RED
 
 on:
-  push:
-    branches: [feature/s24u-image-harness-h6r5-semantic-fidelity]
   workflow_dispatch:
 
 permissions:
@@ -49,9 +47,8 @@ jobs:
           python3 s24u-image-harness/patch_h6_v11_token_truth_v2.py local-dream
           python3 s24u-image-harness/patch_h6_v12_runtime_truth_v2.py local-dream
           python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream
-          echo H6R4_BASELINE_PASS
 
-      - name: H6R5 contract must be RED
+      - name: Historical RED assertion
         shell: bash
         run: |
           set -euo pipefail
@@ -62,10 +59,9 @@ jobs:
           cat h6r5-red.log
           test "$rc" -ne 0
           grep -F "H6R5 versionCode" h6r5-red.log
-          echo H6R5_EXPECTED_RED_PASS
+          echo H6R5_HISTORICAL_RED_PASS
 
-      - name: Upload RED evidence
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: h6r5-red-evidence
           path: h6r5-red.log

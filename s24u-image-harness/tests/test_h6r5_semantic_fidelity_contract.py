@@ -36,6 +36,8 @@ def main() -> int:
         require(screen + js, mode, f"fusion experiment mode {mode}")
     for needle in ("SEMANTIC A/B", "same seed", "8 / 16 / 24", "experiment_id", "result_sha256"):
         require(screen + js + service, needle, f"semantic experiment evidence {needle}")
+    require(screen, "h6r5ExperimentRunning", "A/B session running guard")
+    require(screen, "enabled = !isRunning && !h6r5ExperimentRunning", "A/B controls stay disabled between variants")
 
     require(pipeline, "processPromptPairChunks", "direct token-preserving inference")
     require(js, "TOKEN PRESERVATION", "token preservation UI")

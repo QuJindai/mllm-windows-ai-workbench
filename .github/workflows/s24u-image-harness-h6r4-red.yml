@@ -1,0 +1,62 @@
+name: S24U Image Harness H6R4 RED
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r4-token-truth]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h6r4-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+      - name: Apply H2 through H6R3 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream
+          python3 s24u-image-harness/patch_h6_v6_semantic_fidelity.py local-dream
+          python3 s24u-image-harness/patch_h6_v7_fusion_core_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v7_fusion_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_core.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_ui.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_core.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_ui.py local-dream
+          python3 s24u-image-harness/patch_h6_v10_runtime_graph.py local-dream
+      - name: Verify H6R4 contract fails for the intended missing capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream > h6r4-red.log 2>&1
+          rc=$?
+          set -e
+          cat h6r4-red.log
+          test "$rc" -ne 0
+          grep -E 'H6R4 versionCode|direct weighted-token chunker|no positive text re-tokenization|runtime truth field' h6r4-red.log
+          echo H6R4_EXPECTED_RED_PASS

@@ -16,6 +16,13 @@ def stable_replace_once(text: str, old: str, new: str, label: str) -> str:
             + "  cond.positive_clip_executed = !pos_hit;\n"
         )
         return _original_replace_once(text, needle, replacement, label)
+    if label == "event guidance fact fields":
+        count = text.count(old)
+        if count != 2:
+            raise RuntimeError(
+                f"{label}: expected shared Event/Snapshot anchor twice, found {count}"
+            )
+        return text.replace(old, new, 1)
     return _original_replace_once(text, old, new, label)
 
 

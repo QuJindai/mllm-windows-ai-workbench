@@ -41,12 +41,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 s24u-image-harness/patch_h6_v11_token_truth_v2.py local-dream
-          python3 s24u-image-harness/patch_h6_v12_runtime_truth.py local-dream
+          python3 s24u-image-harness/patch_h6_v12_runtime_truth_v2.py local-dream
       - name: Compile H6R4 patch scripts
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile s24u-image-harness/patch_h6_v11_token_truth.py s24u-image-harness/patch_h6_v11_token_truth_v2.py s24u-image-harness/patch_h6_v12_runtime_truth.py
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v11_token_truth.py \
+            s24u-image-harness/patch_h6_v11_token_truth_v2.py \
+            s24u-image-harness/patch_h6_v12_runtime_truth.py \
+            s24u-image-harness/patch_h6_v12_runtime_truth_v2.py
       - name: H6R4 full contract
         shell: bash
         run: |

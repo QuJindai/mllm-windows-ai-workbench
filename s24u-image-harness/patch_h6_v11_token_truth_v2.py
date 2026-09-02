@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import inspect
+
 import patch_h6_v11_token_truth as base
 
 
@@ -26,8 +28,36 @@ def stable_replace_once(text: str, old: str, new: str, label: str) -> str:
     return _original_replace_once(text, old, new, label)
 
 
+def install_stable_service_patch() -> None:
+    source = inspect.getsource(base.patch_service)
+    start = source.index("    # Add matching event fields next to maxChunks")
+    end = source.index("\n\n    json_helper_anchor", start)
+    replacement = '''    # H6R4 Event already carries H5/H6 media/influence fields after maxChunks,
+    # so anchor within the Event body instead of assuming maxChunks ends the class.
+    event_anchor = (
+        "        val maxChunks: Int = 8,\\n"
+        "        val imageBase64: String = \\\"\\\",\\n"
+    )
+    event_new = (
+        "        val maxChunks: Int = 8,\\n"
+        "        val positiveChunkTokenIds: List<List<Int>> = emptyList(),\\n"
+        "        val negativeChunkTokenIds: List<List<Int>> = emptyList(),\\n"
+        "        val positiveTokenPreserved: Boolean = true,\\n"
+        "        val negativeTokenPreserved: Boolean = true,\\n"
+        "        val imageBase64: String = \\\"\\\",\\n"
+    )
+    text = replace_once(
+        text, event_anchor, event_new, "event token preservation fields"
+    )'''
+    source = source[:start] + replacement + source[end:]
+    namespace = base.__dict__
+    exec(source, namespace)
+    base.patch_service = namespace["patch_service"]
+
+
 def main() -> int:
     base.replace_once = stable_replace_once
+    install_stable_service_patch()
     rc = base.main()
     if rc == 0:
         print("S24U_IMAGE_HARNESS_H6R4_TOKEN_TRUTH_V2_APPLIED")

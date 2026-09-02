@@ -35,6 +35,14 @@ def stable_replace_once(text: str, old: str, new: str, label: str) -> str:
             + '            negativeTokenPreserved = message.optBoolean("negative_token_preserved", true),\n'
         )
         return _original_replace_once(text, needle, replacement, label)
+    if label == "token preservation card":
+        needle = '        <div id="budget-summary" class="metrics compact"></div>\n'
+        replacement = (
+            '        <div id="token-preservation" class="attention-state">'
+            '<strong>TOKEN PRESERVATION</strong><p>等待本轮真实 token 边界。</p></div>\n'
+            + needle
+        )
+        return _original_replace_once(text, needle, replacement, label)
     return _original_replace_once(text, old, new, label)
 
 

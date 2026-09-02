@@ -1,0 +1,85 @@
+name: S24U Image Harness H6R5 Source Gate
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r5-semantic-fidelity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h6r5-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Apply H2 through H6R4 verified baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream
+          for patch in \
+            patch_h6_v6_semantic_fidelity.py patch_h6_v7_fusion_core_v2.py patch_h6_v7_fusion_android.py \
+            patch_h6_v8_dynamics_core.py patch_h6_v8_dynamics_android.py patch_h6_v8_dynamics_ui.py \
+            patch_h6_v9_latent_core.py patch_h6_v9_latent_android.py patch_h6_v9_latent_ui.py patch_h6_v10_runtime_graph.py; do
+            python3 "s24u-image-harness/$patch" local-dream
+          done
+          python3 s24u-image-harness/patch_h6_v11_token_truth_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v12_runtime_truth_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream
+          echo H6R4_BASELINE_PASS
+
+      - name: Apply H6R5 GREEN feature chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v13_h6r5_truth_ui.py \
+            s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py
+          python3 s24u-image-harness/patch_h6_v13_h6r5_truth_ui.py local-dream
+          python3 s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py local-dream
+
+      - name: H6R5 full contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r5_semantic_fidelity_contract.py local-dream
+          grep -F 'versionCode = 7411' local-dream/app/build.gradle.kts
+          grep -F 'S24U_H6R5_SEMANTIC_FIDELITY' local-dream/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt
+          grep -F 'MODEL IDENTITY' local-dream/app/src/main/assets/s24u_microscope/microscope.js
+          grep -F 'INFLUENCE IMAGE COVERAGE' local-dream/app/src/main/assets/s24u_microscope/index.html
+          grep -F 'renderHumanReadableTokens' local-dream/app/src/main/assets/s24u_microscope/microscope.js
+          echo H6R5_SOURCE_GREEN_PASS
+
+      - name: H6R4 truth invariants remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'processPromptPairChunks' local-dream/app/src/main/cpp/src/Pipeline.hpp
+          ! grep -F 'splitPromptChunks(req.prompt)' local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -F 'positive_token_preserved' local-dream/app/src/main/cpp/src/main.cpp
+          grep -F 'observed_unet_passes' local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -F 'unattributed_ms' local-dream/app/src/main/cpp/src/Pipeline.hpp
+          echo H6R4_MONOTONIC_TRUTH_PASS

@@ -1,0 +1,70 @@
+name: S24U Image Harness H6R4 Baseline Capture
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r4-token-truth]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+      - name: Apply exact H2 through H6R3 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream
+          python3 s24u-image-harness/patch_h6_v6_semantic_fidelity.py local-dream
+          python3 s24u-image-harness/patch_h6_v7_fusion_core_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v7_fusion_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_core.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v8_dynamics_ui.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_core.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_android.py local-dream
+          python3 s24u-image-harness/patch_h6_v9_latent_ui.py local-dream
+          python3 s24u-image-harness/patch_h6_v10_runtime_graph.py local-dream
+      - name: Stage H6R3 files touched by H6R4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p h6r3-baseline/app/src/main/cpp/src
+          mkdir -p h6r3-baseline/app/src/main/java/io/github/xororz/localdream/service
+          mkdir -p h6r3-baseline/app/src/main/java/io/github/xororz/localdream/ui/screens
+          mkdir -p h6r3-baseline/app/src/main/assets/s24u_microscope
+          cp local-dream/app/build.gradle.kts h6r3-baseline/app/
+          cp local-dream/app/src/main/cpp/src/TextEncoder.hpp h6r3-baseline/app/src/main/cpp/src/
+          cp local-dream/app/src/main/cpp/src/Pipeline.hpp h6r3-baseline/app/src/main/cpp/src/
+          cp local-dream/app/src/main/cpp/src/main.cpp h6r3-baseline/app/src/main/cpp/src/
+          cp local-dream/app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt h6r3-baseline/app/src/main/java/io/github/xororz/localdream/service/
+          cp local-dream/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt h6r3-baseline/app/src/main/java/io/github/xororz/localdream/ui/screens/
+          cp local-dream/app/src/main/assets/s24u_microscope/microscope.js h6r3-baseline/app/src/main/assets/s24u_microscope/
+          cp local-dream/app/src/main/assets/s24u_microscope/index.html h6r3-baseline/app/src/main/assets/s24u_microscope/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h6r3-baseline-source-for-h6r4
+          path: h6r3-baseline
+          retention-days: 7

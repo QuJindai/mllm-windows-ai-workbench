@@ -1,0 +1,43 @@
+name: OKF v0.2 Android A-B Contract
+
+on:
+  push:
+    branches:
+      - feature/okf-v02-android-ab
+    paths:
+      - "s24u-image-harness/okf/**"
+      - "s24u-image-harness/tests/test_okf_v02_contract.py"
+      - ".github/workflows/okf-v02-android-ab.yml"
+      - "docs/OKF_V02_ANDROID_AB_TAKEOVER.md"
+  pull_request:
+    paths:
+      - "s24u-image-harness/okf/**"
+      - "s24u-image-harness/tests/test_okf_v02_contract.py"
+      - ".github/workflows/okf-v02-android-ab.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: okf-v02-ab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: OKF v0.2 parser and experiment contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test-only dependencies
+        run: python -m pip install --disable-pip-version-check pytest pyyaml
+      - name: OKF v0.2 contract tests
+        env:
+          PYTHONPATH: s24u-image-harness
+        run: python -m pytest -q s24u-image-harness/tests/test_okf_v02_contract.py
+      - name: Preserve existing H6R4 token truth contract
+        run: python -m pytest -q s24u-image-harness/tests/test_h6r4_token_truth_contract.py

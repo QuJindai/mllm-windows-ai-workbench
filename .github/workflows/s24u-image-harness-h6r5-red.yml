@@ -1,0 +1,73 @@
+name: S24U Image Harness H6R5 RED
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r5-semantic-fidelity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h6r5-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Apply H2 through H6R4 verified baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h2.py local-dream
+          python3 s24u-image-harness/patch_h3.py local-dream
+          python3 s24u-image-harness/patch_h3_capture_fix.py local-dream
+          python3 s24u-image-harness/patch_h4_v2.py local-dream
+          python3 s24u-image-harness/patch_h5_v2.py local-dream
+          python3 s24u-image-harness/patch_h6.py local-dream
+          python3 s24u-image-harness/patch_h6_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v3.py local-dream
+          python3 s24u-image-harness/patch_h6_v4_gesture.py local-dream
+          python3 s24u-image-harness/patch_h6_v5_observability.py local-dream
+          for patch in \
+            patch_h6_v6_semantic_fidelity.py patch_h6_v7_fusion_core_v2.py patch_h6_v7_fusion_android.py \
+            patch_h6_v8_dynamics_core.py patch_h6_v8_dynamics_android.py patch_h6_v8_dynamics_ui.py \
+            patch_h6_v9_latent_core.py patch_h6_v9_latent_android.py patch_h6_v9_latent_ui.py patch_h6_v10_runtime_graph.py; do
+            python3 "s24u-image-harness/$patch" local-dream
+          done
+          python3 s24u-image-harness/patch_h6_v11_token_truth_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v12_runtime_truth_v2.py local-dream
+          python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream
+          echo H6R4_BASELINE_PASS
+
+      - name: H6R5 contract must be RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 s24u-image-harness/tests/test_h6r5_semantic_fidelity_contract.py local-dream > h6r5-red.log 2>&1
+          rc=$?
+          set -e
+          cat h6r5-red.log
+          test "$rc" -ne 0
+          grep -F "H6R5 versionCode" h6r5-red.log
+          echo H6R5_EXPECTED_RED_PASS
+
+      - name: Upload RED evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: h6r5-red-evidence
+          path: h6r5-red.log
+          if-no-files-found: error
+          retention-days: 7

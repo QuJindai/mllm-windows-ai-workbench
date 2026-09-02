@@ -25,6 +25,16 @@ def stable_replace_once(text: str, old: str, new: str, label: str) -> str:
                 f"{label}: expected shared Event/Snapshot anchor twice, found {count}"
             )
         return text.replace(old, new, 1)
+    if label == "event token preservation parser":
+        needle = '            maxChunks = message.optInt("max_chunks", 8).coerceAtLeast(1),\n'
+        replacement = (
+            needle
+            + '            positiveChunkTokenIds = jsonNestedIntList(message, "positive_chunk_token_ids"),\n'
+            + '            negativeChunkTokenIds = jsonNestedIntList(message, "negative_chunk_token_ids"),\n'
+            + '            positiveTokenPreserved = message.optBoolean("positive_token_preserved", true),\n'
+            + '            negativeTokenPreserved = message.optBoolean("negative_token_preserved", true),\n'
+        )
+        return _original_replace_once(text, needle, replacement, label)
     return _original_replace_once(text, old, new, label)
 
 

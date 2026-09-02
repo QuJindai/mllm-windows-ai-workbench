@@ -18,12 +18,12 @@ def main() -> int:
     main_cpp = (root / "app/src/main/cpp/src/main.cpp").read_text(encoding="utf-8")
     service = (root / "app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt").read_text(encoding="utf-8")
     screen = (root / "app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt").read_text(encoding="utf-8")
+    html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
     require(gradle, "versionCode = 7411", "H6R5 versionCode")
     require(gradle, 'versionName = "2.8.1-s24u-h6r5"', "H6R5 versionName")
 
-    # Model identity must be carried as runtime evidence, not inferred from image style.
     for needle in (
         "model_id", "model_display_name", "model_backend_type", "model_is_dmd2",
         "model_loras", "scheduler_name", "generation_seed", "generation_steps",
@@ -32,23 +32,19 @@ def main() -> int:
         require(service + screen + js + main_cpp, needle, f"model identity field {needle}")
     require(js, "MODEL IDENTITY", "model identity UI")
 
-    # Same-seed experiment harness: four fusion modes and 8/16/24 step sweep.
     for mode in ("first_only", "equal_mean", "token_weighted", "anchor_residual"):
         require(screen + js, mode, f"fusion experiment mode {mode}")
     for needle in ("SEMANTIC A/B", "same seed", "8 / 16 / 24", "experiment_id", "result_sha256"):
         require(screen + js + service, needle, f"semantic experiment evidence {needle}")
 
-    # H6R4 token-truth must remain intact.
     require(pipeline, "processPromptPairChunks", "direct token-preserving inference")
     require(js, "TOKEN PRESERVATION", "token preservation UI")
 
-    # Conditioning influence must expose an explicit image coverage state.
     require(service + js, "influence_image_status", "influence image coverage status")
-    require(js, "INFLUENCE IMAGE COVERAGE", "influence coverage UI")
+    require(js + html, "INFLUENCE IMAGE COVERAGE", "influence coverage UI")
 
-    # Default human-readable UI must have a dedicated clean-token rendering path.
     require(js, "renderHumanReadableTokens", "human-readable token renderer")
-    require(js, "RAW BPE", "raw BPE folded evidence label")
+    require(html, "RAW BPE", "raw BPE folded evidence label")
 
     print("H6R5_SEMANTIC_FIDELITY_CONTRACT_PASS")
     return 0

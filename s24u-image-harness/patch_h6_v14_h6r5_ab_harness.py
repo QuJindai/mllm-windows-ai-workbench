@@ -45,6 +45,7 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
     var h6r5ActiveExperimentVariant by remember { mutableStateOf<String?>(null) }
     var h6r5ActiveExperimentSeed by remember { mutableStateOf<Long?>(null) }
     var h6r5LastResultSha256 by remember { mutableStateOf("") }
+    var h6r5ExperimentRunning by remember { mutableStateOf(false) }
 '''
     text = replace_once(text, state_anchor, state_anchor + states, "H6R5 experiment state")
 
@@ -72,7 +73,7 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
 
     page_anchor = '    // === Page Composable Functions ===\n'
     runner = '''    fun startH6R5Experiment(kind: String, variants: List<Pair<String, Int>>) {
-        if (isRunning || variants.isEmpty()) return
+        if (isRunning || h6r5ExperimentRunning || variants.isEmpty()) return
         focusManager.clearFocus()
         val sameSeed = seed.toLongOrNull() ?: (System.currentTimeMillis() and 0x7fffffffL)
         val experimentId = "${kind}-${System.currentTimeMillis()}"
@@ -81,10 +82,15 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
         h6r5ExperimentResults = emptyList()
         h6r5ActiveExperimentId = experimentId
         h6r5ActiveExperimentSeed = sameSeed
+        h6r5ExperimentRunning = true
         isRunning = true
         batchGenerationJob = coroutineScope.launch {
             try {
                 variants.forEachIndexed { index, (variantFusion, variantSteps) ->
+                    // A terminal GenerationState from the previous variant sets the
+                    // ordinary isRunning flag false. Restore it for the next variant;
+                    // the separate experiment guard remains true for the whole session.
+                    isRunning = true
                     currentBatchIndex = index + 1
                     fusionMode = variantFusion
                     steps = variantSteps.toFloat()
@@ -144,6 +150,7 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
                 h6r5ActiveExperimentVariant = null
                 h6r5ActiveExperimentSeed = null
                 currentBatchIndex = 0
+                h6r5ExperimentRunning = false
                 isRunning = false
             }
         }
@@ -177,7 +184,7 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
                                         ),
                                     )
                                 },
-                                enabled = !isRunning,
+                                enabled = !isRunning && !h6r5ExperimentRunning,
                             ) { Text("4 Fusion · same seed") }
                             OutlinedButton(
                                 onClick = {
@@ -186,7 +193,7 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
                                         listOf(fusionMode to 8, fusionMode to 16, fusionMode to 24),
                                     )
                                 },
-                                enabled = !isRunning,
+                                enabled = !isRunning && !h6r5ExperimentRunning,
                             ) { Text("8 / 16 / 24 · same seed") }
                         }
                         if (h6r5ExperimentResults.isNotEmpty()) {
@@ -219,6 +226,19 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
 '''
     text = replace_once(text, generate_anchor, experiment_ui + generate_anchor, "H6R5 experiment UI")
 
+    # Ordinary generation must also stay disabled for the full A/B session even
+    # though each individual Complete state temporarily clears isRunning.
+    text = replace_once(
+        text,
+        '''                            enabled = serviceState !is GenerationState.Progress &&
+                                !isRunning && !isUpscaling && !isUltrafixPreparing,
+''',
+        '''                            enabled = serviceState !is GenerationState.Progress &&
+                                !isRunning && !h6r5ExperimentRunning && !isUpscaling && !isUltrafixPreparing,
+''',
+        "H6R5 ordinary generate guard",
+    )
+
     payload_anchor = '            put("unet_sha256", h6r5UnetSha256)\n'
     payload = '''            put("experiment_id", h6r5ActiveExperimentId ?: h6r5ExperimentResults.lastOrNull()?.experimentId.orEmpty())
             put("result_sha256", h6r5LastResultSha256)
@@ -230,8 +250,6 @@ private fun h6r5BitmapSha256(bitmap: Bitmap): String {
 def patch_js(root: Path) -> None:
     p = root / "app/src/main/assets/s24u_microscope/microscope.js"
     text = p.read_text(encoding="utf-8")
-    # Surface experiment identity in the model evidence node without changing
-    # normal generation behavior.
     old = " · unet SHA256=${txt(s.unet_sha256)}`"
     new = " · unet SHA256=${txt(s.unet_sha256)} · SEMANTIC A/B experiment_id=${txt(s.experiment_id,'none')} · result_sha256=${txt(s.result_sha256,'pending')}`"
     text = replace_once(text, old, new, "H6R5 experiment runtime evidence")

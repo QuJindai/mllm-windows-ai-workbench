@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 s24u-image-harness/patch_h6_v11_token_truth.py local-dream | tee h6r4-token-patch.log
+          python3 s24u-image-harness/patch_h6_v11_token_truth_v2.py local-dream | tee h6r4-token-patch.log
       - name: Verify token-truth slice and isolate remaining runtime work
         shell: bash
         run: |

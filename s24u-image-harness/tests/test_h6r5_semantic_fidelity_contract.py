@@ -38,6 +38,7 @@ def main() -> int:
         require(screen + js + service, needle, f"semantic experiment evidence {needle}")
     require(screen, "h6r5ExperimentRunning", "A/B session running guard")
     require(screen, "enabled = !isRunning && !h6r5ExperimentRunning", "A/B controls stay disabled between variants")
+    require(screen, "import androidx.compose.material3.OutlinedButton", "A/B OutlinedButton import")
 
     require(pipeline, "processPromptPairChunks", "direct token-preserving inference")
     require(js, "TOKEN PRESERVATION", "token preservation UI")

@@ -18,6 +18,14 @@ def stable_replace_once(text: str, old: str, new: str, label: str) -> str:
             + "        }));\n"
         )
         return _original_replace_once(text, needle, replacement, label)
+    if label == "runtime final VAE accumulate":
+        needle = "    auto vae_dec_dur = elapsedMs(vae_dec_start);\n"
+        replacement = (
+            needle
+            + "    observed_vae_decodes++;\n"
+            + "    vae_total_ms += vae_dec_dur;\n"
+        )
+        return _original_replace_once(text, needle, replacement, label)
     return _original_replace_once(text, old, new, label)
 
 

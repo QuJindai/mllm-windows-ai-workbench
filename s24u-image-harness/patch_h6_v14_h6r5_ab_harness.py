@@ -15,6 +15,12 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 def patch_screen(root: Path) -> None:
     p = root / "app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt"
     text = p.read_text(encoding="utf-8")
+    text = replace_once(
+        text,
+        "import androidx.compose.material3.ButtonDefaults\n",
+        "import androidx.compose.material3.ButtonDefaults\nimport androidx.compose.material3.OutlinedButton\n",
+        "H6R5 OutlinedButton import",
+    )
     text = replace_once(text, "import java.nio.ByteBuffer\n" if "import java.nio.ByteBuffer\n" in text else "import java.security.MessageDigest\n",
                         "import java.nio.ByteBuffer\nimport java.security.MessageDigest\n" if "import java.nio.ByteBuffer\n" not in text else "import java.nio.ByteBuffer\n",
                         "H6R5 experiment hash import")

@@ -1,0 +1,77 @@
+name: S24U Image Harness H6R4 Source Gate
+
+on:
+  push:
+    branches: [feature/s24u-image-harness-h6r4-token-truth]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h6r4-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      UPSTREAM_SHA: a7666f6198412a58c6eb1eacc28828aa40c7d7ae
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned Local Dream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git checkout "$UPSTREAM_SHA"
+          git submodule update --init --recursive
+      - name: Apply H2 through H6R3 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in \
+            patch_h2.py patch_h3.py patch_h3_capture_fix.py patch_h4_v2.py patch_h5_v2.py \
+            patch_h6.py patch_h6_v2.py patch_h6_v3.py patch_h6_v4_gesture.py patch_h6_v5_observability.py \
+            patch_h6_v6_semantic_fidelity.py patch_h6_v7_fusion_core_v2.py patch_h6_v7_fusion_android.py \
+            patch_h6_v8_dynamics_core.py patch_h6_v8_dynamics_android.py patch_h6_v8_dynamics_ui.py \
+            patch_h6_v9_latent_core.py patch_h6_v9_latent_android.py patch_h6_v9_latent_ui.py patch_h6_v10_runtime_graph.py; do
+            python3 "s24u-image-harness/$patch" local-dream
+          done
+      - name: Apply H6R4 token truth and runtime truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6_v11_token_truth_v2.py local-dream
+          python3 s24u-image-harness/patch_h6_v12_runtime_truth_v2.py local-dream
+      - name: Compile H6R4 patch scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v11_token_truth.py \
+            s24u-image-harness/patch_h6_v11_token_truth_v2.py \
+            s24u-image-harness/patch_h6_v12_runtime_truth.py \
+            s24u-image-harness/patch_h6_v12_runtime_truth_v2.py
+      - name: H6R4 full contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream
+      - name: H6R3 monotonic regression contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/tests/test_h6r3_cfg_truth_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_fusion_lab_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_process_dynamics_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_latent_inspector_contract.py local-dream
+          python3 s24u-image-harness/tests/test_h6r3_runtime_graph_contract.py local-dream
+      - name: H6R4 source sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'versionCode = 7410' local-dream/app/build.gradle.kts
+          grep -F 'versionName = "2.8.1-s24u-h6r4"' local-dream/app/build.gradle.kts
+          grep -F 'S24U_H6R4_TOKEN_TRUTH' local-dream/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt
+          grep -F 'observed_unet_passes' local-dream/app/src/main/cpp/src/Pipeline.hpp
+          grep -F 'TOKEN PRESERVATION' local-dream/app/src/main/assets/s24u_microscope/microscope.js
+          grep -F 'Unattributed' local-dream/app/src/main/assets/s24u_microscope/microscope.js

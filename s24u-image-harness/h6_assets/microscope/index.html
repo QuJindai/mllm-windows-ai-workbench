@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <title>S24U H6 Conditioning Influence Microscope</title>
+  <link rel="stylesheet" href="microscope.css">
+</head>
+<body>
+  <main class="page">
+    <section class="summary-card">
+      <div class="summary-title">
+        <div><span class="kicker">S24U H6 · LIVE</span><h1>扩散显微镜</h1></div>
+        <span id="phase-pill" class="phase-pill">WAIT</span>
+      </div>
+      <p id="stage-explain" class="subtle">等待真实 native trace…</p>
+      <div class="metrics">
+        <div><span>进度</span><strong id="progress-value">0%</strong></div>
+        <div><span>后端</span><strong id="backend-value">NPU/QNN</strong></div>
+        <div><span>分辨率</span><strong id="resolution-value">—</strong></div>
+        <div><span>总耗时</span><strong id="total-value">—</strong></div>
+      </div>
+    </section>
+
+    <nav class="panel-tabs" aria-label="microscope views">
+      <button class="tab active" data-tab="overview">总览</button>
+      <button class="tab" data-tab="process">过程图</button>
+      <button class="tab" data-tab="influence">条件影响</button>
+      <button class="tab" data-tab="mechanism">机制</button>
+      <button class="tab" data-tab="expert">专家</button>
+    </nav>
+
+    <section class="panel active" data-panel="overview">
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">ARCHITECTURE</span><h2>真实计算链</h2></div><span id="step-badge" class="badge">—</span></div>
+        <div id="pipeline" class="pipeline">
+          <div class="node" data-node="prompt"><b>Prompt</b><small>文本</small></div><i>›</i>
+          <div class="node" data-node="token"><b>Token</b><small>Chunk × K</small></div><i>›</i>
+          <div class="node" data-node="clip"><b>CLIP</b><small>77 × hidden</small></div><i>›</i>
+          <div class="node" data-node="unet"><b>UNet</b><small>εₜ⁽ᵏ⁾</small></div><i>›</i>
+          <div class="node" data-node="scheduler"><b>Scheduler</b><small>ε̄ₜ → zₜ₋₁</small></div><i>›</i>
+          <div class="node" data-node="vae"><b>VAE</b><small>decode</small></div><i>›</i>
+          <div class="node" data-node="image"><b>Image</b><small>RGB</small></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">PROMPT</span><h2>Token / Chunk</h2></div></div>
+        <div id="budget-summary" class="metrics compact"></div>
+        <div id="truncation-warning" class="warning hidden"></div>
+        <div id="chunk-summary" class="chunk-summary"></div>
+      </article>
+
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">TIMELINE</span><h2>真实耗时</h2></div><span id="timeline-total" class="subtle">—</span></div>
+        <div id="timeline" class="timeline"></div>
+      </article>
+    </section>
+
+    <section class="panel" data-panel="process">
+      <article class="card process-card">
+        <div class="section-head"><div><span class="kicker">REAL VAE PREVIEW</span><h2>逐 step 生成过程</h2></div><span id="preview-badge" class="badge">0 帧</span></div>
+        <p class="subtle">这些图来自 Local Dream 原生 <code>renderPreview()</code>：当前 latent 经过真实 VAE decode，不是 UI 模拟动画。</p>
+        <div class="viewer">
+          <img id="process-main-image" alt="真实 diffusion 过程图">
+          <div id="process-empty" class="viewer-empty">开始生成后，这里会保留真实过程帧。</div>
+        </div>
+        <input id="process-scrubber" class="scrubber" type="range" min="0" max="0" value="0" step="1" aria-label="process step">
+        <div id="process-meta" class="viewer-meta">—</div>
+        <div id="process-thumbs" class="thumbs"></div>
+      </article>
+
+      <article class="card process-card">
+        <div class="section-head"><div><span class="kicker">LATENT · 4 CHANNELS</span><h2>内部 latent 通道图</h2></div><span id="latent-badge" class="badge">0 帧</span></div>
+        <p class="subtle">这是每个 scheduler step 后真实的 4 通道 latent，按通道归一化成 2×2 灰度图。它不是“UNet 每层特征图”，但是真实内部状态。</p>
+        <div class="viewer latent-viewer">
+          <img id="latent-main-image" alt="真实 latent 四通道图">
+          <div id="latent-empty" class="viewer-empty">等待 latent trace…</div>
+        </div>
+        <input id="latent-scrubber" class="scrubber" type="range" min="0" max="0" value="0" step="1" aria-label="latent step">
+        <div id="latent-meta" class="viewer-meta">—</div>
+      </article>
+    </section>
+
+    <section class="panel" data-panel="influence">
+      <article class="card influence-card">
+        <div class="section-head"><div><span class="kicker">CONDITIONING INFLUENCE</span><h2>Chunk 对当前 step 的真实影响</h2></div><span id="influence-badge" class="badge">0 样本</span></div>
+        <p class="subtle influence-note">这是每个 <code>chunk prediction</code> 相对最终 <code>fused prediction</code> 的真实差异，不是 cross-attention。H6 不增加 UNet 推理，也不改变传给 Scheduler 的 ε̄ₜ。</p>
+        <div class="influence-toolbar">
+          <label>Diffusion step <strong id="influence-step-label">—</strong></label>
+          <input id="influence-step-scrubber" class="scrubber" type="range" min="0" max="0" value="0" step="1" aria-label="influence diffusion step">
+        </div>
+        <div id="influence-chunks" class="influence-chunks"></div>
+        <div id="influence-metrics" class="metrics influence-metrics"></div>
+        <div class="viewer influence-viewer">
+          <img id="influence-main-image" alt="真实 conditioning influence 图">
+          <div id="influence-empty" class="viewer-empty">等待每个 chunk 的真实 prediction 差异…</div>
+        </div>
+        <div id="influence-meta" class="viewer-meta">—</div>
+        <div id="influence-bars" class="influence-bars"></div>
+      </article>
+    </section>
+
+    <section class="panel" data-panel="mechanism">
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">MATH · LIVE VALUES</span><h2>公式联动</h2></div></div>
+        <div id="formula-list" class="formula-list"></div>
+      </article>
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">TENSOR</span><h2>张量与观测状态</h2></div></div>
+        <div id="tensor-grid" class="tensor-grid"></div>
+      </article>
+    </section>
+
+    <section class="panel" data-panel="expert">
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">ATTRIBUTION</span><h2>词语 → 图像区域</h2></div></div>
+        <div class="attention-state"><strong>Cross-attention 未采集</strong><p>当前 QNN 编译图没有把 cross-attention 中间 tensor 声明为图输出。H6 的 conditioning influence 只说明各 chunk prediction 与 fused prediction 的差异，不能冒充 token-level attention。</p></div>
+      </article>
+      <article class="card">
+        <div class="section-head"><div><span class="kicker">RAW EVIDENCE</span><h2>原始证据</h2></div></div>
+        <details><summary>Token IDs</summary><h3>Positive</h3><pre id="positive-token-ids">—</pre><h3>Negative</h3><pre id="negative-token-ids">—</pre></details>
+        <details><summary>Native trace</summary><pre id="raw-events">等待真实 trace…</pre></details>
+      </article>
+    </section>
+  </main>
+  <script src="microscope.js"></script>
+</body>
+</html>

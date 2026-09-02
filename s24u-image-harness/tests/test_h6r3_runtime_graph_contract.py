@@ -15,7 +15,7 @@ def forbid(text: str, needle: str, label: str) -> None:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: test_h6r3_runtime_graph_contract.py <h6r3-task5-root>", file=sys.stderr)
+        print("usage: test_h6r3_runtime_graph_contract.py <h6r3+-root>", file=sys.stderr)
         return 2
     root = Path(sys.argv[1])
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
@@ -24,21 +24,29 @@ def main() -> int:
     require(html, "RUNTIME COMPUTE GRAPH", "runtime compute graph heading")
     require(html, 'id="runtime-graph"', "runtime graph container")
     require(js, "renderRuntimeGraph", "runtime graph renderer")
-    for field in (
-        "backend", "shape", "call_count", "duration_ms", "execution_state",
-        "input_source", "output_destination",
-    ):
+    for field in ("backend", "shape", "execution_state", "input_source", "output_destination"):
         require(js, field, f"runtime graph {field}")
+    if "expected_calls" in js:
+        require(js, "observed_calls", "H6R4 observed call truth")
+        require(js, "duration_ms", "H6R4 runtime duration")
+    else:
+        require(js, "call_count", "H6R3 runtime call count")
+        require(js, "duration_ms", "H6R3 runtime duration")
     for backend in ("MNN / CPU", "QNN / HTP", "Scheduler / CPU"):
         require(js, backend, f"backend truth {backend}")
     for node in (
         "Prompt", "Tokenizer / Chunker", "CLIP-1 / CLIP-2", "Conditioning",
         "CFG / Guidance", "UNet Chunk", "Chunk Fusion", "Scheduler",
-        "Latent zₜ", "Final VAE Decode", "Image",
+        "Latent zₜ", "VAE Decode", "Image",
     ):
         require(js, node, f"runtime node {node}")
-    require(js, "activeChunks", "fusion-aware UNet call count")
-    require(js, "sumPhaseDuration", "runtime duration aggregation")
+    require(js, "activeChunks", "fusion-aware expected UNet calls")
+    if "observed_calls" in js:
+        require(js, "unet_total_ms", "native cumulative duration truth")
+        require(js, "Unattributed", "time accounting")
+        forbid(js, "sumPhaseDuration", "bounded event history is not runtime truth")
+    else:
+        require(js, "sumPhaseDuration", "legacy runtime duration aggregation")
     require(js, "node.addEventListener('click'", "click-to-expand graph nodes")
 
     require(html, "Production QNN 图未导出", "production attention capability boundary")

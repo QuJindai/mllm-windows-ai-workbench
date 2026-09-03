@@ -8,6 +8,11 @@ def require(text: str, needle: str, label: str) -> None:
         raise AssertionError(f"{label}: missing {needle!r}")
 
 
+def require_any(text: str, needles: tuple[str, ...], label: str) -> None:
+    if not any(needle in text for needle in needles):
+        raise AssertionError(f"{label}: missing any of {needles!r}")
+
+
 def forbid(text: str, needle: str, label: str) -> None:
     if needle in text:
         raise AssertionError(f"{label}: forbidden brittle evidence check {needle!r}")
@@ -28,8 +33,12 @@ def main() -> int:
     html = (root / "app/src/main/assets/s24u_microscope/index.html").read_text(encoding="utf-8")
     js = (root / "app/src/main/assets/s24u_microscope/microscope.js").read_text(encoding="utf-8")
 
-    require(gradle, "versionCode = 7411", "H6R5 versionCode")
-    require(gradle, 'versionName = "2.8.1-s24u-h6r5"', "H6R5 versionName")
+    require_any(gradle, ("versionCode = 7411", "versionCode = 7412"), "H6R5+ versionCode")
+    require_any(
+        gradle,
+        ('versionName = "2.8.1-s24u-h6r5"', 'versionName = "2.8.1-s24u-h6r5r1"'),
+        "H6R5+ versionName",
+    )
 
     for needle in (
         "model_id", "model_display_name", "model_backend_type", "model_is_dmd2",

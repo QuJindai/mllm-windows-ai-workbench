@@ -1,4 +1,4 @@
-name: S24U Image Harness H6R5 Build
+name: S24U Image Harness H6R5R1 Build
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  build-h6r5:
+  build-h6r5r1:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -80,14 +80,20 @@ jobs:
           python3 s24u-image-harness/patch_h6_v12_runtime_truth_v2.py local-dream
           python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream
 
-      - name: Apply H6R5 feature chain
+      - name: Apply H6R5 and H6R5R1 feature chain
         shell: bash
         run: |
           set -euo pipefail
+          python3 -m py_compile \
+            s24u-image-harness/patch_h6_v13_h6r5_truth_ui.py \
+            s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py \
+            s24u-image-harness/patch_h6_v15_h6r5r1_history_carousel.py
           python3 s24u-image-harness/patch_h6_v13_h6r5_truth_ui.py local-dream
           python3 s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py local-dream
+          python3 s24u-image-harness/patch_h6_v15_h6r5r1_history_carousel.py local-dream
           python3 s24u-image-harness/tests/test_h6r5_semantic_fidelity_contract.py local-dream
-          echo H6R5_SOURCE_CONTRACTS_PASS
+          python3 s24u-image-harness/tests/test_h6r5r1_history_carousel_contract.py local-dream
+          echo H6R5R1_SOURCE_CONTRACTS_PASS
 
       - name: Download QAIRT Community SDK
         shell: bash
@@ -102,12 +108,12 @@ jobs:
           test -s "$QNN_ROOT/lib/aarch64-android/libQnnHtp.so"
           echo "QNN_SDK_ROOT=$QNN_ROOT" >> "$GITHUB_ENV"
 
-      - name: Build H6R5 QNN native core
+      - name: Build H6R5R1 QNN native core
         shell: bash
         run: |
           set -euo pipefail
           export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
-          bash s24u-image-harness/build_native_h2.sh 2>&1 | tee native-h6r5.log
+          bash s24u-image-harness/build_native_h2.sh 2>&1 | tee native-h6r5r1.log
           CORE=local-dream/app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
           test -s "$CORE"
           strings "$CORE" | grep -F -m1 'conditioning_influence'
@@ -115,7 +121,7 @@ jobs:
           strings "$CORE" | grep -F -m1 'positive_token_preserved'
           strings "$CORE" | grep -F -m1 'observed_unet_passes'
           strings "$CORE" | grep -F -m1 'unattributed_ms'
-          echo H6R5_NATIVE_MARKERS_PASS | tee native-markers-h6r5.log
+          echo H6R5R1_NATIVE_MARKERS_PASS | tee native-markers-h6r5r1.log
 
       - name: Stable TEST-ONLY keystore
         shell: bash
@@ -124,85 +130,87 @@ jobs:
           openssl pkcs12 -export -inkey s24u-image-harness/signing/s24u-test-signing-key.pem -in s24u-image-harness/signing/s24u-test-signing-cert.pem -name "$SIGN_ALIAS" -out /tmp/s24u-test.p12 -passout "pass:$SIGN_PASS"
           keytool -importkeystore -noprompt -srckeystore /tmp/s24u-test.p12 -srcstoretype PKCS12 -srcstorepass "$SIGN_PASS" -srcalias "$SIGN_ALIAS" -destkeystore /tmp/s24u-test.jks -deststoretype JKS -deststorepass "$SIGN_PASS" -destkeypass "$SIGN_PASS" -destalias "$SIGN_ALIAS"
 
-      - name: Gradle tests and H6R5 APK
+      - name: Gradle tests and H6R5R1 APK
         shell: bash
         run: |
           set -euo pipefail
           cd local-dream
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h6r5.log
+          ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug 2>&1 | tee ../gradle-h6r5r1.log
 
-      - name: Upload H6R5 pre-verification APK
+      - name: Upload H6R5R1 pre-verification APK
         uses: actions/upload-artifact@v4
         with:
-          name: s24u-image-harness-h6r5-preverify
+          name: s24u-image-harness-h6r5r1-preverify
           path: local-dream/app/build/outputs/apk/basic/debug/*.apk
           if-no-files-found: error
           retention-days: 2
 
-      - name: Preserve and verify H6R5 APK
+      - name: Preserve and verify H6R5R1 APK
         shell: bash
         run: |
           set -euo pipefail
           APK_SRC="$(find local-dream/app/build/outputs/apk/basic/debug -type f -name '*.apk' -print -quit)"
           test -s "$APK_SRC"
-          APK=S24U_Image_Harness_H6R5_20260903.apk
+          APK=S24U_Image_Harness_H6R5R1_20260904.apk
           cp "$APK_SRC" "$APK"
-          sha256sum "$APK" | tee H6R5_APK_SHA256SUMS.txt
-          stat -c 'APK_BYTES=%s' "$APK" | tee H6R5_APK_SIZE.txt
+          sha256sum "$APK" | tee H6R5R1_APK_SHA256SUMS.txt
+          stat -c 'APK_BYTES=%s' "$APK" | tee H6R5R1_APK_SIZE.txt
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
           APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
-          "$AAPT2" dump badging "$APK" > apk-badging-h6r5.txt
-          grep -F "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h6r5.txt
-          grep -F "versionCode='7411'" apk-badging-h6r5.txt
-          grep -F "versionName='2.8.1-s24u-h6r5'" apk-badging-h6r5.txt
-          zipinfo -1 "$APK" > apk-files-h6r5.txt
-          unzip -p "$APK" assets/s24u_microscope/index.html > /tmp/index-h6r5.html
-          unzip -p "$APK" assets/s24u_microscope/microscope.js > /tmp/js-h6r5.js
-          grep -F 'INFLUENCE IMAGE COVERAGE' /tmp/index-h6r5.html
-          grep -F 'RAW BPE / Token IDs' /tmp/index-h6r5.html
-          grep -F 'MODEL IDENTITY' /tmp/js-h6r5.js
-          grep -F 'renderHumanReadableTokens' /tmp/js-h6r5.js
-          grep -F 'SEMANTIC A/B' /tmp/js-h6r5.js
-          grep -F 'result_sha256' /tmp/js-h6r5.js
-          grep -F 'expected_calls' /tmp/js-h6r5.js
-          grep -F 'observed_calls' /tmp/js-h6r5.js
-          found=0
+          "$AAPT2" dump badging "$APK" > apk-badging-h6r5r1.txt
+          grep -F "package: name='io.github.xororz.localdream.s24uharness'" apk-badging-h6r5r1.txt
+          grep -F "versionCode='7412'" apk-badging-h6r5r1.txt
+          grep -F "versionName='2.8.1-s24u-h6r5r1'" apk-badging-h6r5r1.txt
+          zipinfo -1 "$APK" > apk-files-h6r5r1.txt
+          unzip -p "$APK" assets/s24u_microscope/index.html > /tmp/index-h6r5r1.html
+          unzip -p "$APK" assets/s24u_microscope/microscope.js > /tmp/js-h6r5r1.js
+          grep -F 'INFLUENCE IMAGE COVERAGE' /tmp/index-h6r5r1.html
+          grep -F 'RAW BPE / Token IDs' /tmp/index-h6r5r1.html
+          grep -F 'MODEL IDENTITY' /tmp/js-h6r5r1.js
+          grep -F 'renderHumanReadableTokens' /tmp/js-h6r5r1.js
+          grep -F 'SEMANTIC A/B' /tmp/js-h6r5r1.js
+          grep -F 'result_sha256' /tmp/js-h6r5r1.js
+          grep -F 'expected_calls' /tmp/js-h6r5r1.js
+          grep -F 'observed_calls' /tmp/js-h6r5r1.js
+          found_h6r5=0
+          found_r1=0
           while IFS= read -r dex; do
             unzip -p "$APK" "$dex" > /tmp/current.dex
             strings /tmp/current.dex > /tmp/current.strings
             if grep -Fq 'S24U_H6R5_SEMANTIC_FIDELITY' /tmp/current.strings; then
-              # GNU strings scans DEX as ASCII by default. The UI's UTF-8
-              # middle dot intentionally splits the human label, so verify the
-              # stable ASCII portions here; the full Unicode labels are already
-              # covered by the H6R5 source/UI contract above.
               grep -F '4 Fusion' /tmp/current.strings
               grep -F '8 / 16 / 24' /tmp/current.strings
-              found=1
-              break
+              found_h6r5=1
             fi
-          done < <(grep -E '^classes[0-9]*\.dex$' apk-files-h6r5.txt)
-          test "$found" -eq 1
-          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-signing-h6r5.txt
-          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h6r5.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+            if grep -Fq 'S24U_H6R5R1_HISTORY_CAROUSEL' /tmp/current.strings; then
+              grep -F 'previous history image' /tmp/current.strings
+              grep -F 'next history image' /tmp/current.strings
+              found_r1=1
+            fi
+          done < <(grep -E '^classes[0-9]*\.dex$' apk-files-h6r5r1.txt)
+          test "$found_h6r5" -eq 1
+          test "$found_r1" -eq 1
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-signing-h6r5r1.txt
+          CERT_HEX="$(grep -i 'Signer #1 certificate SHA-256 digest:' apk-signing-h6r5r1.txt | awk '{print $NF}' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
           test "$CERT_HEX" = "$EXPECTED_CERT_SHA256"
-          sha256sum -c H6R5_APK_SHA256SUMS.txt
-          echo H6R5_APK_VERIFICATION_PASS | tee apk-verification-h6r5.txt
+          sha256sum -c H6R5R1_APK_SHA256SUMS.txt
+          echo H6R5R1_APK_VERIFICATION_PASS | tee apk-verification-h6r5r1.txt
 
-      - name: Upload H6R5 phone-test package
+      - name: Upload H6R5R1 phone-test package
         uses: actions/upload-artifact@v4
         with:
-          name: s24u-image-harness-h6r5
+          name: s24u-image-harness-h6r5r1
           path: |
-            S24U_Image_Harness_H6R5_20260903.apk
-            H6R5_APK_SHA256SUMS.txt
-            H6R5_APK_SIZE.txt
-            native-h6r5.log
-            native-markers-h6r5.log
-            gradle-h6r5.log
-            apk-badging-h6r5.txt
-            apk-files-h6r5.txt
-            apk-signing-h6r5.txt
-            apk-verification-h6r5.txt
+            S24U_Image_Harness_H6R5R1_20260904.apk
+            H6R5R1_APK_SHA256SUMS.txt
+            H6R5R1_APK_SIZE.txt
+            native-h6r5r1.log
+            native-markers-h6r5r1.log
+            gradle-h6r5r1.log
+            apk-badging-h6r5r1.txt
+            apk-files-h6r5r1.txt
+            apk-signing-h6r5r1.txt
+            apk-verification-h6r5r1.txt
           if-no-files-found: error
           retention-days: 7

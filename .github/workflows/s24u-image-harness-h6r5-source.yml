@@ -51,33 +51,38 @@ jobs:
           python3 s24u-image-harness/tests/test_h6r4_token_truth_contract.py local-dream
           echo H6R4_BASELINE_PASS
 
-      - name: Apply H6R5 GREEN feature chain
+      - name: Apply H6R5 + H6R5R1 GREEN feature chain
         shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile \
             s24u-image-harness/patch_h6_v13_h6r5_truth_ui.py \
-            s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py
+            s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py \
+            s24u-image-harness/patch_h6_v15_h6r5r1_history_carousel.py
           python3 s24u-image-harness/patch_h6_v13_h6r5_truth_ui.py local-dream
           python3 s24u-image-harness/patch_h6_v14_h6r5_ab_harness.py local-dream
+          python3 s24u-image-harness/patch_h6_v15_h6r5r1_history_carousel.py local-dream
 
       - name: H6R5 full contract
         shell: bash
         run: |
           set -euo pipefail
           python3 s24u-image-harness/tests/test_h6r5_semantic_fidelity_contract.py local-dream
-          grep -F 'versionCode = 7411' local-dream/app/build.gradle.kts
           grep -F 'S24U_H6R5_SEMANTIC_FIDELITY' local-dream/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt
           grep -F 'MODEL IDENTITY' local-dream/app/src/main/assets/s24u_microscope/microscope.js
           grep -F 'INFLUENCE IMAGE COVERAGE' local-dream/app/src/main/assets/s24u_microscope/index.html
           grep -F 'renderHumanReadableTokens' local-dream/app/src/main/assets/s24u_microscope/microscope.js
           echo H6R5_SOURCE_GREEN_PASS
 
-      - name: H6R5R1 history carousel RED
+      - name: H6R5R1 history carousel contract
         shell: bash
         run: |
           set -euo pipefail
           python3 s24u-image-harness/tests/test_h6r5r1_history_carousel_contract.py local-dream
+          grep -F 'versionCode = 7412' local-dream/app/build.gradle.kts
+          grep -F 'versionName = "2.8.1-s24u-h6r5r1"' local-dream/app/build.gradle.kts
+          grep -F 'S24U_H6R5R1_HISTORY_CAROUSEL' local-dream/app/src/main/java/io/github/xororz/localdream/ui/components/ZoomableImageOverlay.kt
+          echo H6R5R1_HISTORY_CAROUSEL_GREEN_PASS
 
       - name: H6R4 truth invariants remain
         shell: bash

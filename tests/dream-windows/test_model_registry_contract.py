@@ -1,0 +1,67 @@
+import json
+import re
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+REGISTRY = ROOT / "config" / "dream" / "model-registry.json"
+VALIDATOR = ROOT / "scripts" / "validate_model_registry.ps1"
+GUIDE = ROOT / "docs" / "dream-windows" / "W1_MODEL_IMPORT.md"
+
+
+def test_registry_and_validator_exist():
+    assert REGISTRY.is_file()
+    assert VALIDATOR.is_file()
+    assert GUIDE.is_file()
+
+
+def test_first_model_declares_cyberrealistic_dmd2_identity():
+    data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    assert data["first_model_id"] == "cyberrealistic-v10-dmd2"
+    model = next(item for item in data["models"] if item["model_id"] == data["first_model_id"])
+    assert model["display_name"] == "CyberRealistic v10 DMD2"
+    assert model["architecture"] == "stable-diffusion-1.5"
+    assert model["dmd2"]["enabled"] is True
+    assert model["status"] == "uninstalled"
+
+
+def test_windows_identity_is_gguf_and_e_drive_only():
+    data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    model = data["models"][0]
+    windows = model["windows"]
+    assert windows["format"] == "gguf"
+    assert windows["path"].lower().startswith("e:\\dream\\")
+    assert windows["path"].lower().endswith(".gguf")
+    assert ".bin" not in windows["path"].lower()
+    sha256 = windows["sha256"]
+    assert sha256 is None or re.fullmatch(r"[0-9a-f]{64}", sha256, re.IGNORECASE)
+
+
+def test_android_reference_is_provenance_only():
+    data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    ref = data["models"][0]["android_reference"]
+    assert ref["branch"] == "feature/s24u-image-harness-h6r5-semantic-fidelity"
+    assert ref["commit"] == "381713f6985e1d48da16a14636989a4b27f1ae98"
+    assert ref["artifact_policy"] == "reference-only"
+
+
+def test_validator_has_fail_closed_markers_and_accepts_uninstalled_registry():
+    text = VALIDATOR.read_text(encoding="utf-8")
+    for marker in (
+        "MODEL_REGISTRY_PASS",
+        "MODEL_REGISTRY_FAIL",
+        "sha256",
+        "uninstalled",
+        "E:\\Dream",
+        "unet.bin",
+    ):
+        assert marker in text
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(VALIDATOR), "-Root", "E:\\Dream"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "MODEL_REGISTRY_PASS" in result.stdout

@@ -91,11 +91,11 @@
 - Registry entries contain `model_id`, `display_name`, `architecture`, `dmd2`, source path/hash, Windows GGUF path/hash, and Android reference branch/commit without copying Android QNN binaries.
 - `validate_model_registry.ps1 [-Root <path>]` validates paths, required fields, and hash format without hashing large models repeatedly; it emits `MODEL_REGISTRY_PASS`.
 
-- [ ] **Step 1: Write RED tests** for the CyberRealistic v10 DMD2 manifest schema, E-drive-only paths, and rejection of `unet.bin` as a Windows model.
-- [ ] **Step 2: Run the tests** and capture the missing registry failure.
-- [ ] **Step 3: Implement the registry and validator** with a path/size/mtime hash-cache shape ready for later SHA-256 calculation.
-- [ ] **Step 4: Add an explicit uninstalled state** for the first model so a missing model is reported as a gate blocker rather than silently substituted.
-- [ ] **Step 5: Run validation** and save machine-readable evidence under `E:\Dream\data\metadata`.
+- [x] **Step 1: Write RED tests** for the CyberRealistic v10 DMD2 manifest schema, E-drive-only paths, and rejection of `unet.bin` as a Windows model.
+- [x] **Step 2: Run the tests** and capture the missing registry failure.
+- [x] **Step 3: Implement the registry and validator** with a path/size/mtime hash-cache shape ready for later SHA-256 calculation.
+- [x] **Step 4: Add an explicit uninstalled state** for the first model so a missing model is reported as a gate blocker rather than silently substituted.
+- [x] **Step 5: Run validation** and save machine-readable evidence under `E:\Dream\data\metadata`.
 - [ ] **Step 6: Commit** with `feat(dream): define Windows model identity registry`.
 
 ### Task 4: W1 native CLI contract and dependency preflight

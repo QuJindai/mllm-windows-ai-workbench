@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "dream_root": "E:\\Dream",
+  "first_model_id": "cyberrealistic-v10-dmd2",
+  "models": [
+    {
+      "model_id": "cyberrealistic-v10-dmd2",
+      "display_name": "CyberRealistic v10 DMD2",
+      "architecture": "stable-diffusion-1.5",
+      "status": "uninstalled",
+      "dmd2": {
+        "enabled": true,
+        "variant": "DMD2",
+        "steps_default": 4
+      },
+      "source": {
+        "path": "E:\\Dream\\models\\incoming\\<source-file>",
+        "sha256": null,
+        "identity_status": "awaiting-import-and-hash"
+      },
+      "windows": {
+        "backend": "stable-diffusion.cpp",
+        "format": "gguf",
+        "path": "E:\\Dream\\models\\windows\\<converted-model>.gguf",
+        "sha256": null,
+        "identity_status": "awaiting-conversion-and-hash"
+      },
+      "android_reference": {
+        "branch": "<reference-branch>",
+        "commit": "<40-char-commit>",
+        "artifact_policy": "reference-only"
+      }
+    }
+  ]
+}

@@ -18,4 +18,21 @@ describe("Dream app shell", () => {
     }
     expect(screen.getByText("DEMO / MOCK")).toBeVisible();
   });
+
+  it("surfaces a hardware probe failure and disables generation", async () => {
+    class HardwareFailureProvider extends MockDreamProvider {
+      override async getHardware(): Promise<never> {
+        throw new Error("Hardware probe failed");
+      }
+    }
+
+    render(
+      <DreamProviderContext.Provider value={new HardwareFailureProvider()}>
+        <App />
+      </DreamProviderContext.Provider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Hardware probe failed");
+    expect(screen.getByRole("button", { name: "Generate image" })).toBeDisabled();
+  });
 });

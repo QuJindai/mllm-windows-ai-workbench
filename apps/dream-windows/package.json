@@ -10,8 +10,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:dev": "node scripts/run-tauri.mjs dev",
+    "tauri:build": "node scripts/run-tauri.mjs build",
     "verify:dpi": "node scripts/verify-dpi.mjs",
     "verify:e-drive": "node scripts/verify-e-drive.mjs"
   },

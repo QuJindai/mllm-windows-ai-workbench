@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import hardwareFixture from "../fixtures/hardware.json";
 import type { HardwareSnapshot } from "../domain/hardware";
 import { useDreamProvider } from "./providers";
 import { GeneratePage } from "./pages/GeneratePage";
@@ -18,17 +17,24 @@ const navigation: Array<{ id: Route; label: string; icon: string; hint: string }
   { id: "settings", label: "Settings", icon: "⚙", hint: "Configure the workstation" },
 ];
 
-const fallbackHardware = hardwareFixture as HardwareSnapshot;
-
 export function App() {
   const provider = useDreamProvider();
   const [route, setRoute] = useState<Route>("generate");
-  const [hardware, setHardware] = useState<HardwareSnapshot>(fallbackHardware);
+  const [hardware, setHardware] = useState<HardwareSnapshot | null>(null);
+  const [hardwareError, setHardwareError] = useState<string | null>(null);
+  const [hardwareLoading, setHardwareLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
+    setHardwareLoading(true);
+    setHardwareError(null);
+    setHardware(null);
     void provider.getHardware().then((snapshot) => {
       if (active) setHardware(snapshot);
+    }).catch((reason: unknown) => {
+      if (active) setHardwareError(reason instanceof Error ? reason.message : "Unable to read hardware status");
+    }).finally(() => {
+      if (active) setHardwareLoading(false);
     });
     return () => { active = false; };
   }, [provider]);
@@ -39,10 +45,10 @@ export function App() {
     <div className="dream-app">
       <SideNav active={route} onNavigate={setRoute} />
       <div className="dream-main">
-        <HardwareStatusBar hardware={hardware} providerMode={provider.mode} />
+        <HardwareStatusBar hardware={hardware} providerMode={provider.mode} loading={hardwareLoading} error={hardwareError} />
         <main className="dream-content" aria-live="polite">
           <PageHeading eyebrow={current.hint} title={route === "lab" ? "Semantic Lab" : current.label} />
-          <RoutePage route={route} />
+          <RoutePage route={route} hardware={hardware} hardwareError={hardwareError} />
         </main>
       </div>
     </div>
@@ -72,19 +78,20 @@ function SideNav({ active, onNavigate }: { active: Route; onNavigate: (route: Ro
   );
 }
 
-function HardwareStatusBar({ hardware, providerMode }: { hardware: HardwareSnapshot; providerMode: "mock" | "backend" }) {
-  const ramGb = hardware.ramTotalBytes / 1024 ** 3;
-  const vramGb = hardware.vramTotalMiB / 1024;
+function HardwareStatusBar({ hardware, providerMode, loading, error }: { hardware: HardwareSnapshot | null; providerMode: "mock" | "backend"; loading: boolean; error: string | null }) {
+  const ramGb = hardware ? hardware.ramTotalBytes / 1024 ** 3 : 0;
+  const vramGb = hardware ? hardware.vramTotalMiB / 1024 : 0;
   return (
     <header className="status-bar">
       <div className="status-title"><span className="pulse-dot" />Hardware Status</div>
       <div className="status-metrics">
-        <div className="metric"><span className="metric-label">GPU</span><strong>{hardware.gpuName}</strong></div>
-        <div className="metric"><span className="metric-label">VRAM</span><strong>{vramGb.toFixed(1)} GB</strong></div>
-        <div className="metric"><span className="metric-label">RAM</span><strong>{ramGb.toFixed(1)} GB</strong></div>
-        <div className="metric"><span className="metric-label">CUDA</span><strong className={hardware.cudaReady ? "text-success" : "text-muted"}>{hardware.cudaReady ? "Ready" : "Unavailable"}</strong></div>
+        <div className="metric"><span className="metric-label">GPU</span><strong>{hardware?.gpuName ?? "Unavailable"}</strong></div>
+        <div className="metric"><span className="metric-label">VRAM</span><strong>{hardware ? `${vramGb.toFixed(1)} GB` : "—"}</strong></div>
+        <div className="metric"><span className="metric-label">RAM</span><strong>{hardware ? `${ramGb.toFixed(1)} GB` : "—"}</strong></div>
+        <div className="metric"><span className="metric-label">CUDA</span><strong className={hardware?.cudaReady ? "text-success" : "text-muted"}>{loading ? "Probing…" : hardware?.cudaReady ? "Ready" : "Unavailable"}</strong></div>
       </div>
-      <span className={`truth-badge ${providerMode === "mock" ? "truth-demo" : "truth-observed"}`}>{providerMode === "mock" ? "DEMO / MOCK" : "LIVE / BACKEND"}</span>
+      <span className={`truth-badge ${error ? "truth-unavailable" : providerMode === "mock" ? "truth-demo" : "truth-observed"}`}>{error ? "HARDWARE ERROR" : providerMode === "mock" ? "DEMO / MOCK" : "LIVE / BACKEND"}</span>
+      {error && <span className="status-error">{error}</span>}
     </header>
   );
 }
@@ -93,9 +100,9 @@ function PageHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
   return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1></div><div className="heading-context"><span className="status-dot" />Session ready</div></div>;
 }
 
-function RoutePage({ route }: { route: Route }) {
+function RoutePage({ route, hardware, hardwareError }: { route: Route; hardware: HardwareSnapshot | null; hardwareError: string | null }) {
   switch (route) {
-    case "generate": return <GeneratePage />;
+    case "generate": return <GeneratePage hardware={hardware} hardwareError={hardwareError} />;
     case "models": return <ModelsPage />;
     case "history": return <HistoryPage />;
     case "lab": return <UnavailablePreview title="Semantic Lab" detail="Research Engine is unavailable in this GUI Alpha." />;

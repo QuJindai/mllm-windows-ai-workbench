@@ -14,4 +14,24 @@ describe("Models page", () => {
     expect(screen.getByRole("heading", { name: "Model details" })).toBeVisible();
     expect(screen.getByText(/E:\\Dream\\models\\windows\\gguf/)).toBeVisible();
   });
+
+  it("renders an explicit empty state when the registry has no models", async () => {
+    class EmptyModelsProvider extends MockDreamProvider {
+      override async listModels() { return []; }
+    }
+
+    render(<DreamProviderContext.Provider value={new EmptyModelsProvider()}><ModelsPage /></DreamProviderContext.Provider>);
+
+    expect(await screen.findByRole("heading", { name: "No models found" })).toBeVisible();
+  });
+
+  it("renders an explicit registry error when the provider fails", async () => {
+    class ErrorModelsProvider extends MockDreamProvider {
+      override async listModels(): Promise<never> { throw new Error("Model registry unavailable"); }
+    }
+
+    render(<DreamProviderContext.Provider value={new ErrorModelsProvider()}><ModelsPage /></DreamProviderContext.Provider>);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Model registry unavailable");
+  });
 });

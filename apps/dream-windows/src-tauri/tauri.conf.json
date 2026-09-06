@@ -7,7 +7,7 @@
     "beforeDevCommand": "npm run dev -- --host 127.0.0.1",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
-    "frontendDist": "../dist"
+    "frontendDist": "E:/Dream/builds/dream-windows/frontend"
   },
   "app": {
     "windows": [

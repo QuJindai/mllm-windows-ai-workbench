@@ -135,11 +135,11 @@
 - `Invoke-DreamAcceptance.ps1` runs W0 gates, model validation, W1 preflight/generation, and C-drive scan; it emits a summary with each gate state and evidence path.
 - The acceptance report includes `branch`, `HEAD`, GPU, VRAM, CUDA status, model identity/path, output path, seed, steps, CFG, generation time, peak VRAM, peak RAM, and `NO_C_DRIVE_DREAM_ASSET_PASS`.
 
-- [ ] **Step 1: Write the acceptance report contract** and make it fail when any required field is absent.
-- [ ] **Step 2: Run the report against the current environment** and preserve baseline failures separately from W0/W1 results.
-- [ ] **Step 3: Implement the orchestrator** so it never converts a skipped or unavailable gate into PASS.
-- [ ] **Step 4: Run the existing Python tests and all Dream tests** with E-drive caches; record the known legacy failures without altering unrelated files.
-- [ ] **Step 5: Run `git diff --check`, `git status`, and path scans** to confirm only intended branch files changed and no Dream assets landed in C:.
+- [x] **Step 1: Write the acceptance report contract** and make it fail when any required field is absent.
+- [x] **Step 2: Run the report against the current environment** and preserve baseline failures separately from W0/W1 results.
+- [x] **Step 3: Implement the orchestrator** so it never converts a skipped or unavailable gate into PASS.
+- [x] **Step 4: Run the existing Python tests and all Dream tests** with E-drive caches; record the known legacy failures without altering unrelated files.
+- [x] **Step 5: Run `git diff --check`, `git status`, and path scans** to confirm only intended branch files changed and no Dream assets landed in C:.
 - [ ] **Step 6: Commit** with `test(dream): add W0 and W1 acceptance evidence`.
 
 ## Review checklist

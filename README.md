@@ -31,6 +31,12 @@ The repository deliberately uses deterministic, AI-free CI:
 
 A physical-machine release is blocked while any required CI job is red.
 
+## Dream Windows lane
+
+The separate Windows Dream W0/W1 lane is documented in
+`docs/dream-windows/W0_W1_ACCEPTANCE.md`; it keeps models, caches, builds,
+logs, and evidence below `E:\Dream` without changing Safe Core behavior.
+
 ## Architecture
 
 ```text

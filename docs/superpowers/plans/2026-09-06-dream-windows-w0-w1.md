@@ -115,12 +115,12 @@
 - `dream-core.exe generate --model <id> --prompt <text> --negative <text> --seed <int> --steps <int> --cfg <float> --width <int> --height <int> --output <E-drive-png> --metadata <E-drive-json>` either performs a real CUDA generation or fails with a structured missing-dependency/model error.
 - The executable never writes models, caches, builds, history, or traces outside `E:\Dream`.
 
-- [ ] **Step 1: Write RED CLI contract tests** for help/version/hardware, required generation arguments, E-drive output validation, and structured failure.
-- [ ] **Step 2: Run the tests** before adding the adapter and record the expected failure.
-- [ ] **Step 3: Implement the minimum adapter boundary** without a fake image path: locate a configured `stable-diffusion.cpp` build, validate CUDA availability and the model manifest, then invoke the native backend with captured stdout/stderr and runtime metrics.
-- [ ] **Step 4: Run dependency preflight** for CMake, CUDA toolkit/runtime, stable-diffusion.cpp, and CyberRealistic model artifacts; record each result under `E:\Dream\logs\w1`.
+- [x] **Step 1: Write RED CLI contract tests** for help/version/hardware, required generation arguments, E-drive output validation, and structured failure.
+- [x] **Step 2: Run the tests** before adding the adapter and record the expected failure.
+- [x] **Step 3: Implement the minimum adapter boundary** without a fake image path: locate a configured `stable-diffusion.cpp` build, validate CUDA availability and the model manifest, then invoke the native backend with captured stdout/stderr and runtime metrics.
+- [x] **Step 4: Run dependency preflight** for CMake, CUDA toolkit/runtime, stable-diffusion.cpp, and CyberRealistic model artifacts; record each result under `E:\Dream\logs\w1`.
 - [ ] **Step 5: If all dependencies are present, build `dream-core.exe` into `E:\Dream\app\current`, run one fixed generation, calculate model/runtime hashes, and write PNG plus metadata under `E:\Dream\exports` and `E:\Dream\data`.
-- [ ] **Step 6: If a dependency is absent, stop at the preflight gate** and report the exact missing dependency; do not create a placeholder PNG or mark `WINDOWS_CUDA_GENERATION_PASS`.
+- [x] **Step 6: If a dependency is absent, stop at the preflight gate** and report the exact missing dependency; do not create a placeholder PNG or mark `WINDOWS_CUDA_GENERATION_PASS`.
 - [ ] **Step 7: Commit** with `feat(dream): add truthful CUDA CLI boundary` only after the contract and preflight are reproducible.
 
 ### Task 5: W0/W1 evidence bundle and regression gate

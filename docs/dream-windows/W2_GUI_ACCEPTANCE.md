@@ -1,7 +1,7 @@
 # Dream Windows GUI Alpha 验收记录
 
-日期：2026-09-06  
-分支：`feature/dream-windows-w2-gui-shell`  
+日期：2026-09-06
+分支：`feature/dream-windows-w2-gui-shell`
 范围：G0–G3 + History mock viewer continuity
 
 ## 当前状态

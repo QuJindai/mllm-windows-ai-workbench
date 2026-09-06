@@ -42,3 +42,17 @@ def test_acceptance_guide_requires_real_image_and_separates_blockers():
     assert "does not generate a placeholder" in text
     assert "W1_PREFLIGHT_BLOCKED" in text
     assert "E:\\Dream" in text
+
+
+def test_acceptance_orchestrator_includes_w2_gui_gates():
+    text = ORCHESTRATOR.read_text(encoding="utf-8")
+    for marker in (
+        "gui_w2",
+        "GUI_TESTS_PASS",
+        "GUI_BUILD_PASS",
+        "GUI_DPI_PASS",
+        "GUI_E_DRIVE_PASS",
+        "GUI_TAURI_BUILD_PASS",
+        "W2_GUI_ACCEPTANCE.md",
+    ):
+        assert marker in text, marker

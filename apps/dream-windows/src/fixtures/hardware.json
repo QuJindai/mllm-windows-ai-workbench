@@ -1,0 +1,13 @@
+{
+  "gpuName": "NVIDIA RTX 1000 Ada Generation Laptop GPU",
+  "vramTotalMiB": 6141,
+  "vramUsedMiB": 5850,
+  "gpuUtil": 54,
+  "gpuTempC": 40,
+  "ramTotalBytes": 68250030080,
+  "ramUsedBytes": 12600000000,
+  "cudaReady": true,
+  "dreamRoot": "E:\\Dream",
+  "truth": "observed",
+  "isMock": true
+}

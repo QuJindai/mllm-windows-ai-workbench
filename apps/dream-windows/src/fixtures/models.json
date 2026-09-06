@@ -1,0 +1,50 @@
+[
+  {
+    "id": "cyberrealistic-v10-dmd2",
+    "displayName": "CyberRealistic v10 DMD2",
+    "architecture": "SDXL",
+    "format": "GGUF",
+    "dmd2": true,
+    "path": "E:\\Dream\\models\\windows\\gguf\\cyberrealisticXL_v100_dmd2.gguf",
+    "sha256": "48A2D2A0FAA6332B3D8718707FEDBA750C75854904389C134B9535E23B1639F6",
+    "verified": true,
+    "sizeBytes": 4180186816,
+    "tags": ["photorealistic", "realistic", "portrait", "cinematic", "sdxl"],
+    "description": "Photorealistic, vivid real-world scenes with the DMD2 low-step profile.",
+    "kind": "Checkpoint",
+    "status": "ready",
+    "imageKey": "portrait"
+  },
+  {
+    "id": "dream-illustration-xl",
+    "displayName": "Dream Illustration XL",
+    "architecture": "SDXL",
+    "format": "SAFETENSORS",
+    "dmd2": false,
+    "path": "E:\\Dream\\models\\source\\dream-illustration-xl.safetensors",
+    "sha256": "9F7D2E6A7CE54D4A9D0B5C2A3B2D5A7C6F2D9A45F0B1C4E8D6A7B2C3D4E5F607",
+    "verified": true,
+    "sizeBytes": 6830000000,
+    "tags": ["illustration", "fantasy", "sdxl"],
+    "description": "Mock fixture for browsing a second compatible model.",
+    "kind": "Checkpoint",
+    "status": "ready",
+    "imageKey": "castle"
+  },
+  {
+    "id": "asian-beauty-style-lora",
+    "displayName": "Asian Beauty Style LoRA",
+    "architecture": "SDXL",
+    "format": "SAFETENSORS",
+    "dmd2": false,
+    "path": "E:\\Dream\\models\\lora\\asian-beauty-style.safetensors",
+    "sha256": "EF42D9A7C1BB2A96C28D5DEAC9B8F1A1A3C0DA4B9B2C4D8E7F6A5B4C3D2E1F09",
+    "verified": true,
+    "sizeBytes": 144000000,
+    "tags": ["style", "portrait", "lora"],
+    "description": "Mock fixture for style adapter management.",
+    "kind": "LoRA",
+    "status": "ready",
+    "imageKey": "portrait"
+  }
+]

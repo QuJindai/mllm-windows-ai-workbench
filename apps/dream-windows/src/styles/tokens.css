@@ -1,0 +1,29 @@
+:root {
+  --bg-0: #07121b;
+  --bg-1: #0b1722;
+  --bg-2: #101f2b;
+  --surface-1: #0e1c27;
+  --surface-2: #142532;
+  --border: #263947;
+  --text-1: #f2f7fa;
+  --text-2: #b3c0ca;
+  --text-3: #7d8c97;
+  --primary: #19a8ff;
+  --primary-strong: #008de6;
+  --cyan: #32c7ff;
+  --success: #29d797;
+  --warning: #f5b84b;
+  --danger: #f15b64;
+  --observed: #29d797;
+  --derived: #19a8ff;
+  --unavailable: #7d8c97;
+  --shadow-panel: 0 18px 48px rgba(0, 0, 0, 0.22);
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  color: var(--text-1);
+  background: var(--bg-0);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}

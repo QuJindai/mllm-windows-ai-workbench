@@ -1,0 +1,9 @@
+{
+  "gpu": "NVIDIA RTX 1000 Ada Laptop GPU",
+  "vram_gb": 6,
+  "cpu": "Intel Core i7-14700HX",
+  "ram_gb": 64,
+  "dream_root": "E:\\Dream",
+  "os": "Windows 11 Pro Build 26200"
+}
+

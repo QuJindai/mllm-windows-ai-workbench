@@ -1,5 +1,8 @@
 # Generated releases
 /dist/
+/apps/dream-windows/dist/
+/apps/dream-windows/node_modules/
+/apps/dream-windows/src-tauri/gen/
 /M_LLM_WINDOWS_BOOTSTRAP.cmd
 
 # Python caches

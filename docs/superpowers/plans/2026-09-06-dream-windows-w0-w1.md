@@ -121,7 +121,7 @@
 - [x] **Step 4: Run dependency preflight** for CMake, CUDA toolkit/runtime, stable-diffusion.cpp, and CyberRealistic model artifacts; record each result under `E:\Dream\logs\w1`.
 - [ ] **Step 5: If all dependencies are present, build `dream-core.exe` into `E:\Dream\app\current`, run one fixed generation, calculate model/runtime hashes, and write PNG plus metadata under `E:\Dream\exports` and `E:\Dream\data`.
 - [x] **Step 6: If a dependency is absent, stop at the preflight gate** and report the exact missing dependency; do not create a placeholder PNG or mark `WINDOWS_CUDA_GENERATION_PASS`.
-- [ ] **Step 7: Commit** with `feat(dream): add truthful CUDA CLI boundary` only after the contract and preflight are reproducible.
+- [x] **Step 7: Commit** with `feat(dream): add truthful CUDA CLI boundary` only after the contract and preflight are reproducible.
 
 ### Task 5: W0/W1 evidence bundle and regression gate
 
@@ -140,12 +140,12 @@
 - [x] **Step 3: Implement the orchestrator** so it never converts a skipped or unavailable gate into PASS.
 - [x] **Step 4: Run the existing Python tests and all Dream tests** with E-drive caches; record the known legacy failures without altering unrelated files.
 - [x] **Step 5: Run `git diff --check`, `git status`, and path scans** to confirm only intended branch files changed and no Dream assets landed in C:.
-- [ ] **Step 6: Commit** with `test(dream): add W0 and W1 acceptance evidence`.
+- [x] **Step 6: Commit** with `test(dream): add W0 and W1 acceptance evidence`.
 
 ## Review checklist
 
-- [ ] The plan has no fake W1 image path or unverified CUDA claim.
-- [ ] W0 can be rerun without destroying existing E-drive data.
-- [ ] All temporary/build/cache/output roots are parameterized and default to `E:\Dream`.
-- [ ] Existing Safe Core baseline failures are reported, not silently repaired in this branch.
-- [ ] W1 is marked complete only with a real native CUDA image and complete metadata; otherwise the exact dependency blocker remains explicit.
+- [x] The plan has no fake W1 image path or unverified CUDA claim.
+- [x] W0 can be rerun without destroying existing E-drive data.
+- [x] All temporary/build/cache/output roots are parameterized and default to `E:\Dream`.
+- [x] Existing Safe Core baseline failures are reported, not silently repaired in this branch.
+- [x] W1 is marked complete only with a real native CUDA image and complete metadata; otherwise the exact dependency blocker remains explicit.

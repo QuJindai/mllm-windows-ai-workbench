@@ -20,6 +20,6 @@ describe("Dream build policy", () => {
     expect(launcher).toContain('path.join(dreamRoot, "builds", "dream-windows")');
     expect(launcher).toContain('shell: process.platform === "win32"');
     expect(vite).toContain('E:/Dream/builds/dream-windows/frontend');
-    expect(tauri).toContain('"frontendDist": "E:/Dream/builds/dream-windows/frontend"');
+    expect(tauri).toContain('"frontendDist": "../../../../../builds/dream-windows/frontend"');
   });
 });

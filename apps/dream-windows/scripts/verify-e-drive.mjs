@@ -20,10 +20,12 @@ const forbidden = /(?:C:\\Users|C:\\Dream|file:\/\/\/C:)/i;
 let failed = false;
 for (const relative of files) {
   const content = fs.readFileSync(path.join(root, relative), "utf8");
-  const requiredPath = relative === "vite.config.ts" || relative === "src-tauri/tauri.conf.json";
+  const requiredPath = relative === "vite.config.ts";
+  const requiredTauriPath = relative === "src-tauri/tauri.conf.json";
   const passed = !forbidden.test(content)
     && (relative.includes("fixtures") || relative === "scripts/run-tauri.mjs" ? content.includes("E:\\\\Dream") : true)
-    && (!requiredPath || content.includes("E:/Dream/builds/dream-windows/frontend"));
+    && (!requiredPath || content.includes("E:/Dream/builds/dream-windows/frontend"))
+    && (!requiredTauriPath || content.includes("../../../../../builds/dream-windows/frontend"));
   console.log(`${passed ? "PASS" : "FAIL"} ${relative}`);
   failed ||= !passed;
 }

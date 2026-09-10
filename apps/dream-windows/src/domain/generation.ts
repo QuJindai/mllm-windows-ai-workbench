@@ -8,6 +8,8 @@ export type GenerationRequest = {
   height: number;
   steps: number;
   cfg: number;
+  samplingMethod?: "dpm++2m" | "dpm++2m_sde" | "lcm" | "euler" | "euler_a";
+  scheduler?: "karras" | "discrete" | "exponential" | "lcm";
   seed: number | "random";
   fusionMode: string;
   traceLevel: "off" | "basic" | "h6" | "h7";
@@ -19,7 +21,7 @@ export type GenerationResult = {
   id: string;
   imageUrl: string;
   truth: TruthLevel;
-  metadata: Record<string, string | number | boolean>;
+  metadata: Record<string, unknown>;
 };
 
 export type GenerationJob = {
@@ -33,3 +35,21 @@ export type GenerationJob = {
 };
 
 export type JobHandle = { id: string };
+
+export type GenerationPreset = {
+  id: string;
+  name: string;
+  request: GenerationRequest;
+};
+
+export type GenerationBatchItem = {
+  id: string;
+  request: GenerationRequest;
+  state: GenerationState;
+  progress: number;
+  message: string;
+  result?: GenerationResult;
+  error?: string;
+};
+
+export type GenerationBatch = GenerationBatchItem[];

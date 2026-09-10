@@ -13,4 +13,10 @@ export type HardwareSnapshot = {
   dreamRoot: string;
   truth: TruthLevel;
   isMock: boolean;
+  cpuName?: string;
+  cpuCores?: number;
+  cpuThreads?: number;
+  driverVersion?: string;
+  eDriveTotalBytes?: number;
+  eDriveFreeBytes?: number;
 };

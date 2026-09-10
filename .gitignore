@@ -20,3 +20,7 @@
 /venvs/
 /runtime/
 /tmp/
+
+# Local browser QA artifacts
+/.playwright-cli/
+/output/

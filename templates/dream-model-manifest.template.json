@@ -1,27 +1,34 @@
 {
   "schema_version": 1,
   "dream_root": "E:\\Dream",
-  "first_model_id": "cyberrealistic-v10-dmd2",
+  "first_model_id": "cyberrealistic-xl-v10-standard",
   "models": [
     {
-      "model_id": "cyberrealistic-v10-dmd2",
-      "display_name": "CyberRealistic v10 DMD2",
-      "architecture": "stable-diffusion-1.5",
+      "model_id": "cyberrealistic-xl-v10-standard",
+      "aliases": ["cyberrealistic-v10-dmd2"],
+      "display_name": "CyberRealistic XL v10（标准版）",
+      "architecture": "SDXL",
       "status": "uninstalled",
       "dmd2": {
-        "enabled": true,
-        "variant": "DMD2",
-        "steps_default": 4
+        "enabled": false,
+        "variant": "standard",
+        "steps_default": 20
       },
       "source": {
-        "path": "E:\\Dream\\models\\incoming\\<source-file>",
+        "provider": "Civitai",
+        "model_id": 312530,
+        "version_id": 2840768,
+        "file_id": 2727591,
+        "download_url": "<public-download-url>",
+        "path": "E:\\Dream\\models\\source\\<source-file>",
         "sha256": null,
+        "expected_sha256": null,
         "identity_status": "awaiting-import-and-hash"
       },
       "windows": {
         "backend": "stable-diffusion.cpp",
         "format": "gguf",
-        "path": "E:\\Dream\\models\\windows\\<converted-model>.gguf",
+        "path": "E:\\Dream\\models\\windows\\gguf\\<converted-model>.gguf",
         "sha256": null,
         "identity_status": "awaiting-conversion-and-hash"
       },

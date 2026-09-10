@@ -1,64 +1,153 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { HistoryItem } from "../../domain/history";
+import { generationQualityWarning } from "../../domain/generation-quality";
 import { useDreamProvider } from "../providers";
+import { TruthBadge } from "../components/TruthBadge";
 
 type Filter = "all" | "today" | "favorites" | "failed" | "tagged";
+const HISTORY_PAGE_SIZE = 24;
+export const HISTORY_POLL_INTERVAL_MS = 5000;
 
-export function HistoryPage() {
+function uniqueHistoryItems(items: HistoryItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+export function HistoryPage({ onRerun }: { onRerun?: (item: HistoryItem) => void }) {
   const provider = useDreamProvider();
   const [items, setItems] = useState<HistoryItem[]>([]);
-  const [viewerSequenceIds, setViewerSequenceIds] = useState<string[]>([]);
+  const [total, setTotal] = useState(0);
   const [viewerIndex, setViewerIndex] = useState(-1);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationExhausted, setPaginationExhausted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const itemsRef = useRef<HistoryItem[]>([]);
+  const queryVersionRef = useRef(0);
+  const nextPageRef = useRef(2);
 
-  const refresh = async (preferredIndex?: number) => {
+  const selected = items[viewerIndex] ?? null;
+  useEffect(() => { selectedIdRef.current = selected?.id ?? null; }, [selected?.id]);
+
+  const loadHistory = useCallback(async (preserveSelection: boolean, fallbackIndex = 0, queryVersion = queryVersionRef.current) => {
     try {
-      const page = await provider.listHistory({ page: 1, pageSize: 24, filter, search });
-      setItems(page.items);
-      setViewerSequenceIds(page.items.map((item) => item.id));
-      setViewerIndex(page.items.length === 0 ? -1 : Math.min(preferredIndex ?? 0, page.items.length - 1));
+      const page = await provider.listHistory({ page: 1, pageSize: HISTORY_PAGE_SIZE, filter, search });
+      if (queryVersion !== queryVersionRef.current) return;
+      const previousId = preserveSelection ? selectedIdRef.current : null;
+      const nextItems = uniqueHistoryItems(preserveSelection ? [...page.items, ...itemsRef.current] : page.items);
+      const preservedIndex = previousId ? nextItems.findIndex((item) => item.id === previousId) : -1;
+      const nextIndex = nextItems.length === 0 ? -1 : preservedIndex >= 0 ? preservedIndex : Math.min(Math.max(0, fallbackIndex), nextItems.length - 1);
+      if (!preserveSelection) {
+        nextPageRef.current = page.page + 1;
+        setPaginationExhausted(false);
+      }
+      itemsRef.current = nextItems;
+      selectedIdRef.current = nextItems[nextIndex]?.id ?? null;
+      setItems(nextItems);
+      setTotal(page.total);
+      setViewerIndex(nextIndex);
       setError(null);
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Unable to load history");
+      if (queryVersion !== queryVersionRef.current) return;
+      setError(reason instanceof Error ? reason.message : "无法加载历史记录");
     }
-  };
+  }, [filter, provider, search]);
 
   useEffect(() => {
     let active = true;
+    let requestInFlight = true;
+    const queryVersion = ++queryVersionRef.current;
+    nextPageRef.current = 2;
+    itemsRef.current = [];
+    selectedIdRef.current = null;
+    setItems([]);
+    setTotal(0);
+    setViewerIndex(-1);
+    setLoadingMore(false);
+    setPaginationExhausted(false);
+    setCompareOpen(false);
     setLoading(true);
-    void provider.listHistory({ page: 1, pageSize: 24, filter, search }).then((page) => {
-      if (!active) return;
-      setItems(page.items);
-      setViewerSequenceIds(page.items.map((item) => item.id));
-      setViewerIndex(page.items.length > 0 ? 0 : -1);
-      setError(null);
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Unable to load history");
-    }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [provider, filter, search]);
+    void loadHistory(false, 0, queryVersion).finally(() => {
+      requestInFlight = false;
+      if (active) setLoading(false);
+    });
+    const timer = window.setInterval(() => {
+      if (!active || document.visibilityState !== "visible" || requestInFlight) return;
+      requestInFlight = true;
+      void loadHistory(true, 0, queryVersion).finally(() => { requestInFlight = false; });
+    }, HISTORY_POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      if (queryVersionRef.current === queryVersion) queryVersionRef.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [loadHistory]);
 
-  const selectedId = viewerSequenceIds[viewerIndex] ?? null;
-  const selectedIndex = viewerIndex;
-  const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
-  const move = (delta: number) => {
-    if (viewerSequenceIds.length === 0) return;
-    const nextIndex = Math.max(0, Math.min(viewerSequenceIds.length - 1, (viewerIndex < 0 ? 0 : viewerIndex) + delta));
-    setViewerIndex(nextIndex);
+  const loadMore = async () => {
+    const queryVersion = queryVersionRef.current;
+    const pageNumber = nextPageRef.current;
+    setLoadingMore(true);
+    try {
+      const page = await provider.listHistory({ page: pageNumber, pageSize: HISTORY_PAGE_SIZE, filter, search });
+      if (queryVersion !== queryVersionRef.current) return;
+      if (page.items.length === 0) {
+        setPaginationExhausted(true);
+        setTotal(page.total);
+        setNotice("没有更多历史记录");
+        setError(null);
+        return;
+      }
+      const nextItems = uniqueHistoryItems([...itemsRef.current, ...page.items]);
+      nextPageRef.current = page.page + 1;
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      setTotal(page.total);
+      setError(null);
+    } catch (reason: unknown) {
+      if (queryVersion !== queryVersionRef.current) return;
+      setError(reason instanceof Error ? reason.message : "无法加载更多历史记录");
+    } finally {
+      if (queryVersion === queryVersionRef.current) setLoadingMore(false);
+    }
   };
 
+  const resetViewerTransform = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+  const move = (delta: number) => {
+    if (items.length === 0) return;
+    const next = Math.max(0, Math.min(items.length - 1, (viewerIndex < 0 ? 0 : viewerIndex) + delta));
+    selectedIdRef.current = items[next]?.id ?? null;
+    setViewerIndex(next);
+    resetViewerTransform();
+    setCompareOpen(false);
+  };
+  const refresh = async (fallbackIndex = viewerIndex) => { await loadHistory(true, fallbackIndex); setNotice("历史记录已刷新"); };
   const deleteSelected = async () => {
     if (!selected) return;
-    const index = selectedIndex;
+    const deletedIndex = viewerIndex;
     try {
       await provider.deleteHistory(selected.id);
-      await refresh(index);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Unable to delete history item");
-    }
+      selectedIdRef.current = null;
+      await loadHistory(false, Math.max(0, deletedIndex - 1));
+      resetViewerTransform();
+    } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "无法删除历史记录"); }
+  };
+  const confirmDelete = () => { if (selected && window.confirm(`确定从 Dream 历史记录中删除“${selected.title}”吗？`)) void deleteSelected(); };
+  const toggleFavorite = async () => {
+    if (!selected) return;
+    try { await provider.favoriteHistory(selected.id, !selected.favorite); await loadHistory(true); }
+    catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "无法更新收藏状态"); }
   };
 
   useEffect(() => {
@@ -68,41 +157,52 @@ export function HistoryPage() {
       if (event.key === "ArrowRight") { event.preventDefault(); move(1); }
       if (event.key === "ArrowLeft") { event.preventDefault(); move(-1); }
       if (event.key === "Escape") { event.preventDefault(); setViewerIndex(-1); }
-      if (event.key === "Delete") { event.preventDefault(); void deleteSelected(); }
+      if (event.key === "Delete") { event.preventDefault(); confirmDelete(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [items, viewerIndex, viewerSequenceIds]);
+  }, [items, selected, viewerIndex]);
 
-  const toggleFavorite = async () => {
-    if (!selected) return;
-    try {
-      await provider.favoriteHistory(selected.id, !selected.favorite);
-      await refresh(selectedIndex);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Unable to update favorite");
-    }
-  };
+  if (loading) return <section className="surface-card page-state" role="status">正在加载历史记录…</section>;
+  if (error && items.length === 0) return <section className="surface-card page-state" role="alert"><TruthBadge truth="unavailable" label="错误" />{error}</section>;
 
-  if (loading) return <section className="surface-card page-state" role="status">Loading history…</section>;
-  if (error) return <section className="surface-card page-state" role="alert"><span className="truth-label truth-unavailable">ERROR</span>{error}</section>;
-
+  const filterLabels: Record<Filter, string> = { all: `全部（${total}）`, today: "今天", favorites: "收藏", failed: "失败", tagged: "已标记" };
+  const compareItems = selected && items.length > 1 ? [selected, items[(viewerIndex + 1) % items.length]] : items.slice(0, 2);
   return (
-    <section className="history-layout">
-      <div className="surface-card history-registry">
-        <div className="history-toolbar"><div><div className="card-head"><span>HISTORY GRID · {items.length} RESULTS</span><span className="truth-label truth-demo">MOCK DATA</span></div><div className="filter-row">{(["all", "today", "favorites", "failed", "tagged"] as Filter[]).map((value) => <button type="button" className={`filter-button ${filter === value ? "is-active" : ""}`} key={value} onClick={() => setFilter(value)}>{value}</button>)}</div></div><input className="history-search" aria-label="Search history" placeholder="Search history" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
-        {items.length === 0 ? <div className="empty-state history-empty"><span className="empty-icon">◷</span><span>No history matches this query.</span></div> : <div className="history-grid">{items.map((item) => <HistoryCard item={item} selected={item.id === selectedId} onSelect={() => setViewerIndex(viewerSequenceIds.indexOf(item.id))} key={item.id} />)}</div>}
+    <section className="history-workstation">
+      <div className="history-main-column">
+        <div className="history-toolbar prototype-history-toolbar">
+          <div className="history-filters">{(["all", "today", "favorites", "failed", "tagged"] as Filter[]).map((value) => <button type="button" className={`filter-button ${filter === value ? "is-active" : ""}`} key={value} onClick={() => setFilter(value)}>{filterLabels[value]}</button>)}</div>
+          <div className="history-toolbar-actions"><input className="history-search" aria-label="搜索历史记录" placeholder="搜索提示词、标签或模型…" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="secondary-button" onClick={() => void refresh()}>刷新</button><button type="button" className="secondary-button" disabled={items.length < 2} onClick={() => setCompareOpen((open) => !open)}>比较当前两张</button></div>
+        </div>
+        {notice && <div className="inline-notice" role="status">{notice}</div>}
+        {error && <div className="inline-error" role="alert">{error}</div>}
+        {items.length === 0 ? <div className="surface-card empty-state history-empty"><span className="empty-icon">◷</span><span>没有符合条件的历史记录。</span></div> : <><div className="history-grid prototype-history-grid">{items.map((item, index) => <HistoryCard item={item} selected={index === viewerIndex} onSelect={() => { setViewerIndex(index); selectedIdRef.current = item.id; resetViewerTransform(); }} key={item.id} />)}</div>{items.length < total && !paginationExhausted && <div className="history-load-more"><button type="button" className="secondary-button" aria-label="加载更多历史记录" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "正在加载…" : `加载更多（已加载 ${items.length} / ${total}）`}</button></div>}</>}
+        {compareOpen && compareItems.length === 2 && <div className="surface-card compare-panel"><div className="compare-heading"><div><h2>并排比较</h2><p>同一历史列表中的相邻结果，参数仍以各自记录为准。</p></div><button type="button" className="secondary-button" onClick={() => setCompareOpen(false)}>关闭比较</button></div><div className="compare-grid">{compareItems.map((item, index) => <figure key={item.id}><img src={item.imageUrl} alt={`比较图 ${index + 1}`} loading="lazy" decoding="async" /><figcaption>{item.title}<small>{item.width} × {item.height} · {item.steps} 步</small></figcaption></figure>)}</div></div>}
       </div>
-      <HistoryViewer item={selected} onPrevious={() => move(-1)} onNext={() => move(1)} onDelete={() => void deleteSelected()} onFavorite={() => void toggleFavorite()} canPrevious={selectedIndex > 0} canNext={selectedIndex >= 0 && selectedIndex < items.length - 1} />
+      <HistoryViewer item={selected} providerMode={provider.mode} zoom={zoom} pan={pan} onZoomIn={() => setZoom((value) => Math.min(3, Number((value + 0.2).toFixed(1))))} onZoomOut={() => setZoom((value) => Math.max(1, Number((value - 0.2).toFixed(1))))} onResetZoom={resetViewerTransform} onPan={setPan} onPrevious={() => move(-1)} onNext={() => move(1)} onDelete={confirmDelete} onFavorite={() => void toggleFavorite()} onRerun={() => { if (selected && onRerun) onRerun(selected); else setNotice("已准备重新生成参数，请切换到生成页"); }} canPrevious={viewerIndex > 0} canNext={viewerIndex >= 0 && viewerIndex < items.length - 1} position={viewerIndex >= 0 ? `${viewerIndex + 1} / ${total}` : `0 / ${total}`} />
     </section>
   );
 }
 
 function HistoryCard({ item, selected, onSelect }: { item: HistoryItem; selected: boolean; onSelect: () => void }) {
-  return <button className={`history-card ${selected ? "is-selected" : ""}`} type="button" aria-pressed={selected} aria-label={`Open ${item.title}`} onClick={onSelect}><img src={item.imageUrl} alt={`${item.title} preview`} /><span className="history-card-overlay"><strong>{item.title}</strong><span>{item.modelName}</span></span>{item.favorite && <span className="favorite-mark" aria-label="Favorite">★</span>}{item.status === "failed" && <span className="failed-mark">FAILED</span>}</button>;
+  const qualityWarning = generationQualityWarning(item);
+  return <button className={`history-card ${selected ? "is-selected" : ""}`} type="button" aria-pressed={selected} aria-label={`打开 ${item.title}`} onClick={onSelect}><img src={item.imageUrl} alt={`${item.title} 预览`} loading="lazy" decoding="async" /><span className="history-card-overlay"><strong>{item.title}</strong><span>{item.modelName}</span><span>{item.width} × {item.height} · {item.generationTimeMs ? `${(item.generationTimeMs / 1000).toFixed(1)} 秒` : "时间不可用"}</span></span>{qualityWarning && <span className="quality-risk" title={qualityWarning}>质量风险</span>}{item.favorite && <span className="favorite-mark" aria-label="已收藏">★</span>}{item.status === "failed" && <span className="failed-mark">失败</span>}</button>;
 }
 
-function HistoryViewer({ item, onPrevious, onNext, onDelete, onFavorite, canPrevious, canNext }: { item: HistoryItem | null; onPrevious: () => void; onNext: () => void; onDelete: () => void; onFavorite: () => void; canPrevious: boolean; canNext: boolean }) {
-  if (!item) return <aside className="surface-card history-viewer"><div className="card-kicker">HISTORY VIEWER</div><div className="empty-state"><span className="empty-icon">◷</span><span>Select a result to inspect it.</span></div><span className="truth-label truth-unavailable">UNAVAILABLE</span></aside>;
-  return <aside className="surface-card history-viewer"><div className="card-head"><span>HISTORY VIEWER</span><span className={`truth-label ${item.status === "failed" ? "truth-unavailable" : "truth-demo"}`}>{item.status === "failed" ? "FAILED" : "DEMO DATA"}</span></div><img className="viewer-image" src={item.imageUrl} alt={`${item.title} full preview`} /><h2>{item.title}</h2><div className="viewer-model">{item.modelName} · seed {item.seed}</div><p className="muted-copy">{item.prompt}</p><div className="viewer-meta"><span>{item.width} × {item.height}</span><span>{item.steps} steps</span><span>{item.generationTimeMs} ms</span></div><div className="viewer-actions"><button type="button" className="secondary-button" aria-label="Previous result" disabled={!canPrevious} onClick={onPrevious}>←</button><button type="button" className="secondary-button" aria-label="Next result" disabled={!canNext} onClick={onNext}>→</button><button type="button" className="secondary-button" aria-label={item.favorite ? "Unfavorite result" : "Favorite result"} onClick={onFavorite}>{item.favorite ? "★" : "☆"}</button><button type="button" className="danger-button" aria-label="Delete result" onClick={onDelete}>Delete</button></div><div className="viewer-path"><span>File</span><code>{item.filePath}</code></div></aside>;
+function HistoryViewer({ item, providerMode, zoom, pan, onZoomIn, onZoomOut, onResetZoom, onPan, onPrevious, onNext, onDelete, onFavorite, onRerun, canPrevious, canNext, position }: { item: HistoryItem | null; providerMode: "mock" | "backend"; zoom: number; pan: { x: number; y: number }; onZoomIn: () => void; onZoomOut: () => void; onResetZoom: () => void; onPan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>; onPrevious: () => void; onNext: () => void; onDelete: () => void; onFavorite: () => void; onRerun: () => void; canPrevious: boolean; canNext: boolean; position: string }) {
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
+  if (!item) return <aside className="surface-card history-viewer"><div className="section-title">详情</div><div className="empty-state"><span className="empty-icon">◷</span><span>选择一个结果查看详情。</span></div><TruthBadge truth="unavailable" label="不可用" /></aside>;
+  const qualityWarning = generationQualityWarning(item);
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => { pointerStart.current = { x: event.clientX, y: event.clientY }; event.currentTarget.setPointerCapture?.(event.pointerId); };
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!start) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (zoom <= 1 && (!Number.isFinite(dx) || Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy))) { if (!Number.isFinite(dx) || dx < 0) { if (canNext) onNext(); } else if (canPrevious) onPrevious(); }
+    else if (zoom > 1) onPan((current) => ({ x: current.x + dx, y: current.y + dy }));
+  };
+  return <aside className="surface-card history-viewer"><div className="inspector-title-row"><div className="section-title">详情</div><TruthBadge truth={providerMode === "mock" ? "demo" : "observed"} label={providerMode === "mock" ? "演示数据" : "实时文件"} /></div><div className="viewer-position">{position}</div><div className="history-viewer-stage" onPointerDown={onPointerDown} onPointerUp={onPointerUp}><img className="viewer-image" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} src={item.imageUrl} alt={`${item.title} 完整预览`} decoding="async" /></div><div className="viewer-zoom-controls"><button type="button" className="secondary-button" aria-label="缩小预览" onClick={onZoomOut}>−</button><span>缩放 {zoom.toFixed(1)}×</span><button type="button" className="secondary-button" aria-label="放大预览" onClick={onZoomIn}>＋</button><button type="button" className="secondary-button" aria-label="重置缩放" onClick={onResetZoom}>重置</button></div><h2>{item.title}</h2><div className="viewer-model">{item.modelName} · 随机种子 {item.seed}</div><div className="viewer-meta"><span>{item.width} × {item.height}</span><span>{item.steps} 步</span><span>{item.generationTimeMs ? `${(item.generationTimeMs / 1000).toFixed(1)} 秒` : "—"}</span></div>{qualityWarning && <div className="quality-warning" role="status">{qualityWarning}</div>}<p className="muted-copy">{item.prompt}</p><div className="viewer-actions"><button type="button" className="secondary-button" aria-label="上一个结果" disabled={!canPrevious} onClick={onPrevious}>←</button><button type="button" className="secondary-button" aria-label="下一个结果" disabled={!canNext} onClick={onNext}>→</button><button type="button" className="secondary-button" aria-label={item.favorite ? "取消收藏" : "收藏结果"} onClick={onFavorite}>{item.favorite ? "★" : "☆"}</button><button type="button" className="secondary-button" onClick={onRerun}>重新生成此图</button><button type="button" className="danger-button" aria-label="删除结果" onClick={onDelete}>删除</button></div><div className="viewer-path"><span>文件</span><code>{item.filePath}</code></div></aside>;
 }

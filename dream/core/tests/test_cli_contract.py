@@ -1,5 +1,7 @@
 import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -28,13 +30,17 @@ def test_native_core_has_truthful_cli_and_storage_guards():
         "MODEL_UNINSTALLED",
         "E:\\\\Dream",
         "metadata",
+        "--trace-level",
+        "--trace-dir",
+        "trace_level",
+        "trace_dir",
     ):
         assert marker in text, marker
     assert "placeholder" not in text.lower()
     assert re.search(r"IsUnderRoot|under.*root", text, re.IGNORECASE)
 
 
-def test_preflight_is_fail_closed_and_persisted_on_e_drive():
+def test_preflight_is_fail_closed_and_persisted_on_missing_e_drive_root():
     text = PREPARE.read_text(encoding="utf-8") + PREFLIGHT.read_text(encoding="utf-8")
     for marker in (
         "W1_PREFLIGHT_PASS",
@@ -45,22 +51,26 @@ def test_preflight_is_fail_closed_and_persisted_on_e_drive():
         "E:\\Dream",
     ):
         assert marker in text, marker
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(PREFLIGHT),
-            "-Root",
-            "E:\\Dream",
-            "-RepoRoot",
-            str(ROOT),
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-    assert result.returncode != 0
-    assert "W1_PREFLIGHT_BLOCKED" in result.stdout
+    isolated_root = Path(tempfile.mkdtemp(prefix="dream-preflight-contract-", dir="E:\\Dream"))
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(PREFLIGHT),
+                "-Root",
+                str(isolated_root),
+                "-RepoRoot",
+                str(ROOT),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode != 0
+        assert "W1_PREFLIGHT_BLOCKED" in result.stdout
+    finally:
+        shutil.rmtree(isolated_root, ignore_errors=True)

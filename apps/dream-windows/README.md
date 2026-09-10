@@ -1,15 +1,19 @@
-# Dream Windows GUI Alpha
+# Dream Windows Browser Workstation
 
-This is the first Tauri 2 desktop shell for the Dream local workstation. It currently runs on a typed `MockDreamProvider`; backend wiring remains behind the same provider contract.
+The product GUI is the localhost browser workstation at `http://127.0.0.1:8866`. It is served by FastAPI and uses `DreamHttpProvider` in production. A desktop/Tauri executable is not part of the supported delivery path.
 
 ```powershell
 $env:npm_config_cache = 'E:\Dream\cache\npm'
 npm install
 npm run test:run
 npm run build
-npm run tauri:build
+
+# from the repository root, in a PowerShell window
+.\scripts\run_dream_web.ps1 -OpenBrowser
 ```
 
-`tauri:dev` and `tauri:build` route their npm cache, Cargo home, and Cargo target output to `E:\Dream`; the release executable is written to `E:\Dream\builds\dream-windows\release\dream-windows.exe`.
+Use `-Build` to rebuild the browser assets before starting the server. The server binds to localhost only and invokes the native CUDA generation engine behind the HTTP API; generated PNGs, metadata, jobs, and logs stay under `E:\Dream`.
 
-All fixture paths, exports, and verification targets are intentionally rooted at `E:\Dream`. The shell includes Generate, Models, History, Lab, Microscope, and Settings routes, with the mock data label kept visible in the hardware status bar.
+Normal `off`/`basic` generations reuse a localhost-only `sd-server` worker on port `12444`; H6/H7 capture stays on the native CLI path so latent evidence is preserved. The balanced default is 768×768, 20 steps, CFG 4, DPM++ 2M SDE, and Karras. Set `DREAM_SDCPP_SERVER_URL` only to another explicit localhost URL if the default port must change.
+
+The browser shell includes Generate, Models, History, Lab, Microscope, and Settings routes. Native facts are marked observed, derived metrics are marked derived, and unsupported latent/attention/research features remain explicitly unavailable rather than being shown as mock results.

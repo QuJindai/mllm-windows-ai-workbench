@@ -13,17 +13,20 @@ describe("Dream navigation shell", () => {
       </DreamProviderContext.Provider>,
     );
 
-    await waitFor(() => expect(screen.getByText("DEMO / MOCK")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("演示 / 模拟")).toBeInTheDocument());
     for (const [label, heading] of [
-      ["Generate", "Generate"],
-      ["Models", "Models"],
-      ["History", "History"],
-      ["Lab", "Semantic Lab"],
-      ["Microscope", "Microscope"],
-      ["Settings", "Settings"],
+      ["生成", "生成"],
+      ["模型", "模型"],
+      ["历史", "历史"],
+      ["实验室", "语义实验室"],
+      ["显微镜", "显微镜"],
+      ["设置", "设置"],
     ]) {
       fireEvent.click(screen.getByRole("button", { name: label }));
       expect(screen.getByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
+      if (label === "设置") {
+        expect(await screen.findByRole("tablist", { name: "设置分区" })).toBeInTheDocument();
+      }
     }
   });
 });

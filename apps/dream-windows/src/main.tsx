@@ -2,10 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
 import { DreamProviderContext } from "./app/providers";
-import { MockDreamProvider } from "./providers/MockDreamProvider";
+import { createDreamProvider } from "./providers/DreamHttpProvider";
 import "./styles/global.css";
 
-const provider = new MockDreamProvider();
+const provider = createDreamProvider();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

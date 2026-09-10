@@ -1,33 +1,156 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import type { GenerationJob, GenerationRequest } from "../../domain/generation";
+import type { GenerationBatchItem, GenerationJob, GenerationPreset, GenerationRequest } from "../../domain/generation";
 import type { HardwareSnapshot } from "../../domain/hardware";
 import type { ModelRecord } from "../../domain/models";
 import { useDreamProvider } from "../providers";
 import { generationStatusLabel, isGenerationTerminal } from "../generate-state";
+import { generationQualityWarning, MIN_GENERATION_DIMENSION, MIN_GENERATION_STEPS } from "../../domain/generation-quality";
 
 const defaultRequest: GenerationRequest = {
   prompt: "a serene mountain lake at sunrise, cinematic lighting, ultra detailed",
   negativePrompt: "low quality, blurry, text, watermark",
-  modelId: "cyberrealistic-v10-dmd2",
-  width: 832,
-  height: 1216,
-  steps: 8,
-  cfg: 1.2,
+  modelId: "cyberrealistic-xl-v10-standard",
+  width: 768,
+  height: 768,
+  steps: 20,
+  cfg: 4.0,
+  samplingMethod: "dpm++2m_sde",
+  scheduler: "karras",
   seed: 20260906,
   fusionMode: "none",
   traceLevel: "basic",
 };
 
-export function GeneratePage({ hardware, hardwareError }: { hardware?: HardwareSnapshot | null; hardwareError?: string | null }) {
+type GenerateTab = "prompt" | "presets" | "advanced";
+type PreviewTab = "preview" | "metadata" | "variants";
+type QueueEntry = GenerationBatchItem & { handleId?: string };
+type QueueRun = {
+  id: number;
+  stopRequested: boolean;
+  stopSignal: Promise<void>;
+  requestStop: () => void;
+  handleId: string | null;
+  entryId: string | null;
+  cancellation: Promise<GenerationJob> | null;
+};
+type QueueState = {
+  runId: number | null;
+  status: "idle" | "running" | "stopping" | "stopped" | "complete";
+  entries: QueueEntry[];
+  results: GenerationBatchItem[];
+};
+type QueueAction =
+  | { type: "queue-started"; runId: number; entries: QueueEntry[] }
+  | { type: "handle-received"; runId: number; entryId: string; handleId: string }
+  | { type: "job-updated"; runId: number; entryId: string; job: GenerationJob }
+  | { type: "entry-cancelled"; runId: number; entryId: string }
+  | { type: "entry-failed"; runId: number; entryId: string; error: string }
+  | { type: "queue-stopping"; runId: number }
+  | { type: "queue-stopped"; runId: number }
+  | { type: "queue-finished"; runId: number };
+
+const initialQueueState: QueueState = { runId: null, status: "idle", entries: [], results: [] };
+
+function stopUnsubmittedEntries(entries: QueueEntry[]): QueueEntry[] {
+  return entries.map((entry) => !entry.handleId && !isGenerationTerminal(entry.state)
+    ? { ...entry, state: "cancelled", progress: 0, message: "队列已停止" }
+    : entry);
+}
+
+function queueReducer(state: QueueState, action: QueueAction): QueueState {
+  if (action.type !== "queue-started" && action.runId !== state.runId) return state;
+  switch (action.type) {
+    case "queue-started":
+      return { runId: action.runId, status: "running", entries: action.entries, results: [] };
+    case "handle-received":
+      return {
+        ...state,
+        entries: state.entries.map((entry) => entry.id === action.entryId
+          ? { ...entry, handleId: action.handleId, state: "queued", message: "已提交到本地队列" }
+          : entry),
+      };
+    case "job-updated": {
+      let completed: QueueEntry | undefined;
+      const entries = state.entries.map((entry) => {
+        if (entry.id !== action.entryId) return entry;
+        completed = {
+          ...entry,
+          state: action.job.state,
+          progress: action.job.progress,
+          message: action.job.message,
+          result: action.job.result,
+          error: action.job.error,
+        };
+        return completed;
+      });
+      const results = action.job.result && completed
+        ? [...state.results.filter((item) => item.id !== completed?.id), completed]
+        : state.results;
+      return { ...state, entries, results };
+    }
+    case "entry-cancelled":
+      return {
+        ...state,
+        entries: state.entries.map((entry) => entry.id === action.entryId
+          ? { ...entry, state: "cancelled", progress: 0, message: "已取消生成" }
+          : entry),
+      };
+    case "entry-failed":
+      return {
+        ...state,
+        entries: state.entries.map((entry) => entry.id === action.entryId
+          ? { ...entry, state: "failed", progress: 0, message: "生成失败", error: action.error }
+          : entry),
+      };
+    case "queue-stopping":
+      return { ...state, status: "stopping", entries: stopUnsubmittedEntries(state.entries) };
+    case "queue-stopped":
+      return { ...state, status: "stopped", entries: stopUnsubmittedEntries(state.entries) };
+    case "queue-finished":
+      return state.status === "running" ? { ...state, status: "complete" } : state;
+  }
+}
+
+const PRESETS_KEY = "dream-windows-generation-presets";
+const JOB_POLL_INTERVAL_MS = 750;
+const wait = (milliseconds: number) => new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+
+function formatMetadataValue(value: unknown): string {
+  if (value === undefined) return "—";
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return "[无法序列化]";
+  }
+}
+
+export function GeneratePage({ hardware, hardwareError, initialRequest }: { hardware?: HardwareSnapshot | null; hardwareError?: string | null; initialRequest?: Partial<GenerationRequest> }) {
   const provider = useDreamProvider();
   const [models, setModels] = useState<ModelRecord[]>([]);
-  const [request, setRequest] = useState<GenerationRequest>(defaultRequest);
+  const [request, setRequest] = useState<GenerationRequest>({ ...defaultRequest, ...initialRequest });
   const [job, setJob] = useState<GenerationJob | null>(null);
+  const [queueState, dispatchQueue] = useReducer(queueReducer, initialQueueState);
+  const [tab, setTab] = useState<GenerateTab>("prompt");
+  const [batchCount, setBatchCount] = useState(1);
+  const [presets, setPresets] = useState<GenerationPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
   const [loadingModels, setLoadingModels] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const nextRunId = useRef(0);
+  const activeRun = useRef<QueueRun | null>(null);
   const hardwareReady = hardware === undefined || Boolean(hardware?.cudaReady && !hardwareError);
   const hardwareUnavailable = hardware !== undefined && !hardwareReady;
+  const qualityWarning = generationQualityWarning(request);
+  const queue = queueState.entries;
+  const results = queueState.results;
+
+  useEffect(() => {
+    if (initialRequest) setRequest((current) => ({ ...current, ...initialRequest }));
+  }, [initialRequest]);
 
   useEffect(() => {
     let active = true;
@@ -37,74 +160,231 @@ export function GeneratePage({ hardware, hardwareError }: { hardware?: HardwareS
       setModels(items);
       setRequest((current) => ({ ...current, modelId: items.some((item) => item.id === current.modelId) ? current.modelId : items[0]?.id ?? "" }));
     }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Unable to load models");
+      if (active) setError(reason instanceof Error ? reason.message : "无法加载模型");
     }).finally(() => { if (active) setLoadingModels(false); });
     return () => { active = false; };
   }, [provider]);
 
-  const jobId = job?.id;
-  const jobState = job?.state;
   useEffect(() => {
-    if (!jobId || !jobState || isGenerationTerminal(jobState)) return;
-    let active = true;
-    const poll = async () => {
-      try {
-        const next = await provider.getJob(jobId);
-        if (active) setJob(next);
-      } catch (reason: unknown) {
-        if (active) setError(reason instanceof Error ? reason.message : "Unable to read generation job");
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 100);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [jobId, jobState, provider]);
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(PRESETS_KEY) ?? "[]") as GenerationPreset[];
+      if (Array.isArray(saved)) setPresets(saved.filter((preset) => preset?.id && preset?.name && preset?.request));
+    } catch {
+      setPresets([]);
+    }
+  }, []);
 
   const update = <K extends keyof GenerationRequest>(key: K, value: GenerationRequest[K]) => setRequest((current) => ({ ...current, [key]: value }));
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!hardwareReady || !request.prompt.trim() || !request.modelId || job && !isGenerationTerminal(job.state)) return;
-    setError(null);
+  const isActiveRun = (run: QueueRun) => activeRun.current === run;
+
+  const cancelRunHandle = async (run: QueueRun): Promise<GenerationJob | null> => {
+    if (!run.handleId || !run.entryId) return null;
     try {
-      const handle = await provider.generate({ ...request, prompt: request.prompt.trim() });
-      setJob({ id: handle.id, request, state: "queued", progress: 0, message: "Submitting to the local queue" });
+      if (!run.cancellation) run.cancellation = provider.cancelJob(run.handleId);
+      const cancelled = await run.cancellation;
+      if (!isActiveRun(run)) return cancelled;
+      setJob(cancelled);
+      dispatchQueue({ type: "job-updated", runId: run.id, entryId: run.entryId, job: cancelled });
+      return cancelled;
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Generation failed");
+      if (isActiveRun(run)) setError(reason instanceof Error ? reason.message : "无法取消生成");
+      return null;
     }
   };
 
-  const running = Boolean(job && !isGenerationTerminal(job.state));
+  useEffect(() => () => {
+    const run = activeRun.current;
+    if (!run) return;
+    run.stopRequested = true;
+    run.requestStop();
+    activeRun.current = null;
+    if (run.handleId && !run.cancellation) {
+      run.cancellation = provider.cancelJob(run.handleId);
+      void run.cancellation.catch(() => undefined);
+    }
+  }, [provider]);
+
+  const runQueue = async (entries: QueueEntry[], run: QueueRun) => {
+    for (const entry of entries) {
+      if (run.stopRequested || !isActiveRun(run)) break;
+      try {
+        const handle = await provider.generate(entry.request);
+        run.handleId = handle.id;
+        run.entryId = entry.id;
+        if (run.stopRequested || !isActiveRun(run)) {
+          await cancelRunHandle(run);
+          break;
+        }
+        dispatchQueue({ type: "handle-received", runId: run.id, entryId: entry.id, handleId: handle.id });
+        let current: GenerationJob = { id: handle.id, request: entry.request, state: "queued", progress: 0, message: "已提交到本地队列" };
+        while (!isGenerationTerminal(current.state)) {
+          if (run.stopRequested || !isActiveRun(run)) break;
+          await wait(JOB_POLL_INTERVAL_MS);
+          if (run.stopRequested || !isActiveRun(run)) break;
+          const poll = await Promise.race([
+            provider.getJob(handle.id).then(
+              (job) => ({ type: "job", job } as const),
+              (reason: unknown) => ({ type: "error", reason } as const),
+            ),
+            run.stopSignal.then(() => ({ type: "stopped" } as const)),
+          ]);
+          if (poll.type === "stopped" || run.stopRequested || !isActiveRun(run)) break;
+          if (poll.type === "error") throw poll.reason;
+          if (run.stopRequested || !isActiveRun(run)) break;
+          current = poll.job;
+          setJob(current);
+          dispatchQueue({ type: "job-updated", runId: run.id, entryId: entry.id, job: current });
+        }
+        if (run.stopRequested && !isGenerationTerminal(current.state)) {
+          await cancelRunHandle(run);
+          if (isActiveRun(run)) dispatchQueue({ type: "entry-cancelled", runId: run.id, entryId: entry.id });
+          break;
+        }
+        if (isActiveRun(run)) setJob(current);
+      } catch (reason: unknown) {
+        if (!isActiveRun(run)) break;
+        const message = reason instanceof Error ? reason.message : "生成失败";
+        run.stopRequested = true;
+        dispatchQueue({ type: "entry-failed", runId: run.id, entryId: entry.id, error: message });
+        dispatchQueue({ type: "queue-stopped", runId: run.id });
+        setError(message);
+        break;
+      } finally {
+        if (run.entryId === entry.id) {
+          run.handleId = null;
+          run.entryId = null;
+          run.cancellation = null;
+        }
+      }
+    }
+    if (isActiveRun(run)) {
+      dispatchQueue({ type: run.stopRequested ? "queue-stopped" : "queue-finished", runId: run.id });
+      activeRun.current = null;
+    }
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!hardwareReady || qualityWarning || !request.prompt.trim() || !request.modelId || activeRun.current || queueState.status === "running" || queueState.status === "stopping") return;
+    setError(null);
+    const entries: QueueEntry[] = Array.from({ length: Math.max(1, Math.min(8, batchCount)) }, (_, index) => {
+      const seed = request.seed === "random" ? "random" : request.seed + index;
+      return { id: `batch-${Date.now()}-${index}`, request: { ...request, prompt: request.prompt.trim(), seed }, state: "queued", progress: 0, message: "等待本地队列" };
+    });
+    let requestStop!: () => void;
+    const stopSignal = new Promise<void>((resolve) => { requestStop = resolve; });
+    const run: QueueRun = { id: ++nextRunId.current, stopRequested: false, stopSignal, requestStop, handleId: null, entryId: null, cancellation: null };
+    activeRun.current = run;
+    dispatchQueue({ type: "queue-started", runId: run.id, entries });
+    void runQueue(entries, run);
+  };
+
+  const cancelActive = async () => {
+    const run = activeRun.current;
+    if (!run) return;
+    run.stopRequested = true;
+    run.requestStop();
+    dispatchQueue({ type: "queue-stopping", runId: run.id });
+    await cancelRunHandle(run);
+  };
+
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const preset: GenerationPreset = { id: `preset-${Date.now()}`, name, request: { ...request } };
+    const next = [...presets.filter((item) => item.name !== name), preset];
+    setPresets(next);
+    window.localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
+    setPresetName("");
+  };
+
+  const choosePreset = (preset: GenerationPreset) => {
+    setRequest(preset.request);
+    setTab("prompt");
+  };
   const selectedModel = models.find((item) => item.id === request.modelId);
+  const running = queueState.status === "running";
+  const stopping = queueState.status === "stopping";
+  const busy = running || stopping;
 
   return (
-    <section className="generate-layout">
-      <form className="surface-card generate-form" onSubmit={submit}>
-        <div className="card-head"><span>GENERATION REQUEST</span><span className={`truth-label ${provider.mode === "mock" ? "truth-demo" : "truth-observed"}`}>{provider.mode === "mock" ? "MOCK PROVIDER" : "BACKEND PROVIDER"}</span></div>
-        <label className="field-label" htmlFor="prompt">Prompt</label>
-        <textarea id="prompt" value={request.prompt} onChange={(event) => update("prompt", event.target.value)} rows={4} placeholder="Describe the image you want to create" />
-        <label className="field-label" htmlFor="negative-prompt">Negative prompt</label>
-        <textarea id="negative-prompt" value={request.negativePrompt} onChange={(event) => update("negativePrompt", event.target.value)} rows={2} />
-        <div className="form-grid">
-          <label className="field-label">Model<select aria-label="Model" value={request.modelId} disabled={loadingModels || models.length === 0} onChange={(event) => update("modelId", event.target.value)}>{loadingModels ? <option>Loading models…</option> : models.map((model) => <option value={model.id} key={model.id}>{model.displayName}</option>)}</select></label>
-          <label className="field-label">Seed<input aria-label="Seed" type="number" value={request.seed === "random" ? "" : request.seed} onChange={(event) => update("seed", Number(event.target.value))} /></label>
-          <label className="field-label">Width<input aria-label="Width" type="number" min="256" step="8" value={request.width} onChange={(event) => update("width", Number(event.target.value))} /></label>
-          <label className="field-label">Height<input aria-label="Height" type="number" min="256" step="8" value={request.height} onChange={(event) => update("height", Number(event.target.value))} /></label>
-          <label className="field-label">Steps<input aria-label="Steps" type="number" min="1" max="50" value={request.steps} onChange={(event) => update("steps", Number(event.target.value))} /></label>
-          <label className="field-label">CFG<input aria-label="CFG" type="number" min="0" step="0.1" value={request.cfg} onChange={(event) => update("cfg", Number(event.target.value))} /></label>
-        </div>
-        <div className="form-footer"><div className="request-meta"><span>{selectedModel?.architecture ?? "—"}</span><span>{selectedModel?.format ?? "—"}</span><span className={selectedModel?.verified ? "text-success" : "text-muted"}>{selectedModel?.verified ? "Verified" : "Unavailable"}</span></div><button className="primary-button" type="submit" disabled={loadingModels || hardwareUnavailable || !request.prompt.trim() || !request.modelId || running}>{running ? "Generating…" : "Generate image"}</button></div>
-        {hardwareUnavailable && <div role="alert" className="error-panel">{hardwareError ?? (hardware ? "CUDA unavailable" : "Hardware status unavailable")}</div>}
-        {error && <div role="alert" className="error-panel">{error}</div>}
-      </form>
-      <GenerationInspector job={job} hardwareReady={hardwareReady} hardwareError={hardwareError ?? null} />
+    <section className="generate-layout prototype-generate-layout">
+      <div className="generate-main-column">
+        <form className="surface-card generate-form" onSubmit={submit}>
+          <div className="card-head"><span>生成请求</span><span className={`truth-label ${provider.mode === "mock" ? "truth-demo" : "truth-observed"}`}>{provider.mode === "mock" ? "模拟提供方" : "后端提供方"}</span></div>
+          <div className="workbench-tabs" role="tablist" aria-label="生成设置">
+            {(["prompt", "presets", "advanced"] as GenerateTab[]).map((value) => <button key={value} type="button" role="tab" aria-selected={tab === value} className={tab === value ? "is-active" : ""} onClick={() => setTab(value)}>{value === "prompt" ? "提示词" : value === "presets" ? "预设" : "高级"}</button>)}
+          </div>
+          {tab === "prompt" && <>
+            <label className="field-label" htmlFor="prompt">正向提示词</label>
+            <textarea id="prompt" value={request.prompt} onChange={(event) => update("prompt", event.target.value)} rows={4} placeholder="描述你想创建的图像" />
+            <label className="field-label" htmlFor="negative-prompt">负向提示词</label>
+            <textarea id="negative-prompt" value={request.negativePrompt} onChange={(event) => update("negativePrompt", event.target.value)} rows={2} />
+            <div className="prompt-helper"><span>建议使用完整场景、主体数量和镜头描述。</span><span>{request.prompt.length}/2000</span></div>
+          </>}
+          {tab === "presets" && <PresetPanel presets={presets} presetName={presetName} onNameChange={setPresetName} onSave={savePreset} onChoose={choosePreset} />}
+          {tab === "advanced" && <div className="advanced-notice"><strong>高级采样参数</strong><p>这些设置会原样传递到 native stable-diffusion.cpp；显微镜采集只增加可观测输出，不改变普通生成参数。</p></div>}
+          <div className="form-grid">
+            <label className="field-label">模型<select aria-label="模型" value={request.modelId} disabled={loadingModels || models.length === 0} onChange={(event) => update("modelId", event.target.value)}>{loadingModels ? <option>正在加载模型…</option> : models.map((model) => <option value={model.id} key={model.id}>{model.displayName}</option>)}</select></label>
+            <label className="field-label">随机种子<input aria-label="随机种子" type="number" value={request.seed === "random" ? "" : request.seed} placeholder="留空为随机" onChange={(event) => update("seed", event.target.value === "" ? "random" : Number(event.target.value))} /></label>
+            <label className="field-label">宽度<input aria-label="Width" type="number" min={MIN_GENERATION_DIMENSION} step="8" value={request.width} onChange={(event) => update("width", Number(event.target.value))} /></label>
+            <label className="field-label">高度<input aria-label="Height" type="number" min={MIN_GENERATION_DIMENSION} step="8" value={request.height} onChange={(event) => update("height", Number(event.target.value))} /></label>
+            <label className="field-label">步数<input aria-label="Steps" type="number" min={MIN_GENERATION_STEPS} max="50" value={request.steps} onChange={(event) => update("steps", Number(event.target.value))} /></label>
+            <label className="field-label">CFG<input aria-label="CFG" type="number" min="0" step="0.1" value={request.cfg} onChange={(event) => update("cfg", Number(event.target.value))} /></label>
+            <label className="field-label">采样器<select aria-label="采样器" value={request.samplingMethod} onChange={(event) => update("samplingMethod", event.target.value as GenerationRequest["samplingMethod"])}><option value="dpm++2m_sde">DPM++ 2M SDE</option><option value="dpm++2m">DPM++ 2M</option><option value="lcm">LCM（仅蒸馏模型）</option><option value="euler">Euler</option><option value="euler_a">Euler Ancestral</option></select></label>
+            <label className="field-label">调度器<select aria-label="调度器" value={request.scheduler} onChange={(event) => update("scheduler", event.target.value as GenerationRequest["scheduler"])}><option value="karras">Karras</option><option value="discrete">Discrete</option><option value="exponential">Exponential</option><option value="lcm">LCM</option></select></label>
+            <label className="field-label">显微镜采集<select aria-label="显微镜采集" value={request.traceLevel} onChange={(event) => update("traceLevel", event.target.value as GenerationRequest["traceLevel"])}><option value="basic">仅阶段耗时</option><option value="h6">H6 每步 Latent 投影与统计</option><option value="h7">H7 研究采集（需研究引擎）</option></select></label>
+            <label className="field-label">批量数量<input aria-label="批量数量" type="number" min="1" max="8" value={batchCount} onChange={(event) => setBatchCount(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></label>
+          </div>
+          <div className="form-footer"><div className="request-meta"><span>{selectedModel?.architecture ?? "—"}</span><span>{selectedModel?.format ?? "—"}</span><span className={selectedModel?.verified ? "text-success" : "text-muted"}>{selectedModel?.verified ? "已验证" : "不可用"}</span><span>{batchCount > 1 ? `串行队列 ${batchCount} 张` : "单张生成"}</span></div><div className="generate-action-group"><button className="primary-button generate-submit" type="submit" disabled={loadingModels || hardwareUnavailable || Boolean(qualityWarning) || !request.prompt.trim() || !request.modelId || busy}>{stopping ? "正在停止…" : running ? "生成中…" : "生成图像"}</button>{running && <button className="danger-button" type="button" aria-label="取消生成" onClick={() => void cancelActive()}>取消生成</button>}</div></div>
+          {qualityWarning && <div role="alert" className="quality-warning">{qualityWarning}</div>}
+          {hardwareUnavailable && <div role="alert" className="error-panel">{hardwareError ?? (hardware ? "CUDA 不可用" : "硬件状态不可用")}</div>}
+          {error && <div role="alert" className="error-panel">{error}</div>}
+        </form>
+        {queue.length > 0 && <BatchQueue entries={queue} stopped={stopping || queueState.status === "stopped"} />}
+      </div>
+      <GenerationPreview job={job} results={results} providerMode={provider.mode} />
+      <GenerationInspector job={job} hardwareReady={hardwareReady} hardwareError={hardwareError ?? null} providerMode={provider.mode} queue={queue} />
     </section>
   );
 }
 
-function GenerationInspector({ job, hardwareReady, hardwareError }: { job: GenerationJob | null; hardwareReady: boolean; hardwareError: string | null }) {
-  if (!job) {
-    return <aside className="surface-card generation-inspector"><div className="card-kicker">JOB INSPECTOR</div><div className="empty-state"><span className="empty-icon">◌</span><span>Generation status will appear here.</span></div><div className="inspector-note"><span className={`truth-label ${hardwareReady ? "truth-unavailable" : "truth-unavailable"}`}>{hardwareReady ? "UNAVAILABLE" : "HARDWARE"}</span><span>{hardwareReady ? "Backend execution is not connected in GUI Alpha." : hardwareError ?? "CUDA unavailable"}</span></div></aside>;
-  }
-  return <aside className="surface-card generation-inspector"><div className="card-head"><span>JOB INSPECTOR</span><span className={`truth-label ${job.state === "complete" ? "truth-observed" : job.state === "failed" ? "truth-unavailable" : "truth-derived"}`}>{generationStatusLabel(job.state)}</span></div><div className="job-state" role={job.state === "failed" ? "alert" : undefined}><strong>{generationStatusLabel(job.state)}</strong><span>{job.error ?? job.message}</span></div><div className="progress-track" role="progressbar" aria-label="Generation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job.progress}><span style={{ width: `${job.progress}%` }} /></div><div className="progress-reading"><span>Progress</span><strong>{job.progress}%</strong></div>{job.result ? <div className="result-wrap"><img src={job.result.imageUrl} alt="Mock generated result" /><div className="result-caption"><span>Result ready</span><span className="truth-label truth-demo">DEMO DATA</span></div></div> : <div className="inspector-note"><span className="truth-label truth-derived">LOCAL QUEUE</span><span>Polling the typed provider contract.</span></div>}</aside>;
+function PresetPanel({ presets, presetName, onNameChange, onSave, onChoose }: { presets: GenerationPreset[]; presetName: string; onNameChange: (value: string) => void; onSave: () => void; onChoose: (preset: GenerationPreset) => void }) {
+  return <div className="preset-panel"><div className="preset-save-row"><input aria-label="预设名称" placeholder="输入预设名称" value={presetName} onChange={(event) => onNameChange(event.target.value)} /><button className="secondary-button" type="button" disabled={!presetName.trim()} onClick={onSave}>保存预设</button></div>{presets.length === 0 ? <div className="empty-state preset-empty"><span className="empty-icon">☆</span><span>还没有保存的预设。</span></div> : <div className="preset-list">{presets.map((preset) => <button type="button" className="preset-item" aria-label={`选择预设 ${preset.name}`} key={preset.id} onClick={() => onChoose(preset)}><strong>{preset.name}</strong><span>{preset.request.width} × {preset.request.height} · {preset.request.steps} 步 · {preset.request.modelId}</span></button>)}</div>}</div>;
+}
+
+function BatchQueue({ entries, stopped }: { entries: QueueEntry[]; stopped: boolean }) {
+  return <section className="surface-card batch-queue"><div className="section-title">批量队列 · {entries.length} 项 <span className={`truth-label ${stopped ? "truth-derived" : "truth-observed"}`}>{stopped ? "队列已停止" : "串行执行"}</span></div><div className="batch-entry-list">{entries.map((entry, index) => <div className="batch-entry" key={entry.id}><span className="batch-index">{index + 1}</span><div><strong>{generationStatusLabel(entry.state)}</strong><small>{entry.message}{entry.error ? ` · ${entry.error}` : ""}</small></div><span>{entry.progress}%</span></div>)}</div></section>;
+}
+
+function GenerationPreview({ job, results, providerMode }: { job: GenerationJob | null; results: GenerationBatchItem[]; providerMode: "mock" | "backend" }) {
+  const [tab, setTab] = useState<PreviewTab>("preview");
+  const image = job?.result?.imageUrl;
+  const labels: Record<PreviewTab, string> = { preview: "预览", metadata: "元数据", variants: `变体（${results.length}）` };
+  const metadata = job ? [
+    ["任务 ID", job.id],
+    ["模型", job.request.modelId],
+    ["尺寸", `${job.request.width} × ${job.request.height}`],
+    ["步数", job.request.steps],
+    ["CFG", job.request.cfg],
+    ["随机种子", job.request.seed],
+    ["采样器", job.request.samplingMethod],
+    ["调度器", job.request.scheduler],
+    ...Object.entries(job.result?.metadata ?? {}).filter(([key]) => !["width", "height", "modelId"].includes(key)),
+  ] : [];
+  return <section className="surface-card generation-preview">
+    <div className="preview-tabs" role="tablist" aria-label="生成结果视图">
+      {(["preview", "metadata", "variants"] as PreviewTab[]).map((value) => <button key={value} className={tab === value ? "is-active" : ""} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{labels[value]}</button>)}
+    </div>
+    {tab === "preview" && <div className="generation-preview-panel" role="tabpanel" aria-label={labels.preview}>{image ? <img src={image} alt={providerMode === "mock" ? "模拟生成结果" : "生成结果"} /> : <div className="generation-preview-empty"><span className="empty-icon">⌁</span><strong>{job ? "正在渲染本地结果…" : "生成的图像会显示在这里"}</strong><small>{job ? job.message : "提交提示词后将显示 native 生成结果。"}</small></div>}</div>}
+    {tab === "metadata" && <div className="generation-preview-panel preview-metadata" role="tabpanel" aria-label={labels.metadata}>{metadata.length ? metadata.map(([key, value]) => <div className="preview-metadata-row" key={String(key)}><span>{String(key)}</span><strong>{formatMetadataValue(value)}</strong></div>) : <div className="generation-preview-empty"><strong>元数据尚不可用</strong><small>完成一次生成后显示真实请求与后端结果。</small></div>}</div>}
+    {tab === "variants" && <div className="generation-preview-panel preview-variants" role="tabpanel" aria-label={labels.variants}>{results.length ? results.map((result, index) => result.result && <figure key={result.id}><img src={result.result.imageUrl} alt={`批量结果 ${index + 1}`} loading="lazy" decoding="async" /><figcaption>第 {index + 1} 张 · Seed {String(result.request.seed)}</figcaption></figure>) : <div className="generation-preview-empty"><strong>还没有变体</strong><small>批量生成的真实结果会显示在这里。</small></div>}</div>}
+    <div className="preview-footer"><span>{job?.result?.metadata?.width ? `${formatMetadataValue(job.result.metadata.width)} × ${formatMetadataValue(job.result.metadata.height)}` : "— × —"}</span><span>PNG</span><span className={providerMode === "mock" ? "text-warning" : "text-success"}>{providerMode === "mock" ? "演示" : "Native 文件"}</span></div>
+  </section>;
+}
+
+function GenerationInspector({ job, hardwareReady, hardwareError, providerMode, queue }: { job: GenerationJob | null; hardwareReady: boolean; hardwareError: string | null; providerMode: "mock" | "backend"; queue: QueueEntry[] }) {
+  if (!job) return <aside className="surface-card generation-inspector"><div className="section-title">运行时检查器 <span className="truth-label truth-unavailable">等待中</span></div><div className="empty-state"><span className="empty-icon">◌</span><span>生成状态会显示在这里。</span></div><div className="inspector-note"><span className={`truth-label ${hardwareReady ? (providerMode === "mock" ? "truth-demo" : "truth-observed") : "truth-unavailable"}`}>{hardwareReady ? (providerMode === "mock" ? "演示" : "就绪") : "硬件"}</span><span>{hardwareReady ? (providerMode === "mock" ? "模拟生命周期仅用于测试。" : "原生 CUDA 生成队列已就绪。") : hardwareError ?? "CUDA 不可用"}</span></div></aside>;
+  return <aside className="surface-card generation-inspector"><div className="section-title">运行时检查器 <span className={`truth-label ${job.state === "complete" ? "truth-observed" : job.state === "failed" ? "truth-unavailable" : "truth-derived"}`}>{generationStatusLabel(job.state)}</span></div><div className="job-state" role={job.state === "failed" ? "alert" : undefined}><strong>{generationStatusLabel(job.state)}</strong><span>{job.error ?? job.message}</span></div><div className="progress-track" role="progressbar" aria-label="生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job.progress}><span style={{ width: `${job.progress}%` }} /></div><div className="progress-reading"><span>当前任务</span><strong>{job.progress}%</strong></div><div className="inspector-grid"><span>后端</span><strong>{String(job.result?.metadata?.backend ?? "CUDA / stable-diffusion.cpp")}</strong><span>步数</span><strong>{job.request.steps}</strong><span>CFG</span><strong>{job.request.cfg}</strong><span>队列</span><strong>{queue.length ? `${queue.filter((entry) => entry.state === "complete").length}/${queue.length}` : "1/1"}</strong></div>{job.result ? <div className="result-wrap"><img src={job.result.imageUrl} alt={providerMode === "mock" ? "模拟生成结果详情" : "生成结果详情"} /><div className="result-caption"><span>结果已就绪</span><span className={`truth-label ${providerMode === "mock" ? "truth-demo" : "truth-observed"}`}>{providerMode === "mock" ? "演示数据" : "实时文件"}</span></div></div> : <div className="inspector-note"><span className="truth-label truth-derived">本地队列</span><span>正在轮询类型化提供方接口。</span></div>}</aside>;
 }

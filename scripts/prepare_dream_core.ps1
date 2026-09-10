@@ -33,18 +33,34 @@ function Add-Check([string]$Name, [bool]$Pass, [string]$Code, [string]$Detail, [
   })
 }
 
+$CMakePath = Join-Path $Root "tools\cmake\cmake-4.4.3-windows-x86_64\bin\cmake.exe"
 $CMake = Get-Command cmake.exe -ErrorAction SilentlyContinue
+if ($null -eq $CMake -and (Test-Path -LiteralPath $CMakePath -PathType Leaf)) {
+  $CMake = Get-Item -LiteralPath $CMakePath
+}
 if ($null -eq $CMake) {
   Add-Check "cmake" $false "CMAKE_MISSING" "cmake.exe is not available on PATH"
 } else {
-  Add-Check "cmake" $true "CMAKE_AVAILABLE" $CMake.Source $CMake.Source
+  $CMakeExecutable = if (-not [string]::IsNullOrWhiteSpace([string]$CMake.Source)) { $CMake.Source } else { $CMake.FullName }
+  Add-Check "cmake" $true "CMAKE_AVAILABLE" $CMakeExecutable $CMakeExecutable
 }
 
+$NvccPath = Join-Path $Root "tools\cuda\12.9.1\bin\nvcc.exe"
 $Nvcc = Get-Command nvcc.exe -ErrorAction SilentlyContinue
+if ($null -eq $Nvcc -and (Test-Path -LiteralPath $NvccPath -PathType Leaf)) {
+  $Nvcc = Get-Item -LiteralPath $NvccPath
+}
 if ($null -eq $Nvcc) {
   Add-Check "cuda-toolkit" $false "CUDA_TOOLKIT_MISSING" "nvcc.exe is not available; the NVIDIA driver is checked separately by nvidia-smi"
 } else {
-  Add-Check "cuda-toolkit" $true "CUDA_TOOLKIT_AVAILABLE" $Nvcc.Source $Nvcc.Source
+  $NvccExecutable = if (-not [string]::IsNullOrWhiteSpace([string]$Nvcc.Source)) { $Nvcc.Source } else { $Nvcc.FullName }
+  $ToolkitRoot = Split-Path (Split-Path $NvccExecutable -Parent) -Parent
+  $MissingCudaFiles = @('include\cuda_runtime.h', 'include\cublas_v2.h', 'lib\x64\cudart.lib', 'lib\x64\cublas.lib') | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ToolkitRoot $_)) }
+  if ($MissingCudaFiles.Count -gt 0) {
+    Add-Check "cuda-toolkit" $false "CUDA_TOOLKIT_INCOMPLETE" ("Missing development components: " + ($MissingCudaFiles -join ', ')) $ToolkitRoot
+  } else {
+    Add-Check "cuda-toolkit" $true "CUDA_TOOLKIT_AVAILABLE" "Compiler, runtime headers, CUDA and cuBLAS development libraries are present" $ToolkitRoot
+  }
 }
 
 $Smi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
@@ -60,9 +76,16 @@ if ($null -eq $Smi) {
 }
 
 $EngineRoot = $env:DREAM_STABLE_DIFFUSION_CPP_ROOT
-if ([string]::IsNullOrWhiteSpace($EngineRoot)) { $EngineRoot = Join-Path $Root "src\stable-diffusion.cpp" }
+if ([string]::IsNullOrWhiteSpace($EngineRoot)) { $EngineRoot = Join-Path $Root "app\stable-diffusion-cpp" }
 $EngineExe = $env:DREAM_STABLE_DIFFUSION_CPP_EXE
-if ([string]::IsNullOrWhiteSpace($EngineExe)) { $EngineExe = Join-Path $EngineRoot "build\bin\sd-cli.exe" }
+if ([string]::IsNullOrWhiteSpace($EngineExe)) {
+  $PrebuiltEngineExe = Join-Path $EngineRoot "sd-cli.exe"
+  $EngineExe = if (Test-Path -LiteralPath $PrebuiltEngineExe -PathType Leaf) {
+    $PrebuiltEngineExe
+  } else {
+    Join-Path $EngineRoot "build\bin\sd-cli.exe"
+  }
+}
 if (-not (Test-Path -LiteralPath $EngineRoot -PathType Container) -or -not (Test-Path -LiteralPath $EngineExe -PathType Leaf)) {
   Add-Check "stable-diffusion.cpp" $false "STABLE_DIFFUSION_CPP_MISSING" "A configured stable-diffusion.cpp root and CUDA executable are required" $EngineRoot
 } else {
@@ -73,7 +96,7 @@ if (-not (Test-Path -LiteralPath $RegistryPath -PathType Leaf)) {
   Add-Check "model-registry" $false "MODEL_REGISTRY_MISSING" "Registry file is missing" $RegistryPath
   $Registry = $null
 } else {
-  $Registry = Get-Content -LiteralPath $RegistryPath -Raw | ConvertFrom-Json
+  $Registry = Get-Content -LiteralPath $RegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
   $Validator = Join-Path $RepoRoot "scripts\validate_model_registry.ps1"
   $ValidationOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Validator -Root $Root -RegistryPath $RegistryPath 2>&1)
   $ValidationExit = $LASTEXITCODE
@@ -85,15 +108,16 @@ if ($null -ne $Registry -and $null -ne $Registry.models) {
   $Model = @($Registry.models | Where-Object { $_.model_id -eq $Registry.first_model_id }) | Select-Object -First 1
 }
 if ($null -eq $Model) {
-  Add-Check "cyberrealistic-v10-dmd2" $false "CYBERREALISTIC_MODEL_MISSING" "The first registered model entry is missing"
+  Add-Check "cyberrealistic-xl-v10-standard" $false "CYBERREALISTIC_MODEL_MISSING" "The first registered model entry is missing"
 } elseif ($Model.status -ne "installed" -or -not (Test-Path -LiteralPath ([string]$Model.windows.path) -PathType Leaf)) {
-  Add-Check "cyberrealistic-v10-dmd2" $false "CYBERREALISTIC_MODEL_MISSING" "The first model is not installed as a verified Windows GGUF" ([string]$Model.windows.path)
+  Add-Check "cyberrealistic-xl-v10-standard" $false "CYBERREALISTIC_MODEL_MISSING" "The first model is not installed as a verified Windows GGUF" ([string]$Model.windows.path)
 } else {
-  Add-Check "cyberrealistic-v10-dmd2" $true "CYBERREALISTIC_MODEL_AVAILABLE" "Installed GGUF present" ([string]$Model.windows.path)
+  Add-Check "cyberrealistic-xl-v10-standard" $true "CYBERREALISTIC_MODEL_AVAILABLE" "Installed GGUF present" ([string]$Model.windows.path)
 }
 
 $Wrapper = $env:DREAM_SDCPP_GENERATE_WRAPPER
-if ([string]::IsNullOrWhiteSpace($Wrapper) -or -not (Test-Path -LiteralPath $Wrapper -PathType Leaf)) {
+if ([string]::IsNullOrWhiteSpace($Wrapper)) { $Wrapper = Join-Path $RepoRoot "scripts\run_stable_diffusion_wrapper.cmd" }
+if (-not (Test-Path -LiteralPath $Wrapper -PathType Leaf)) {
   Add-Check "native-wrapper" $false "NATIVE_BACKEND_WRAPPER_MISSING" "A verified stable-diffusion.cpp invocation wrapper is not configured"
 } else {
   Add-Check "native-wrapper" $true "NATIVE_BACKEND_WRAPPER_AVAILABLE" $Wrapper $Wrapper
@@ -119,9 +143,9 @@ if (-not $Pass) {
 }
 
 if ($Build) {
-  & $CMake.Source -S (Join-Path $RepoRoot "dream\core") -B $BuildRoot -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$AppRoot
+  & $CMakeExecutable -S (Join-Path $RepoRoot "dream\core") -B $BuildRoot ("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$AppRoot")
   if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
-  & $CMake.Source --build $BuildRoot --config Release
+  & $CMakeExecutable --build $BuildRoot --config Release
   if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
 }
 

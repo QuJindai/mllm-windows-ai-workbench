@@ -61,7 +61,7 @@ try {
   if (-not (Test-Path -LiteralPath $RegistryPath -PathType Leaf)) {
     Add-Error "Registry file not found: $RegistryPath"
   } else {
-    $Registry = Get-Content -LiteralPath $RegistryPath -Raw | ConvertFrom-Json
+    $Registry = Get-Content -LiteralPath $RegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
   }
 } catch {
   Add-Error "Registry JSON could not be parsed: $($_.Exception.Message)"
@@ -84,7 +84,7 @@ if ($null -ne $Registry) {
         if ([string]::IsNullOrWhiteSpace([string]$Model.$Field)) { Add-Error "$Prefix.$Field is required" }
       }
       if ($Model.status -notin @("uninstalled", "installed")) { Add-Error "$Prefix.status is invalid" }
-      if ($null -eq $Model.dmd2 -or $Model.dmd2.enabled -ne $true) { Add-Error "$Prefix.dmd2.enabled must be true for the first model" }
+      if ($null -eq $Model.dmd2 -or $null -eq $Model.dmd2.enabled) { Add-Error "$Prefix.dmd2.enabled must be an explicit boolean" }
       if ($null -eq $Model.source) { Add-Error "$Prefix.source is required" } else {
         Test-UnderRoot ([string]$Model.source.path) "$Prefix.source.path" | Out-Null
         Test-Sha256 $Model.source.sha256 "$Prefix.source.sha256" ($Model.status -eq "uninstalled")

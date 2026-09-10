@@ -74,6 +74,8 @@ void print_help() {
               << "  dream-core hardware\n"
               << "  dream-core generate --model <id> --prompt <text> --negative <text>"
                  " --seed <int> --steps <int> --cfg <float> --width <int> --height <int>"
+                 " --sampling-method <method> --scheduler <scheduler>"
+                 " --trace-level <off|basic|h6|h7> --trace-dir <E-drive-directory>"
                  " --output <E-drive-png> --metadata <E-drive-json>\n";
 }
 
@@ -131,6 +133,27 @@ std::string shell_quote(const std::string& value) {
     return quoted;
 }
 
+std::string json_unescape(const std::string& value) {
+    std::string result;
+    result.reserve(value.size());
+    for (size_t index = 0; index < value.size(); ++index) {
+        if (value[index] == '\\' && index + 1 < value.size()) {
+            const char escaped = value[++index];
+            switch (escaped) {
+            case '\\': result += '\\'; break;
+            case '"': result += '"'; break;
+            case 'n': result += '\n'; break;
+            case 'r': result += '\r'; break;
+            case 't': result += '\t'; break;
+            default: result += escaped; break;
+            }
+        } else {
+            result += value[index];
+        }
+    }
+    return result;
+}
+
 std::string json_string_after(const std::string& text, const std::string& key, size_t start) {
     const size_t key_position = text.find(key, start);
     if (key_position == std::string::npos) {
@@ -144,7 +167,7 @@ std::string json_string_after(const std::string& text, const std::string& key, s
     if (second_quote == std::string::npos) {
         return {};
     }
-    return text.substr(first_quote + 1, second_quote - first_quote - 1);
+    return json_unescape(text.substr(first_quote + 1, second_quote - first_quote - 1));
 }
 
 int command_hardware() {
@@ -190,7 +213,35 @@ int command_generate(const std::vector<std::string>& args) {
     (void)width;
     (void)height;
 
+    std::string sampling_method = "dpm++2m_sde";
+    std::string scheduler = "karras";
+    find_option(args, "--sampling-method", sampling_method);
+    find_option(args, "--scheduler", scheduler);
+    if (sampling_method.empty() || scheduler.empty()) {
+        emit_error("GENERATION_ARGUMENT_INVALID", "sampling method and scheduler must not be empty");
+        return 2;
+    }
+
     const fs::path root = dream_root();
+    std::string trace_level = "basic";
+    std::string trace_dir_text;
+    find_option(args, "--trace-level", trace_level);
+    find_option(args, "--trace-dir", trace_dir_text);
+    if (trace_level != "off" && trace_level != "basic" && trace_level != "h6" && trace_level != "h7") {
+        emit_error("TRACE_LEVEL_INVALID", "trace level must be one of off, basic, h6, or h7");
+        return 2;
+    }
+    const fs::path trace_dir = trace_dir_text.empty() ? root / "traces" / "pending" : fs::path(trace_dir_text);
+    if (!is_under_root(trace_dir, root)) {
+        emit_error("E_DRIVE_OUTPUT_REQUIRED", "Trace artifacts must be below DREAM_HOME");
+        return 2;
+    }
+    std::error_code trace_error;
+    fs::create_directories(trace_dir, trace_error);
+    if (trace_error) {
+        emit_error("TRACE_DIRECTORY_FAILED", "Could not create the native trace directory under DREAM_HOME");
+        return 4;
+    }
     const fs::path output = fs::path(values[8]);
     const fs::path metadata = fs::path(values[9]);
     if (!is_under_root(output, root) || !is_under_root(metadata, root)) {
@@ -270,6 +321,11 @@ int command_generate(const std::vector<std::string>& args) {
             << ",\"cfg\":" << cfg
             << ",\"width\":" << width
             << ",\"height\":" << height
+            << ",\"sampling_method\":\"" << json_escape(sampling_method)
+            << "\",\"scheduler\":\"" << json_escape(scheduler)
+            << "\",\"trace_level\":\"" << json_escape(trace_level)
+            << "\",\"trace_dir\":\"" << json_escape(trace_dir.string())
+            << "\""
             << ",\"output\":\"" << json_escape(output.string())
             << "\",\"metadata\":\"" << json_escape(metadata.string())
             << "\"}" << std::endl;
@@ -278,7 +334,9 @@ int command_generate(const std::vector<std::string>& args) {
     // The wrapper is the only native-backend invocation point. It receives a
     // validated E-drive request, invokes the exact stable-diffusion.cpp build,
     // and must return non-zero on any backend failure.
-    const std::string command = shell_quote(wrapper_value) + " --request " + shell_quote(request_path.string()) +
+    // A .cmd wrapper must be invoked through CALL so that cmd.exe returns its
+    // exit code to the native process instead of transferring control away.
+    const std::string command = "call " + shell_quote(wrapper_value) + " --request " + shell_quote(request_path.string()) +
                                 " > " + shell_quote(log_path.string()) + " 2>&1";
     const auto start = std::chrono::steady_clock::now();
     const int native_exit = std::system(command.c_str());

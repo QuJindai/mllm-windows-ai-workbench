@@ -16,14 +16,15 @@ def test_registry_and_validator_exist():
     assert GUIDE.is_file()
 
 
-def test_first_model_declares_cyberrealistic_dmd2_identity():
+def test_first_model_declares_truthful_cyberrealistic_standard_identity():
     data = json.loads(REGISTRY.read_text(encoding="utf-8"))
-    assert data["first_model_id"] == "cyberrealistic-v10-dmd2"
+    assert data["first_model_id"] == "cyberrealistic-xl-v10-standard"
     model = next(item for item in data["models"] if item["model_id"] == data["first_model_id"])
-    assert model["display_name"] == "CyberRealistic v10 DMD2"
-    assert model["architecture"] == "stable-diffusion-1.5"
-    assert model["dmd2"]["enabled"] is True
-    assert model["status"] == "uninstalled"
+    assert model["display_name"] == "CyberRealistic XL v10（标准版）"
+    assert model["architecture"] == "SDXL"
+    assert model["dmd2"]["enabled"] is False
+    assert model["aliases"] == ["cyberrealistic-v10-dmd2"]
+    assert model["status"] == "installed"
 
 
 def test_windows_identity_is_gguf_and_e_drive_only():
@@ -35,7 +36,12 @@ def test_windows_identity_is_gguf_and_e_drive_only():
     assert windows["path"].lower().endswith(".gguf")
     assert ".bin" not in windows["path"].lower()
     sha256 = windows["sha256"]
-    assert sha256 is None or re.fullmatch(r"[0-9a-f]{64}", sha256, re.IGNORECASE)
+    assert re.fullmatch(r"[0-9a-f]{64}", sha256, re.IGNORECASE)
+    assert sha256.lower() == "48a2d2a0faa6332b3d8718707fedba750c75854904389c134b9535e23b1639f6"
+    assert model["source"]["provider"] == "Civitai"
+    assert model["source"]["version_id"] == 2840768
+    assert model["source"]["sha256"].lower() == "fd5e870b5bbce4bddeb64f4bb8e49c57f84ab793c0262a503f0123be435e667d"
+    assert model["source"]["expected_sha256"].lower() == "fd5e870b5bbce4bddeb64f4bb8e49c57f84ab793c0262a503f0123be435e667d"
 
 
 def test_android_reference_is_provenance_only():
@@ -61,6 +67,7 @@ def test_validator_has_fail_closed_markers_and_accepts_uninstalled_registry():
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(VALIDATOR), "-Root", "E:\\Dream"],
         cwd=ROOT,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr

@@ -1,16 +1,16 @@
 [
   {
-    "id": "cyberrealistic-v10-dmd2",
-    "displayName": "CyberRealistic v10 DMD2",
+    "id": "cyberrealistic-xl-v10-standard",
+    "displayName": "CyberRealistic XL v10（标准版）",
     "architecture": "SDXL",
     "format": "GGUF",
-    "dmd2": true,
-    "path": "E:\\Dream\\models\\windows\\gguf\\cyberrealisticXL_v100_dmd2.gguf",
+    "dmd2": false,
+    "path": "E:\\Dream\\models\\windows\\gguf\\cyberrealisticXL_v100_standard_q8_0.gguf",
     "sha256": "48A2D2A0FAA6332B3D8718707FEDBA750C75854904389C134B9535E23B1639F6",
     "verified": true,
     "sizeBytes": 4180186816,
     "tags": ["photorealistic", "realistic", "portrait", "cinematic", "sdxl"],
-    "description": "Photorealistic, vivid real-world scenes with the DMD2 low-step profile.",
+    "description": "标准版 CyberRealistic XL v10，适合写实人像与真实场景。",
     "kind": "Checkpoint",
     "status": "ready",
     "imageKey": "portrait"

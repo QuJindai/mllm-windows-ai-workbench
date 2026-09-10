@@ -1,29 +1,40 @@
 {
   "schema_version": 1,
   "dream_root": "E:\\Dream",
-  "first_model_id": "cyberrealistic-v10-dmd2",
+  "first_model_id": "cyberrealistic-xl-v10-standard",
   "models": [
     {
-      "model_id": "cyberrealistic-v10-dmd2",
-      "display_name": "CyberRealistic v10 DMD2",
-      "architecture": "stable-diffusion-1.5",
-      "status": "uninstalled",
+      "model_id": "cyberrealistic-xl-v10-standard",
+      "aliases": [
+        "cyberrealistic-v10-dmd2"
+      ],
+      "display_name": "CyberRealistic XL v10（标准版）",
+      "architecture": "SDXL",
+      "status": "installed",
       "dmd2": {
-        "enabled": true,
-        "variant": "DMD2",
-        "steps_default": 4
+        "enabled": false,
+        "variant": "standard",
+        "reason": "The verified source SHA-256 identifies the standard CyberRealistic XL v10 artifact, not the separately published DMD2 variant.",
+        "steps_default": 20
       },
       "source": {
-        "path": "E:\\Dream\\models\\incoming\\cyberrealistic-v10-dmd2-source.safetensors",
-        "sha256": null,
-        "identity_status": "awaiting-import-and-hash"
+        "provider": "Civitai",
+        "model_id": 312530,
+        "version_id": 2840768,
+        "file_id": 2727591,
+        "download_url": "https://civitai.com/api/download/models/2840768?fileId=2727591",
+        "path": "E:\\Dream\\models\\source\\cyberrealisticXL_v100.safetensors",
+        "sha256": "FD5E870B5BBCE4BDDEB64F4BB8E49C57F84AB793C0262A503F0123BE435E667D",
+        "expected_sha256": "FD5E870B5BBCE4BDDEB64F4BB8E49C57F84AB793C0262A503F0123BE435E667D",
+        "mirror_download_url": "https://huggingface.co/cyberdelia/CyberRealisticXL/resolve/main/CyberRealisticXLPlay_V10.0_FP16.safetensors",
+        "identity_status": "verified-from-creator-mirror"
       },
       "windows": {
         "backend": "stable-diffusion.cpp",
         "format": "gguf",
-        "path": "E:\\Dream\\models\\windows\\cyberrealistic-v10-dmd2.gguf",
-        "sha256": null,
-        "identity_status": "awaiting-conversion-and-hash"
+        "path": "E:\\Dream\\models\\windows\\gguf\\cyberrealisticXL_v100_standard_q8_0.gguf",
+        "sha256": "48A2D2A0FAA6332B3D8718707FEDBA750C75854904389C134B9535E23B1639F6",
+        "identity_status": "verified-local-conversion-q8_0"
       },
       "android_reference": {
         "branch": "feature/s24u-image-harness-h6r5-semantic-fidelity",

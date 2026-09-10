@@ -39,6 +39,29 @@ describe("Dream app shell", () => {
     expect(screen.getByRole("button", { name: "生成图像" })).toBeDisabled();
   });
 
+  it("keeps the active generation session visible after navigating away and back", async () => {
+    const provider = new MockDreamProvider();
+    const cancelJob = vi.spyOn(provider, "cancelJob");
+    render(
+      <DreamProviderContext.Provider value={provider}>
+        <App />
+      </DreamProviderContext.Provider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "生成图像" }));
+    expect(await screen.findByRole("button", { name: "取消生成" })).toBeVisible();
+    expect(screen.getByText("批量队列 · 1 项")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "历史" }));
+    expect(await screen.findByRole("heading", { name: "历史", level: 1 })).toBeVisible();
+    expect(cancelJob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "生成" }));
+
+    expect(await screen.findByRole("button", { name: "取消生成" })).toBeVisible();
+    expect(screen.getByText("批量队列 · 1 项")).toBeVisible();
+    expect(cancelJob).not.toHaveBeenCalled();
+  });
+
   it("carries a history record back to the generation form for rerun", async () => {
     render(
       <DreamProviderContext.Provider value={new MockDreamProvider()}>

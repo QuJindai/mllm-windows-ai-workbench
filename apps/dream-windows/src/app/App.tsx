@@ -57,12 +57,14 @@ function PageHeading({ title, hint }: { title: string; hint: string }) {
 }
 
 function RoutePage({ route, hardware, hardwareError, generationPrefill, onRerun, onPromoteExperiment }: { route: Route; hardware: HardwareSnapshot | null; hardwareError: string | null; generationPrefill: Partial<GenerationRequest> | null; onRerun: (item: HistoryItem) => void; onPromoteExperiment: (request: Pick<GenerationRequest, "prompt" | "negativePrompt" | "modelId" | "steps" | "cfg" | "seed">) => void }) {
-  switch (route) {
-    case "generate": return <GeneratePage hardware={hardware} hardwareError={hardwareError} initialRequest={generationPrefill ?? undefined} />;
-    case "models": return <ModelsPage />;
-    case "history": return <HistoryPage onRerun={onRerun} />;
-    case "lab": return <LabPage onPromote={onPromoteExperiment} />;
-    case "microscope": return <MicroscopePage />;
-    case "settings": return <SettingsPage hardware={hardware} />;
-  }
+  return <>
+    <div hidden={route !== "generate"}>
+      <GeneratePage hardware={hardware} hardwareError={hardwareError} initialRequest={generationPrefill ?? undefined} />
+    </div>
+    {route === "models" && <ModelsPage />}
+    {route === "history" && <HistoryPage onRerun={onRerun} />}
+    {route === "lab" && <LabPage onPromote={onPromoteExperiment} />}
+    {route === "microscope" && <MicroscopePage />}
+    {route === "settings" && <SettingsPage hardware={hardware} />}
+  </>;
 }

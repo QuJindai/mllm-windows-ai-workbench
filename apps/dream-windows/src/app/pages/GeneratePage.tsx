@@ -4,6 +4,8 @@ import type { GenerationBatchItem, GenerationJob, GenerationPreset, GenerationRe
 import type { HardwareSnapshot } from "../../domain/hardware";
 import type { ModelRecord } from "../../domain/models";
 import { useDreamProvider } from "../providers";
+import { DeleteImageButton } from "../components/DeleteImageButton";
+import { useDeletedImageIds } from "../image-deletion";
 import { generationStatusLabel, isGenerationTerminal } from "../generate-state";
 import { generationQualityWarning, MIN_GENERATION_DIMENSION, MIN_GENERATION_STEPS } from "../../domain/generation-quality";
 
@@ -21,6 +23,10 @@ const defaultRequest: GenerationRequest = {
   fusionMode: "none",
   traceLevel: "basic",
 };
+
+const ILLUSTRIOUS_MODEL_ID = "illustrious-xl-v2.0";
+const animeBaselinePrompt = "masterpiece, best quality, very aesthetic, anime screencap, clean lineart, cel shading, 1girl, solo, adult woman, portrait, long brown hair, brown eyes, white jacket, brown shirt, necklace, looking at viewer, closed mouth, simple light background";
+const animeBaselineNegative = "worst quality, low quality, lowres, blurry, sketch, watercolor, oil painting, rough brush strokes, unfinished, photorealistic, 3d, child, text, watermark, signature, multiple views, multiple people, bad anatomy";
 
 type GenerateTab = "prompt" | "presets" | "advanced";
 type PreviewTab = "preview" | "metadata" | "variants";
@@ -133,6 +139,8 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [request, setRequest] = useState<GenerationRequest>({ ...defaultRequest, ...initialRequest });
   const [job, setJob] = useState<GenerationJob | null>(null);
+  const deletedImages = useDeletedImageIds();
+  const visibleJob = job?.result && deletedImages.has(job.result.id) ? { ...job, result: undefined, message: "图片已删除，生成参数仍保留" } : job;
   const [queueState, dispatchQueue] = useReducer(queueReducer, initialQueueState);
   const [tab, setTab] = useState<GenerateTab>("prompt");
   const [batchCount, setBatchCount] = useState(1);
@@ -144,9 +152,20 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
   const activeRun = useRef<QueueRun | null>(null);
   const hardwareReady = hardware === undefined || Boolean(hardware?.cudaReady && !hardwareError);
   const hardwareUnavailable = hardware !== undefined && !hardwareReady;
-  const qualityWarning = generationQualityWarning(request);
+  const selectedModel = models.find((item) => item.id === request.modelId);
+  const recommendedSteps = selectedModel?.generationDefaults?.steps;
+  const qualityWarning = generationQualityWarning(
+    request,
+    recommendedSteps !== undefined && recommendedSteps < MIN_GENERATION_STEPS
+      ? {
+          minimumSteps: recommendedSteps,
+          recommendedSteps,
+          profileLabel: "当前模型按低步数蒸馏配置采样",
+        }
+      : undefined,
+  );
   const queue = queueState.entries;
-  const results = queueState.results;
+  const results = queueState.results.filter(item => item.result && !deletedImages.has(item.result.id));
 
   useEffect(() => {
     if (initialRequest) setRequest((current) => ({ ...current, ...initialRequest }));
@@ -175,6 +194,11 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
   }, []);
 
   const update = <K extends keyof GenerationRequest>(key: K, value: GenerationRequest[K]) => setRequest((current) => ({ ...current, [key]: value }));
+
+  const selectModel = (modelId: string) => {
+    const generationDefaults = models.find((model) => model.id === modelId)?.generationDefaults;
+    setRequest((current) => ({ ...current, modelId, ...(generationDefaults ?? {}) }));
+  };
 
   const isActiveRun = (run: QueueRun) => activeRun.current === run;
 
@@ -303,7 +327,6 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
     setRequest(preset.request);
     setTab("prompt");
   };
-  const selectedModel = models.find((item) => item.id === request.modelId);
   const running = queueState.status === "running";
   const stopping = queueState.status === "stopping";
   const busy = running || stopping;
@@ -325,16 +348,29 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
           </>}
           {tab === "presets" && <PresetPanel presets={presets} presetName={presetName} onNameChange={setPresetName} onSave={savePreset} onChoose={choosePreset} />}
           {tab === "advanced" && <div className="advanced-notice"><strong>高级采样参数</strong><p>这些设置会原样传递到 native stable-diffusion.cpp；显微镜采集只增加可观测输出，不改变普通生成参数。</p></div>}
+          {request.modelId === ILLUSTRIOUS_MODEL_ID && <div className="advanced-notice">
+            <strong>Illustrious · 纯动漫画质基准</strong>
+            <p>本页不加载 FaceID、人物 LoRA 或修脸。先验证线稿与色块，再到人物创作叠加身份条件；人物相似度不属于此基准。</p>
+            <p>下方按钮会替换当前提示词、采样参数和种子，使用清晰赛璐璐头像示例。你的已保存预设与历史图片不变。</p>
+            <button type="button" className="secondary-button" disabled={busy || !selectedModel?.generationDefaults}
+              onClick={() => {
+                setRequest(current => ({ ...current, ...selectedModel?.generationDefaults,
+                  prompt: animeBaselinePrompt, negativePrompt: animeBaselineNegative,
+                  seed: 202610101, fusionMode: "none", traceLevel: "basic" }));
+                setTab("prompt");
+              }}>应用清晰动漫基准</button>
+          </div>}
           <div className="form-grid">
-            <label className="field-label">模型<select aria-label="模型" value={request.modelId} disabled={loadingModels || models.length === 0} onChange={(event) => update("modelId", event.target.value)}>{loadingModels ? <option>正在加载模型…</option> : models.map((model) => <option value={model.id} key={model.id}>{model.displayName}</option>)}</select></label>
+            <label className="field-label">模型<select aria-label="模型" value={request.modelId} disabled={loadingModels || models.length === 0} onChange={(event) => selectModel(event.target.value)}>{loadingModels ? <option>正在加载模型…</option> : models.map((model) => <option value={model.id} key={model.id}>{model.displayName}</option>)}</select></label>
             <label className="field-label">随机种子<input aria-label="随机种子" type="number" value={request.seed === "random" ? "" : request.seed} placeholder="留空为随机" onChange={(event) => update("seed", event.target.value === "" ? "random" : Number(event.target.value))} /></label>
             <label className="field-label">宽度<input aria-label="Width" type="number" min={MIN_GENERATION_DIMENSION} step="8" value={request.width} onChange={(event) => update("width", Number(event.target.value))} /></label>
             <label className="field-label">高度<input aria-label="Height" type="number" min={MIN_GENERATION_DIMENSION} step="8" value={request.height} onChange={(event) => update("height", Number(event.target.value))} /></label>
-            <label className="field-label">步数<input aria-label="Steps" type="number" min={MIN_GENERATION_STEPS} max="50" value={request.steps} onChange={(event) => update("steps", Number(event.target.value))} /></label>
+            <label className="field-label">步数<input aria-label="Steps" type="number" min={recommendedSteps !== undefined && recommendedSteps < MIN_GENERATION_STEPS ? recommendedSteps : MIN_GENERATION_STEPS} max="50" value={request.steps} onChange={(event) => update("steps", Number(event.target.value))} /></label>
             <label className="field-label">CFG<input aria-label="CFG" type="number" min="0" step="0.1" value={request.cfg} onChange={(event) => update("cfg", Number(event.target.value))} /></label>
             <label className="field-label">采样器<select aria-label="采样器" value={request.samplingMethod} onChange={(event) => update("samplingMethod", event.target.value as GenerationRequest["samplingMethod"])}><option value="dpm++2m_sde">DPM++ 2M SDE</option><option value="dpm++2m">DPM++ 2M</option><option value="lcm">LCM（仅蒸馏模型）</option><option value="euler">Euler</option><option value="euler_a">Euler Ancestral</option></select></label>
             <label className="field-label">调度器<select aria-label="调度器" value={request.scheduler} onChange={(event) => update("scheduler", event.target.value as GenerationRequest["scheduler"])}><option value="karras">Karras</option><option value="discrete">Discrete</option><option value="exponential">Exponential</option><option value="lcm">LCM</option></select></label>
-            <label className="field-label">显微镜采集<select aria-label="显微镜采集" value={request.traceLevel} onChange={(event) => update("traceLevel", event.target.value as GenerationRequest["traceLevel"])}><option value="basic">仅阶段耗时</option><option value="h6">H6 每步 Latent 投影与统计</option><option value="h7">H7 研究采集（需研究引擎）</option></select></label>
+            <label className="field-label">显微镜采集<select aria-label="显微镜采集" value={request.traceLevel} onChange={(event) => update("traceLevel", event.target.value as GenerationRequest["traceLevel"])}><option value="basic">仅阶段耗时</option><option value="h6">H6 条件影响与潜空间（研究采集）</option><option value="h7">H7 条件影响、潜空间与 Self/Cross 注意力</option></select></label>
+            {(request.traceLevel === "h6" || request.traceLevel === "h7") && <p className="muted-copy">研究采集增加额外前向计算和文件写入，耗时、内存开销高于基础生成。H6 采集条件影响与潜空间；H7 还采集自注意力和交叉注意力。研究采集的宽、高各不超过 1024 像素，对应最多 128 × 128 潜空间网格。需要升级后的研究引擎；结果以实际产物为准。</p>}
             <label className="field-label">批量数量<input aria-label="批量数量" type="number" min="1" max="8" value={batchCount} onChange={(event) => setBatchCount(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></label>
           </div>
           <div className="form-footer"><div className="request-meta"><span>{selectedModel?.architecture ?? "—"}</span><span>{selectedModel?.format ?? "—"}</span><span className={selectedModel?.verified ? "text-success" : "text-muted"}>{selectedModel?.verified ? "已验证" : "不可用"}</span><span>{batchCount > 1 ? `串行队列 ${batchCount} 张` : "单张生成"}</span></div><div className="generate-action-group"><button className="primary-button generate-submit" type="submit" disabled={loadingModels || hardwareUnavailable || Boolean(qualityWarning) || !request.prompt.trim() || !request.modelId || busy}>{stopping ? "正在停止…" : running ? "生成中…" : "生成图像"}</button>{running && <button className="danger-button" type="button" aria-label="取消生成" onClick={() => void cancelActive()}>取消生成</button>}</div></div>
@@ -344,8 +380,8 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
         </form>
         {queue.length > 0 && <BatchQueue entries={queue} stopped={stopping || queueState.status === "stopped"} />}
       </div>
-      <GenerationPreview job={job} results={results} providerMode={provider.mode} />
-      <GenerationInspector job={job} hardwareReady={hardwareReady} hardwareError={hardwareError ?? null} providerMode={provider.mode} queue={queue} />
+      <GenerationPreview job={visibleJob} results={results} providerMode={provider.mode} onDelete={id => provider.deleteHistory(id)} />
+      <GenerationInspector job={visibleJob} hardwareReady={hardwareReady} hardwareError={hardwareError ?? null} providerMode={provider.mode} queue={queue} />
     </section>
   );
 }
@@ -358,7 +394,7 @@ function BatchQueue({ entries, stopped }: { entries: QueueEntry[]; stopped: bool
   return <section className="surface-card batch-queue"><div className="section-title">批量队列 · {entries.length} 项 <span className={`truth-label ${stopped ? "truth-derived" : "truth-observed"}`}>{stopped ? "队列已停止" : "串行执行"}</span></div><div className="batch-entry-list">{entries.map((entry, index) => <div className="batch-entry" key={entry.id}><span className="batch-index">{index + 1}</span><div><strong>{generationStatusLabel(entry.state)}</strong><small>{entry.message}{entry.error ? ` · ${entry.error}` : ""}</small></div><span>{entry.progress}%</span></div>)}</div></section>;
 }
 
-function GenerationPreview({ job, results, providerMode }: { job: GenerationJob | null; results: GenerationBatchItem[]; providerMode: "mock" | "backend" }) {
+function GenerationPreview({ job, results, providerMode, onDelete }: { job: GenerationJob | null; results: GenerationBatchItem[]; providerMode: "mock" | "backend"; onDelete: (id: string) => Promise<void> }) {
   const [tab, setTab] = useState<PreviewTab>("preview");
   const image = job?.result?.imageUrl;
   const labels: Record<PreviewTab, string> = { preview: "预览", metadata: "元数据", variants: `变体（${results.length}）` };
@@ -377,9 +413,9 @@ function GenerationPreview({ job, results, providerMode }: { job: GenerationJob 
     <div className="preview-tabs" role="tablist" aria-label="生成结果视图">
       {(["preview", "metadata", "variants"] as PreviewTab[]).map((value) => <button key={value} className={tab === value ? "is-active" : ""} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{labels[value]}</button>)}
     </div>
-    {tab === "preview" && <div className="generation-preview-panel" role="tabpanel" aria-label={labels.preview}>{image ? <img src={image} alt={providerMode === "mock" ? "模拟生成结果" : "生成结果"} /> : <div className="generation-preview-empty"><span className="empty-icon">⌁</span><strong>{job ? "正在渲染本地结果…" : "生成的图像会显示在这里"}</strong><small>{job ? job.message : "提交提示词后将显示 native 生成结果。"}</small></div>}</div>}
+    {tab === "preview" && <div className="generation-preview-panel" role="tabpanel" aria-label={labels.preview}>{image ? <><img src={image} alt={providerMode === "mock" ? "模拟生成结果" : "生成结果"} />{job?.result && job.state === "complete" && <DeleteImageButton key={job.result.id} id={job.result.id} onDelete={onDelete} />}</> : <div className="generation-preview-empty"><span className="empty-icon">⌁</span><strong>{job?.state === "complete" ? "图片已删除" : job ? "正在渲染本地结果…" : "生成的图像会显示在这里"}</strong><small>{job ? job.message : "提交提示词后将显示 native 生成结果。"}</small></div>}</div>}
     {tab === "metadata" && <div className="generation-preview-panel preview-metadata" role="tabpanel" aria-label={labels.metadata}>{metadata.length ? metadata.map(([key, value]) => <div className="preview-metadata-row" key={String(key)}><span>{String(key)}</span><strong>{formatMetadataValue(value)}</strong></div>) : <div className="generation-preview-empty"><strong>元数据尚不可用</strong><small>完成一次生成后显示真实请求与后端结果。</small></div>}</div>}
-    {tab === "variants" && <div className="generation-preview-panel preview-variants" role="tabpanel" aria-label={labels.variants}>{results.length ? results.map((result, index) => result.result && <figure key={result.id}><img src={result.result.imageUrl} alt={`批量结果 ${index + 1}`} loading="lazy" decoding="async" /><figcaption>第 {index + 1} 张 · Seed {String(result.request.seed)}</figcaption></figure>) : <div className="generation-preview-empty"><strong>还没有变体</strong><small>批量生成的真实结果会显示在这里。</small></div>}</div>}
+    {tab === "variants" && <div className="generation-preview-panel preview-variants" role="tabpanel" aria-label={labels.variants}>{results.length ? results.map((result, index) => result.result && <figure key={result.id}><img src={result.result.imageUrl} alt={`批量结果 ${index + 1}`} loading="lazy" decoding="async" /><figcaption>第 {index + 1} 张 · Seed {String(result.request.seed)}</figcaption><DeleteImageButton id={result.result.id} disabled={result.state !== "complete"} onDelete={onDelete} /></figure>) : <div className="generation-preview-empty"><strong>还没有变体</strong><small>批量生成的真实结果会显示在这里。</small></div>}</div>}
     <div className="preview-footer"><span>{job?.result?.metadata?.width ? `${formatMetadataValue(job.result.metadata.width)} × ${formatMetadataValue(job.result.metadata.height)}` : "— × —"}</span><span>PNG</span><span className={providerMode === "mock" ? "text-warning" : "text-success"}>{providerMode === "mock" ? "演示" : "Native 文件"}</span></div>
   </section>;
 }

@@ -41,6 +41,15 @@ describe("Dream app shell", () => {
 
   it("keeps the active generation session visible after navigating away and back", async () => {
     const provider = new MockDreamProvider();
+    const getJob = provider.getJob.bind(provider);
+    // Navigation must not race the demo provider's 520 ms automatic completion.
+    vi.spyOn(provider, "getJob").mockImplementation(async (id) => ({
+      ...await getJob(id),
+      state: "sampling",
+      progress: 50,
+      message: "采样中",
+      result: undefined,
+    }));
     const cancelJob = vi.spyOn(provider, "cancelJob");
     render(
       <DreamProviderContext.Provider value={provider}>

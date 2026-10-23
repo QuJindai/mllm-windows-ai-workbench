@@ -6,8 +6,113 @@ import { MockDreamProvider } from "../../providers/MockDreamProvider";
 import hardwareFixture from "../../fixtures/hardware.json";
 import type { HardwareSnapshot } from "../../domain/hardware";
 import type { GenerationJob, GenerationRequest } from "../../domain/generation";
+import type { ModelRecord } from "../../domain/models";
 
 describe("Generate page", () => {
+  it("applies the pure anime baseline only explicitly and submits the registered profile", async () => {
+    const saved = JSON.stringify([{ id: "old-anime", name: "旧动漫配置", request: {
+      modelId: "illustrious-xl-v2.0", prompt: "my saved portrait", negativePrompt: "blur",
+      width: 768, height: 768, steps: 20, cfg: 5, seed: 42,
+      samplingMethod: "dpm++2m", scheduler: "karras", traceLevel: "basic", fusionMode: "none",
+    } }]);
+    window.localStorage.setItem("dream-windows-generation-presets", saved);
+    class AnimeProvider extends MockDreamProvider {
+      override async listModels(): Promise<ModelRecord[]> {
+        const [base] = await super.listModels();
+        return [base, { ...base, id: "illustrious-xl-v2.0", displayName: "Illustrious",
+          generationDefaults: { width: 1024, height: 1024, steps: 30, cfg: 7,
+            samplingMethod: "euler_a", scheduler: "discrete" } }];
+      }
+    }
+    const provider = new AnimeProvider();
+    const generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage /></DreamProviderContext.Provider>);
+    const prompt = await screen.findByLabelText<HTMLTextAreaElement>("正向提示词");
+    fireEvent.change(prompt, { target: { value: "my existing scene" } });
+    expect(screen.queryByRole("button", { name: "应用清晰动漫基准" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "模型" }), { target: { value: "illustrious-xl-v2.0" } });
+    expect(prompt).toHaveValue("my existing scene");
+    expect(screen.getByLabelText("Width")).toHaveValue(1024);
+    fireEvent.change(screen.getByLabelText("Width"), { target: { value: "768" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用清晰动漫基准" }));
+    expect(prompt.value).toContain("clean lineart, cel shading");
+    expect(screen.getByLabelText<HTMLTextAreaElement>("负向提示词").value).toContain("rough brush strokes");
+    expect(window.localStorage.getItem("dream-windows-generation-presets")).toBe(saved);
+    fireEvent.click(screen.getByRole("button", { name: "生成图像" }));
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: "illustrious-xl-v2.0", width: 1024, height: 1024, steps: 30, cfg: 7,
+      seed: 202610101, samplingMethod: "euler_a", scheduler: "discrete", traceLevel: "basic", fusionMode: "none",
+    })));
+    fireEvent.click(screen.getByRole("tab", { name: "预设" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择预设 旧动漫配置" }));
+    expect(screen.getByLabelText("正向提示词")).toHaveValue("my saved portrait");
+    expect(screen.getByLabelText("Width")).toHaveValue(768);
+    expect(screen.getByRole("combobox", { name: "采样器" })).toHaveValue("dpm++2m");
+    window.localStorage.removeItem("dream-windows-generation-presets");
+  });
+
+  it("keeps deletion pending and failure visible when switching preview tabs", async () => {
+    let rejectDelete: ((reason: Error) => void) | undefined;
+    const remove = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectDelete = reject; }));
+    const provider = new MockDreamProvider();
+    provider.deleteHistory = remove;
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage /></DreamProviderContext.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "生成图像" }));
+    await screen.findByAltText("模拟生成结果", {}, { timeout: 1800 });
+    fireEvent.click(screen.getByRole("button", { name: /^删除图片 / }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除图片" }));
+    fireEvent.click(screen.getByRole("tab", { name: "变体（1）" }));
+    expect(screen.getByRole("button", { name: /^删除图片 / })).toBeDisabled();
+    await act(async () => rejectDelete?.(new Error("切页后仍保留错误")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("切页后仍保留错误");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(screen.getByAltText("批量结果 1")).toBeVisible();
+  });
+  it("deletes a generated image only after confirmation and clears preview, inspector and variants", async () => {
+    const deleted: string[] = [];
+    class DeletingProvider extends MockDreamProvider {
+      override async deleteHistory(id: string) { deleted.push(id); }
+    }
+    render(<DreamProviderContext.Provider value={new DeletingProvider()}><GeneratePage /></DreamProviderContext.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "生成图像" }));
+    await screen.findByAltText("模拟生成结果", {}, { timeout: 1800 });
+    fireEvent.click(screen.getByRole("button", { name: /^删除图片 / }));
+    expect(deleted).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "取消删除" }));
+    expect(screen.getByAltText("模拟生成结果")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^删除图片 / }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除图片" }));
+    await waitFor(() => expect(screen.queryByAltText("模拟生成结果")).not.toBeInTheDocument());
+    expect(deleted).toEqual([expect.stringMatching(/^mock-result-/)]);
+    expect(screen.queryByAltText("模拟生成结果详情")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "变体（0）" }));
+    expect(screen.queryByAltText("批量结果 1")).not.toBeInTheDocument();
+  });
+
+  it("keeps a failed deletion visible and allows retry without duplicate in-flight requests", async () => {
+    let rejectDelete: ((reason: Error) => void) | undefined;
+    let attempts = 0;
+    class FailingDeleteProvider extends MockDreamProvider {
+      override async deleteHistory() {
+        attempts++;
+        if (attempts === 1) await new Promise<void>((_resolve, reject) => { rejectDelete = reject; });
+      }
+    }
+    render(<DreamProviderContext.Provider value={new FailingDeleteProvider()}><GeneratePage /></DreamProviderContext.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "生成图像" }));
+    await screen.findByAltText("模拟生成结果", {}, { timeout: 1800 });
+    fireEvent.click(screen.getByRole("button", { name: /^删除图片 / }));
+    const confirm = screen.getByRole("button", { name: "确认删除图片" });
+    fireEvent.click(confirm); fireEvent.click(confirm);
+    expect(attempts).toBe(1);
+    expect(confirm).toBeDisabled();
+    await act(async () => rejectDelete?.(new Error("图片正被占用，请重试")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("图片正被占用");
+    expect(screen.getByAltText("模拟生成结果")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "确认删除图片" }));
+    await waitFor(() => expect(screen.queryByAltText("模拟生成结果")).not.toBeInTheDocument());
+    expect(attempts).toBe(2);
+  });
   it("submits a typed request and renders the mock result lifecycle", async () => {
     render(<DreamProviderContext.Provider value={new MockDreamProvider()}><GeneratePage /></DreamProviderContext.Provider>);
     const submit = await screen.findByRole("button", { name: "生成图像" });
@@ -68,6 +173,90 @@ describe("Generate page", () => {
     expect(screen.getByRole("combobox", { name: "采样器" })).toHaveValue("dpm++2m_sde");
     expect(screen.getByRole("combobox", { name: "调度器" })).toHaveValue("karras");
     expect(screen.getByRole("combobox", { name: "显微镜采集" })).toHaveValue("basic");
+  });
+
+  it("applies a model's recommended generation profile when selected", async () => {
+    class ProfileProvider extends MockDreamProvider {
+      override async listModels(): Promise<ModelRecord[]> {
+        const [base] = await super.listModels();
+        return [
+          base,
+          {
+            ...base,
+            id: "anime-model",
+            displayName: "Anime Model",
+            generationDefaults: {
+              width: 768,
+              height: 768,
+              steps: 28,
+              cfg: 5,
+              samplingMethod: "euler_a",
+              scheduler: "discrete",
+            },
+          },
+        ];
+      }
+    }
+
+    render(<DreamProviderContext.Provider value={new ProfileProvider()}><GeneratePage /></DreamProviderContext.Provider>);
+    await screen.findByRole("button", { name: "生成图像" });
+    fireEvent.change(screen.getByRole("combobox", { name: "模型" }), { target: { value: "anime-model" } });
+
+    expect(screen.getByLabelText("Width")).toHaveValue(768);
+    expect(screen.getByLabelText("Height")).toHaveValue(768);
+    expect(screen.getByLabelText("Steps")).toHaveValue(28);
+    expect(screen.getByLabelText("CFG")).toHaveValue(5);
+    expect(screen.getByRole("combobox", { name: "采样器" })).toHaveValue("euler_a");
+    expect(screen.getByRole("combobox", { name: "调度器" })).toHaveValue("discrete");
+  });
+
+  it("allows generation at a distilled model's verified four-step profile", async () => {
+    class LightningProvider extends MockDreamProvider {
+      override async listModels(): Promise<ModelRecord[]> {
+        const [base] = await super.listModels();
+        return [
+          base,
+          {
+            ...base,
+            id: "lightning-model",
+            displayName: "Lightning Model",
+            generationDefaults: {
+              width: 768,
+              height: 768,
+              steps: 4,
+              cfg: 2,
+              samplingMethod: "dpm++2m",
+              scheduler: "discrete",
+            },
+          },
+        ];
+      }
+    }
+
+    const provider = new LightningProvider();
+    const generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage /></DreamProviderContext.Provider>);
+    const submit = await screen.findByRole("button", { name: "生成图像" });
+    fireEvent.change(screen.getByRole("combobox", { name: "模型" }), { target: { value: "lightning-model" } });
+
+    const steps = screen.getByLabelText<HTMLInputElement>("Steps");
+    expect(steps).toHaveValue(4);
+    expect(steps.checkValidity()).toBe(true);
+    expect(steps.min).toBe("4");
+    expect(steps.closest("form")?.checkValidity()).toBe(true);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(submit).toBeEnabled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "模型" }), { target: { value: "cyberrealistic-xl-v10-standard" } });
+    expect(steps.min).toBe("8");
+    fireEvent.change(steps, { target: { value: "4" } });
+    expect(steps.checkValidity()).toBe(false);
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "模型" }), { target: { value: "lightning-model" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(expect.objectContaining({ modelId: "lightning-model", steps: 4 })));
+    expect(await screen.findByRole("progressbar", { name: "生成进度" })).toBeVisible();
   });
 
   it("disables submission when the prompt is empty", async () => {

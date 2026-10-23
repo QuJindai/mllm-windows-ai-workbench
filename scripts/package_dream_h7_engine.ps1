@@ -32,8 +32,8 @@ foreach ($file in $files) {
 }
 
 $helpText = (& (Join-Path $destination "sd-cli.exe") --help 2>&1 | Out-String)
-if ($helpText -notmatch "--attention-trace-path") {
-  throw "Packaged H7 engine does not expose --attention-trace-path"
+if ($helpText -notmatch "--attention-trace-path" -or $helpText -notmatch '--conditioning-trace-path' -or $helpText -notmatch 'cross/self-attention') {
+  throw "Packaged research engine is missing H6 or H7 trace capabilities"
 }
 
 $artifacts = @($files | ForEach-Object {
@@ -48,7 +48,7 @@ $artifacts = @($files | ForEach-Object {
 $manifest = [ordered]@{
   schemaVersion = 1
   executable = "sd-cli.exe"
-  capabilities = @("h7-attention-v1")
+  capabilities = @("h7-attention-v1", "h7-self-attention-v1", "h6-conditioning-v1")
   source = "debug-unet"
   sourceRevision = $SourceRevision
   sourceTreeDirty = $true

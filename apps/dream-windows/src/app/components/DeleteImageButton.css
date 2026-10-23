@@ -1,0 +1,5 @@
+.image-delete-control { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.image-delete-confirm { width: 100%; box-sizing: border-box; padding: 14px; text-align: left; }
+.image-delete-confirm p { margin: 0 0 12px; line-height: 1.5; }
+.image-delete-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.image-delete-confirm .error-panel { margin-top: 12px; overflow-wrap: anywhere; }

@@ -37,7 +37,7 @@ def test_native_sampler_emits_live_latent_state_not_only_rgb_preview():
 
 
 def test_native_cli_writes_observed_latent_metrics_and_channel_maps():
-    source = _native_source("examples/cli/main.cpp")
+    source = _native_source("examples/cli/main.cpp") + _native_source("examples/cli/latent_trace_writer.h")
 
     assert "--latent-trace-path" in source
     assert "latent_trace_path" in source

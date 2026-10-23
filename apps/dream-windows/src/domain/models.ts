@@ -1,5 +1,9 @@
+import type { GenerationRequest } from "./generation";
+
 export type ModelArchitecture = "SDXL" | "SD15" | "OTHER";
 export type ModelFormat = "GGUF" | "SAFETENSORS";
+
+export type ModelGenerationDefaults = Partial<Pick<GenerationRequest, "width" | "height" | "steps" | "cfg" | "samplingMethod" | "scheduler">>;
 
 export type ModelRecord = {
   id: string;
@@ -17,4 +21,5 @@ export type ModelRecord = {
   status: "ready" | "loading" | "error" | "unavailable";
   error?: string;
   imageUrl: string;
+  generationDefaults?: ModelGenerationDefaults;
 };

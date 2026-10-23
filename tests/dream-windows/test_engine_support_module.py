@@ -89,3 +89,11 @@ def test_stable_diffusion_arguments_enable_flash_attention_and_keep_h6_opt_in():
     )
     assert "--preview" in h6["Arguments"]
     assert "--latent-trace-path" in h6["Arguments"]
+    assert "--conditioning-trace-path" not in basic["Arguments"]
+    research = run_powershell_json(common.replace(
+        "-TraceLevel 'basic'",
+        "-TraceLevel 'h7' -TraceDirectory 'E:\\Dream\\traces\\job' -ConditioningTraceSupported $true -AttentionTraceSupported $true -AttentionTracePath 'E:\\Dream\\traces\\job'",
+    ))
+    assert "--conditioning-trace-path" in research["Arguments"]
+    assert "--attention-trace-path" in research["Arguments"]
+    assert "--diffusion-fa" not in research["Arguments"]

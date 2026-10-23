@@ -1,5 +1,7 @@
 # Dream Windows Browser Workstation 验收记录
 
+> 本页是历史记录，不代表当前版本。最新入口为 `http://127.0.0.1:8766/`；见 [2026-09-28 核心验收](CORE_COMPLETION_20260928.md)。历史中的未接入项与旧测试数量须以新记录为准。
+
 日期：2026-09-10
 分支：`feature/dream-windows-w0-hardware`
 入口：`http://127.0.0.1:8866`（避开本机 Windows 动态保留的 8766 端口）

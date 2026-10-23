@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+
+from research_traces import InvalidArtifact, read_bounded_json
 
 
 @dataclass(frozen=True)
@@ -40,19 +41,33 @@ class DreamServerConfig:
         return self.h7_engine_exe.with_name("build-manifest.json")
 
     def h7_attention_ready(self) -> bool:
+        return "h7-attention-v1" in self.research_capabilities()
+
+    def h6_conditioning_ready(self) -> bool:
+        return "h6-conditioning-v1" in self.research_capabilities()
+
+    def h7_self_attention_ready(self) -> bool:
+        return "h7-self-attention-v1" in self.research_capabilities()
+
+    def h7_research_ready(self) -> bool:
+        return {"h7-attention-v1", "h6-conditioning-v1", "h7-self-attention-v1"} <= self.research_capabilities()
+
+    def research_capabilities(self) -> set[str]:
         if not self.h7_engine_exe.is_file() or not self.h7_manifest_path.is_file():
-            return False
+            return set()
         try:
-            manifest = json.loads(self.h7_manifest_path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
-            return False
-        return (
-            isinstance(manifest, dict)
-            and manifest.get("schemaVersion") == 1
+            manifest = read_bounded_json(self.h7_manifest_path, 64 * 1024)
+        except InvalidArtifact:
+            return set()
+        capabilities = manifest.get("capabilities")
+        valid = (
+            type(manifest.get("schemaVersion")) is int and manifest["schemaVersion"] == 1
             and manifest.get("executable") == self.h7_engine_exe.name
             and manifest.get("source") == "debug-unet"
-            and "h7-attention-v1" in (manifest.get("capabilities") or [])
+            and isinstance(capabilities, list) and len(capabilities) <= 32
+            and all(isinstance(value, str) and 1 <= len(value) <= 128 for value in capabilities)
         )
+        return set(capabilities) if valid and len(set(capabilities)) == len(capabilities) else set()
 
     @classmethod
     def from_environment(cls) -> "DreamServerConfig":

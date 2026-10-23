@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import create_app
 from config import DreamServerConfig
+from research_fixtures import install_research_engine
 from models import ExperimentRequest, GenerateRequest
 from runtime import DreamApiError, DreamRuntime
 from job_runner import JobRunner, NativeRunResult
@@ -96,6 +97,38 @@ def test_legacy_model_alias_uses_canonical_name_in_history(tmp_path: Path):
 
     assert item["modelId"] == "model"
     assert item["modelName"] == "Canonical Model"
+
+
+def test_history_exposes_registered_generation_defaults_for_quality_assessment(tmp_path: Path):
+    config = make_config(tmp_path)
+    registry = json.loads(config.registry_path.read_text(encoding="utf-8"))
+    registry["models"][0]["generation_defaults"] = {
+        "width": 768,
+        "height": 768,
+        "steps": 4,
+        "cfg": 2.0,
+        "sampling_method": "dpm++2m",
+        "scheduler": "discrete",
+    }
+    config.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+    output_dir = config.dream_root / "outputs" / "2026-09-20"
+    output_dir.mkdir(parents=True)
+    (output_dir / "lightning.png").write_bytes(b"PNG")
+    (output_dir / "lightning.json").write_text(
+        json.dumps({"id": "lightning", "model_id": "model", "steps": 4, "output": str(output_dir / "lightning.png")}),
+        encoding="utf-8",
+    )
+
+    item = DreamRuntime(config, job_runner=JobRunner(config)).history({"page": 1, "page_size": 10, "filter": "all", "query": ""})["items"][0]
+
+    assert item["generationDefaults"] == {
+        "width": 768,
+        "height": 768,
+        "steps": 4,
+        "cfg": 2.0,
+        "samplingMethod": "dpm++2m",
+        "scheduler": "discrete",
+    }
 
 
 def test_cancelling_unknown_job_returns_structured_not_found(tmp_path: Path):
@@ -452,9 +485,9 @@ def test_h7_capability_requires_manifest_and_is_reported_as_observed(tmp_path: P
         "message": "H7 Debug UNet cross-attention 采集已就绪",
     }
     assert runtime.research_status() == {
-        "available": True,
-        "message": "H7 研究引擎已就绪（独立 Debug UNet）",
-        "truth": "observed",
+        "available": False,
+        "message": "H7 研究引擎未安装或构建清单无效",
+        "truth": "unavailable",
     }
 
 
@@ -548,6 +581,7 @@ def test_generation_job_persists_real_artifact_and_metadata(tmp_path: Path):
 
 def test_experiment_variants_use_the_one_worker_queue_in_order_and_reload_stably(tmp_path: Path):
     config = make_config(tmp_path)
+    install_research_engine(config)
     gate = threading.Semaphore(0)
     lock = threading.Lock()
     started: list[str] = []
@@ -642,6 +676,7 @@ def test_experiment_variants_use_the_one_worker_queue_in_order_and_reload_stably
 
 def test_generation_job_persists_observed_latent_telemetry_and_channel_frames(tmp_path: Path):
     config = make_config(tmp_path)
+    install_research_engine(config)
 
     def fake_runner(command, env, cwd, stdout_log, stderr_log):
         output = Path(command[command.index("--output") + 1])
@@ -826,6 +861,7 @@ def test_generation_trace_exposes_measured_native_phase_timings(tmp_path: Path):
 
 def test_generation_trace_records_observed_latent_projection_frames(tmp_path: Path):
     config = make_config(tmp_path)
+    install_research_engine(config)
 
     def fake_runner(command, env, cwd, stdout_log, stderr_log):
         output = Path(command[command.index("--output") + 1])

@@ -6,6 +6,8 @@ import type { ModelRecord } from "../domain/models";
 import type { ResearchStatus, RuntimeAttentionIndex, RuntimeAttentionMap, RuntimeCapabilities, RuntimeCapability, RuntimeTraceResponse, RuntimeTraceSummary } from "../domain/trace";
 import type { DreamSettings, WorkspaceEntry, WorkspaceOpenResult } from "../domain/settings";
 import type { DreamProvider, ExperimentRequest } from "./DreamProvider";
+import type { RuntimeAttentionUnavailable, RuntimeInfluence, RuntimeSelfAttentionIndex, RuntimeSelfAttentionMapResponse } from "../domain/trace";
+import { isInfluenceArtifact, isSelfAttentionIndexArtifact, isSelfAttentionMapArtifact } from "../domain/research-artifacts";
 
 type ApiError = { code?: string; message?: string };
 
@@ -19,11 +21,23 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
   return body as T;
 }
 
+async function requestResearch<T>(path: string, runId: string, label: string, validate: (value: unknown) => value is T): Promise<T | RuntimeAttentionUnavailable> {
+  const unavailable = (message: string): RuntimeAttentionUnavailable => ({ available: false, runId, truth: "unavailable", message });
+  try {
+    const value = await requestJson<unknown>(path);
+    if (validate(value)) return value;
+    if (typeof value === "object" && value !== null && "available" in value && value.available === false && "runId" in value && value.runId === runId && "truth" in value && value.truth === "unavailable" && "message" in value && typeof value.message === "string") return unavailable(value.message);
+    return unavailable(`${label}记录无效：契约、来源、身份或采集边界校验未通过。`);
+  } catch {
+    return unavailable(`${label}接口当前不可用或读取失败，请在后端部署完成后刷新记录。`);
+  }
+}
+
 export class DreamHttpProvider implements DreamProvider {
   readonly mode = "backend" as const;
 
-  getHardware(): Promise<HardwareSnapshot> {
-    return requestJson<HardwareSnapshot>("/api/hardware");
+  getHardware(signal?: AbortSignal): Promise<HardwareSnapshot> {
+    return requestJson<HardwareSnapshot>("/api/hardware", { signal, cache: "no-store" });
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
@@ -42,6 +56,8 @@ export class DreamHttpProvider implements DreamProvider {
       latentTrace: capability("latentTrace", "latent_trace"),
       semanticExperiments: capability("semanticExperiments", "semantic_experiments"),
       attention: capability("attention", "attention"),
+      conditioningInfluence: capability("conditioningInfluence", "conditioning_influence"),
+      selfAttention: capability("selfAttention", "self_attention"),
     };
   }
 
@@ -113,6 +129,18 @@ export class DreamHttpProvider implements DreamProvider {
 
   getAttentionMap(runId: string, mapId: string): Promise<RuntimeAttentionMap> {
     return requestJson<RuntimeAttentionMap>(`/api/traces/${encodeURIComponent(runId)}/attention/maps/${encodeURIComponent(mapId)}`);
+  }
+
+  getInfluence(runId: string): Promise<RuntimeInfluence> {
+    return requestResearch(`/api/traces/${encodeURIComponent(runId)}/influence`, runId, "H6 条件影响", (value): value is Extract<RuntimeInfluence, { available: true }> => isInfluenceArtifact(value, runId));
+  }
+
+  getSelfAttentionIndex(runId: string): Promise<RuntimeSelfAttentionIndex> {
+    return requestResearch(`/api/traces/${encodeURIComponent(runId)}/self-attention`, runId, "H7 自注意力", (value): value is Extract<RuntimeSelfAttentionIndex, { available: true }> => isSelfAttentionIndexArtifact(value, runId));
+  }
+
+  getSelfAttentionMap(runId: string, mapId: string): Promise<RuntimeSelfAttentionMapResponse> {
+    return requestResearch(`/api/traces/${encodeURIComponent(runId)}/self-attention/maps/${encodeURIComponent(mapId)}`, runId, "H7 自注意力空间图", (value): value is Extract<RuntimeSelfAttentionMapResponse, { available: true }> => isSelfAttentionMapArtifact(value, runId, mapId));
   }
 
   getResearchStatus(): Promise<ResearchStatus> {

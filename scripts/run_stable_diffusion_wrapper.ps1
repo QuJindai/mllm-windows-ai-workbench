@@ -48,10 +48,15 @@ $latentTracePath = $null
 $latentTraceSupported = $false
 $attentionTracePath = $null
 $attentionTraceSupported = $false
+$conditioningTraceSupported = $false
 if (@("h6", "h7") -contains $traceLevel) {
   $latentTracePath = Join-Path $traceDirPath "latent-metrics.jsonl"
   $nativeHelp = (& $engine --help 2>&1 | Out-String)
   $latentTraceSupported = $nativeHelp -match "--latent-trace-path"
+  $conditioningTraceSupported = $nativeHelp -match "--conditioning-trace-path"
+  if (-not $conditioningTraceSupported) {
+    throw "Research engine does not expose --conditioning-trace-path; install the updated H6/H7 engine"
+  }
   if (-not $latentTraceSupported) {
     Write-Host "DREAM_SDCPP_LATENT_TRACE_UNAVAILABLE native binary does not expose --latent-trace-path; using RGB projection only"
   }
@@ -173,6 +178,7 @@ $argumentPlan = New-DreamStableDiffusionArguments `
   -LatentTraceSupported $latentTraceSupported `
   -LatentTracePath $latentTracePath `
   -AttentionTraceSupported $attentionTraceSupported `
+  -ConditioningTraceSupported $conditioningTraceSupported `
   -AttentionTracePath $attentionTracePath `
   -DisableDiffusionFlashAttention $disableFlashAttention
 $arguments = $argumentPlan.Arguments
@@ -198,6 +204,12 @@ if ($traceLevel -eq "h7") {
   if (-not (Test-Path -LiteralPath $attentionIndexPath -PathType Leaf)) {
     throw "H7 generation returned success without attention-index.json: $attentionIndexPath"
   }
+  if (-not (Test-Path -LiteralPath (Join-Path $traceDirPath 'self-attention-index.json') -PathType Leaf)) {
+    throw 'H7 generation produced no self-attention evidence'
+  }
+}
+if ($traceLevel -in @('h6', 'h7') -and -not (Test-Path -LiteralPath (Join-Path $traceDirPath 'conditioning-influence.json') -PathType Leaf)) {
+  throw 'Research generation produced no H6 conditioning evidence (unsupported model or guidance mode)'
 }
 
 $postprocessStopwatch = [Diagnostics.Stopwatch]::StartNew()

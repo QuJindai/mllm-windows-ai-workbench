@@ -16,6 +16,10 @@ The Android branch and commit in the registry are provenance only:
 `feature/s24u-image-harness-h6r5-semantic-fidelity` at
 `381713f6985e1d48da16a14636989a4b27f1ae98`. Android QNN files such as
 `unet.bin` are not Windows model files and must never be registered as GGUF.
+`android_reference` is optional for models acquired directly for Windows. When
+it is present, the validator still requires a branch, a 40-character commit,
+and `artifact_policy: reference-only`; it must never be invented merely to
+make a Windows-only model pass validation.
 
 ## Import sequence
 

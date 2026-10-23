@@ -11,7 +11,7 @@ describe("prototype workstation shell", () => {
     await waitFor(() => expect(screen.getAllByText("Dream").length).toBeGreaterThan(0));
     expect(screen.getByText("本地 AI · 更深的想象")).toBeVisible();
     expect(screen.getByText("E:\\Dream")).toBeVisible();
-    expect(screen.getByText("RTX 1000 Ada 6GB")).toBeVisible();
+    expect(await screen.findByText("RTX 1000 Ada 6GB")).toBeVisible();
     expect(screen.getByText((_, element) => Boolean(element?.classList.contains("top-metric") && element.textContent?.includes("RAM 64 GB")))).toBeVisible();
   });
 

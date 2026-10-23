@@ -11,7 +11,10 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DreamServerConfig
 from errors import DreamApiError
+from identity_routes import create_identity_router
+from job_runner import JobRunner
 from models import ExperimentRequest, FavoriteRequest, GenerateRequest, SettingsUpdateRequest, WorkspaceOpenRequest
+from operations import ensure_generation_capacity, get_operations
 from runtime import DreamRuntime
 
 
@@ -28,9 +31,17 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
     async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"code": "REQUEST_INVALID", "message": "Request validation failed", "retryable": False, "detail": {"errors": exc.errors()}})
 
+    identity_runner = getattr(resolved_runtime, "job_runner", None)
+    if isinstance(identity_runner, JobRunner):
+        app.include_router(create_identity_router(resolved_config, identity_runner))
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return resolved_runtime.health()
+
+    @app.get("/api/operations")
+    def operations() -> JSONResponse:
+        return JSONResponse(content=get_operations(resolved_config), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/capabilities")
     def capabilities() -> dict[str, Any]:
@@ -79,6 +90,7 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
 
     @app.post("/api/experiments")
     def run_experiment(payload: ExperimentRequest) -> dict[str, Any]:
+        ensure_generation_capacity(resolved_config)
         return resolved_runtime.run_experiment(payload)
 
     @app.get("/api/experiments/{experiment_id}")
@@ -113,6 +125,18 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
     def runtime_trace(run_id: str) -> dict[str, Any]:
         return resolved_runtime.runtime_trace(run_id)
 
+    @app.get("/api/traces/{run_id}/influence")
+    def influence(run_id: str) -> dict[str, Any]:
+        return resolved_runtime.influence(run_id)
+
+    @app.get("/api/traces/{run_id}/self-attention")
+    def self_attention_index(run_id: str) -> dict[str, Any]:
+        return resolved_runtime.self_attention_index(run_id)
+
+    @app.get("/api/traces/{run_id}/self-attention/maps/{map_id}")
+    def self_attention_map(run_id: str, map_id: str) -> dict[str, Any]:
+        return resolved_runtime.self_attention_map(run_id, map_id)
+
     @app.get("/api/settings")
     def settings() -> dict[str, Any]:
         return resolved_runtime.settings()
@@ -132,6 +156,7 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
 
     @app.post("/api/generate")
     def generate(payload: GenerateRequest) -> dict[str, Any]:
+        ensure_generation_capacity(resolved_config)
         return resolved_runtime.generate(payload)
 
     @app.get("/api/jobs/{job_id}")
@@ -152,7 +177,16 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
         index = frontend_dist / "index.html"
         if not index.exists():
             return JSONResponse(status_code=503, content={"code": "FRONTEND_BUILD_MISSING", "message": "Run the frontend build before opening Dream Web", "retryable": False, "detail": {"path": str(index)}})
-        return FileResponse(index)
+        # Entry HTML points at a specific hashed bundle: never keep an older
+        # release's entry document across a local server upgrade.
+        return FileResponse(index, headers={"Cache-Control": "no-store"})
+
+    @app.get("/release.json", response_model=None)
+    def release_manifest() -> FileResponse | JSONResponse:
+        manifest = frontend_dist / "release.json"
+        if not manifest.is_file():
+            return JSONResponse(status_code=404, content={"code": "RELEASE_MANIFEST_NOT_FOUND", "message": "This frontend build has no release manifest", "retryable": False})
+        return FileResponse(manifest, media_type="application/json", headers={"Cache-Control": "no-store"})
 
     @app.get("/favicon.svg", response_model=None)
     def favicon() -> FileResponse | JSONResponse:

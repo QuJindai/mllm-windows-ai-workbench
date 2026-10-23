@@ -13,7 +13,8 @@ $baseUrl = "http://127.0.0.1:$Port/"
 
 function Test-DreamWebReady {
     try {
-        $response = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing -TimeoutSec 2
+        # This loopback probe must inspect the listener, not an inherited proxy.
+        $response = Invoke-WebRequest -Uri $baseUrl -NoProxy -UseBasicParsing -TimeoutSec 2
         return $response.StatusCode -eq 200 -and $response.Content -match '<title>Dream Windows</title>'
     } catch {
         return $false

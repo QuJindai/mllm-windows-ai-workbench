@@ -113,6 +113,8 @@ function New-DreamStableDiffusionArguments {
 
     [bool]$AttentionTraceSupported = $false,
 
+    [bool]$ConditioningTraceSupported = $false,
+
     [string]$AttentionTracePath,
 
     [bool]$DisableDiffusionFlashAttention = $false
@@ -147,7 +149,7 @@ function New-DreamStableDiffusionArguments {
     "-o", $OutputPath
   )
 
-  $flashAttention = -not $DisableDiffusionFlashAttention
+  $flashAttention = -not $DisableDiffusionFlashAttention -and $TraceLevel -ne 'h7'
   if ($flashAttention) {
     $arguments += "--diffusion-fa"
   }
@@ -160,6 +162,9 @@ function New-DreamStableDiffusionArguments {
     )
     if ($LatentTraceSupported) {
       $arguments += @("--latent-trace-path", $LatentTracePath)
+    }
+    if ($ConditioningTraceSupported) {
+      $arguments += @("--conditioning-trace-path", $TraceDirectory)
     }
     if ($TraceLevel -eq "h7" -and $AttentionTraceSupported) {
       $arguments += @("--attention-trace-path", $AttentionTracePath)

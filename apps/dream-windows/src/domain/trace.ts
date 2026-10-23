@@ -51,8 +51,12 @@ export type RuntimeLatentTelemetry = {
   l2: number;
   deltaL2?: number | null;
   deltaMeanAbs?: number | null;
+  deltaFileName?: string;
+  deltaImageUrl?: string;
   cosine?: number | null;
   channels: RuntimeLatentChannel[];
+  channelCorrelation?: (number | null)[][];
+  correlationMethod?: "pearson";
   truth: "observed";
   kind: "latent-state";
 };
@@ -90,7 +94,7 @@ export type RuntimeAttentionIndexAvailable = {
   contractVersion: "h7-attention-v1";
   kind: "cross-attention";
   truth: "observed";
-  source: "debug-unet";
+  source: "debug-unet" | "diffusers-unet";
   tokens: RuntimeAttentionToken[];
   layers: RuntimeAttentionLayer[];
   maps: RuntimeAttentionMapDescriptor[];
@@ -109,6 +113,64 @@ export type RuntimeAttentionMap = Omit<RuntimeAttentionIndexAvailable, "tokens" 
   Omit<RuntimeAttentionMapDescriptor, "mapUrl"> & {
     values: number[];
   };
+
+export type RuntimeInfluenceChunk = {
+  chunk: number;
+  tokenStart: number;
+  tokenEnd: number;
+  meanAbs: number;
+  l2: number;
+  cosineFull: number;
+  deltaL2: number;
+  spatialDelta: number[];
+};
+
+export type RuntimeInfluenceStep = {
+  step: number;
+  width: number;
+  height: number;
+  cfgDeltaL2: number;
+  cfgCosine: number;
+  chunks: RuntimeInfluenceChunk[];
+};
+
+export type RuntimeInfluenceAvailable = {
+  available: true;
+  runId: string;
+  contractVersion: "h6-conditioning-v1";
+  kind: "conditioning-influence";
+  truth: "observed";
+  source: "debug-unet" | "diffusers-unet";
+  method: "chunk-vs-full-guided" | "identity-ablation-guided" | "visual-reference-ablation-guided";
+  chunkSize: 77;
+  totalChunks: number;
+  capturedChunks: number;
+  steps: RuntimeInfluenceStep[];
+};
+
+export type RuntimeInfluence = RuntimeInfluenceAvailable | RuntimeAttentionUnavailable;
+
+export type RuntimeSelfAttentionMapDescriptor = Omit<RuntimeAttentionMapDescriptor, "tokenSlot"> & {
+  queryIndex: number;
+  queryX: number;
+  queryY: number;
+};
+
+export type RuntimeSelfAttentionIndexAvailable = {
+  available: true;
+  runId: string;
+  contractVersion: "h7-self-attention-v1";
+  kind: "self-attention";
+  truth: "observed";
+  source: "debug-unet" | "diffusers-unet";
+  layers: RuntimeAttentionLayer[];
+  maps: RuntimeSelfAttentionMapDescriptor[];
+};
+
+export type RuntimeSelfAttentionIndex = RuntimeSelfAttentionIndexAvailable | RuntimeAttentionUnavailable;
+export type RuntimeSelfAttentionMap = Omit<RuntimeSelfAttentionIndexAvailable, "layers" | "maps"> &
+  Omit<RuntimeSelfAttentionMapDescriptor, "mapUrl"> & { values: number[] };
+export type RuntimeSelfAttentionMapResponse = RuntimeSelfAttentionMap | RuntimeAttentionUnavailable;
 
 export type RuntimeTrace = {
   available?: true;
@@ -157,6 +219,9 @@ export type RuntimeTraceSummary = {
   steps?: number;
   backend?: string;
   hasAttention: boolean;
+  // Older servers omit these flags; absence is never evidence of availability.
+  hasInfluence?: boolean;
+  hasSelfAttention?: boolean;
   hasLatent: boolean;
   modifiedAt: string;
   truth: "observed";
@@ -184,4 +249,6 @@ export type RuntimeCapabilities = {
   latentTrace: RuntimeCapability;
   semanticExperiments: RuntimeCapability;
   attention: RuntimeCapability;
+  conditioningInfluence?: RuntimeCapability;
+  selfAttention?: RuntimeCapability;
 };

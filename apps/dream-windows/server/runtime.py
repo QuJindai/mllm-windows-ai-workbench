@@ -14,8 +14,13 @@ from typing import Any, Callable
 
 from config import DreamServerConfig
 from errors import DreamApiError
+from hardware_telemetry import HardwareTelemetry
+from history_transactions import delete_history_files, history_mutation_lock, recover_history_transactions
+from identity_models import is_visual_model_id
 from job_runner import JobRunner
 from models import ExperimentRequest, GenerateRequest
+from research_traces import (ResearchTraceStore, read_bounded_json, validate_research_provenance,
+                             InvalidArtifact, INDEX_BYTES, MAP_BYTES)
 
 class DreamRuntime:
     H7_ATTENTION_CONTRACT_VERSION = "h7-attention-v1"
@@ -28,10 +33,13 @@ class DreamRuntime:
 
     def __init__(self, config: DreamServerConfig, job_runner: JobRunner | None = None, workspace_launcher: Callable[[Path], None] | None = None):
         self.config = config
+        recover_history_transactions(config.dream_root)
         self.job_runner = job_runner or JobRunner(config)
         self.workspace_launcher = workspace_launcher
+        self.research_traces = ResearchTraceStore(config.dream_root)
         self._experiments: dict[str, dict[str, Any]] = {}
         self._experiments_lock = threading.RLock()
+        self._hardware_telemetry = HardwareTelemetry(config)
 
     def _environment(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -109,56 +117,32 @@ class DreamRuntime:
     def capabilities(self) -> dict[str, Any]:
         native = self.config.core_exe.exists() and self.config.engine_exe.exists() and self.config.wrapper.exists() and self.config.registry_path.exists()
         h7_ready = native and self.config.h7_attention_ready()
+        influence_ready = native and self.config.h6_conditioning_ready()
+        self_attention_ready = native and self.config.h7_self_attention_ready()
         return {
             "native_generation": {"available": native, "truth": "observed" if native else "unavailable"},
             "process_trace": {"available": native, "truth": "derived" if native else "unavailable"},
             "latent_trace": {"available": native, "truth": "observed" if native else "unavailable", "message": "Per-step latent RGB projections are captured; raw tensor telemetry depends on native binary support" if native else "Native Windows engine is unavailable"},
-            "semantic_experiments": {"available": native, "truth": "observed" if native else "unavailable", "message": "Controlled same-seed experiments use the native generation queue" if native else "Native generation dependencies are not ready"},
+            "semantic_experiments": {"available": influence_ready, "truth": "observed" if influence_ready else "unavailable", "message": "Controlled same-seed experiments use the native H6 generation queue" if influence_ready else "Native H6 generation dependencies are not ready"},
             "attention": {
                 "available": h7_ready,
                 "truth": "observed" if h7_ready else "unavailable",
                 "message": "H7 Debug UNet cross-attention 采集已就绪" if h7_ready else "独立 H7 Debug UNet 引擎尚未安装或清单无效",
             },
+            "conditioning_influence": {
+                "available": influence_ready,
+                "truth": "observed" if influence_ready else "unavailable",
+                "message": "H6 conditioning influence capture is ready" if influence_ready else "The native h6-conditioning-v1 capability is unavailable",
+            },
+            "self_attention": {
+                "available": self_attention_ready,
+                "truth": "observed" if self_attention_ready else "unavailable",
+                "message": "H7 self-attention capture is ready" if self_attention_ready else "The native h7-self-attention-v1 capability is unavailable",
+            },
         }
 
     def hardware(self) -> dict[str, Any]:
-        raw = self._json_from_output(self._run_core("hardware"))
-        ram = raw.get("ram") or {}
-        gpu = raw.get("nvidia") or {}
-        cpu = raw.get("cpu") or {}
-        drive = raw.get("e_drive") or {}
-        total_vram = int(gpu.get("memory_total_mib") or 0)
-        free_vram = int(gpu.get("memory_free_mib") or 0)
-        total_ram = int(ram.get("total_bytes") or 0)
-        free_ram = int(ram.get("free_bytes") or 0)
-        native_backend_ready = bool(gpu.get("name")) and all(path.exists() for path in (
-            self.config.core_exe,
-            self.config.engine_exe,
-            self.config.wrapper,
-            self.config.registry_path,
-        ))
-        return {
-            "gpuName": gpu.get("name") or "Unavailable",
-            "vramTotalMiB": total_vram,
-            "vramUsedMiB": max(0, total_vram - free_vram),
-            "gpuUtil": int(gpu.get("utilization_percent") or 0),
-            "gpuTempC": gpu.get("temperature_c"),
-            "gpuPowerW": gpu.get("power_limit_w"),
-            "ramTotalBytes": total_ram,
-            "ramUsedBytes": max(0, total_ram - free_ram),
-            "cudaReady": bool(gpu.get("name")),
-            "backend": "stable-diffusion.cpp + CUDA" if native_backend_ready else "Unavailable",
-            "backendTruth": "derived",
-            "dreamRoot": drive.get("root") or str(self.config.dream_root),
-            "truth": "observed",
-            "isMock": False,
-            "cpuName": cpu.get("name"),
-            "cpuCores": cpu.get("cores"),
-            "cpuThreads": cpu.get("logical_processors"),
-            "driverVersion": gpu.get("driver_version"),
-            "eDriveTotalBytes": drive.get("total_bytes"),
-            "eDriveFreeBytes": drive.get("free_bytes"),
-        }
+        return self._hardware_telemetry.read()
 
     def _registry(self) -> dict[str, Any]:
         if not self.config.registry_path.exists():
@@ -173,6 +157,7 @@ class DreamRuntime:
         result: list[dict[str, Any]] = []
         for item in registry.get("models", []):
             windows = item.get("windows") or {}
+            generation_defaults = item.get("generation_defaults") or {}
             path = Path(str(windows.get("path") or ""))
             exists = path.exists()
             verified = exists and str(windows.get("identity_status") or "").lower().startswith("verified")
@@ -195,6 +180,14 @@ class DreamRuntime:
                     "imageUrl": "",
                     "truth": "observed",
                     "source": item.get("source", {}),
+                    "generationDefaults": {
+                        "width": generation_defaults.get("width"),
+                        "height": generation_defaults.get("height"),
+                        "steps": generation_defaults.get("steps"),
+                        "cfg": generation_defaults.get("cfg"),
+                        "samplingMethod": generation_defaults.get("sampling_method"),
+                        "scheduler": generation_defaults.get("scheduler"),
+                    } if generation_defaults else None,
                 }
             )
         return result
@@ -241,15 +234,18 @@ class DreamRuntime:
         try:
             model_names: dict[str, str] = {}
             canonical_model_ids: dict[str, str] = {}
+            generation_defaults_by_id: dict[str, dict[str, Any] | None] = {}
             for model in self.models():
                 canonical_id = str(model["id"])
                 for identity in [canonical_id, *model.get("aliases", [])]:
                     identity_text = str(identity)
                     model_names[identity_text] = str(model["displayName"])
                     canonical_model_ids[identity_text] = canonical_id
+                    generation_defaults_by_id[identity_text] = model.get("generationDefaults")
         except DreamApiError:
             model_names = {}
             canonical_model_ids = {}
+            generation_defaults_by_id = {}
         for root in roots:
             if not root.exists():
                 continue
@@ -279,7 +275,8 @@ class DreamRuntime:
                         "prompt": metadata.get("prompt", ""),
                         "negativePrompt": metadata.get("negative_prompt", ""),
                         "modelId": model_id,
-                        "modelName": model_names.get(stored_model_id, model_id or "Unknown model"),
+                        "modelName": model_names.get(stored_model_id, str(metadata.get("model_name") or model_id or "Unknown model")),
+                        "generationDefaults": generation_defaults_by_id.get(stored_model_id),
                         "width": int(metadata.get("width") or 0),
                         "height": int(metadata.get("height") or 0),
                         "steps": int(metadata.get("steps") or 0),
@@ -341,24 +338,28 @@ class DreamRuntime:
         return path
 
     def delete_history(self, item_id: str) -> dict[str, Any]:
+        recover_history_transactions(self.config.dream_root)
         item = self._find_history_item(item_id)
         output = Path(item["filePath"])
         metadata = Path(item["metadataPath"])
-        for path in (output, metadata):
-            if self.config.path_under_dream(path) and path.exists():
-                path.unlink()
+        paths = [output, metadata]
+        if re.fullmatch(r"identity-[a-f0-9]{24}", item_id):
+            original = self.config.dream_root / "data" / "identity" / "originals" / f"{item_id}.png"
+            paths.insert(0, original)
+        delete_history_files(self.config.dream_root, item_id, paths)
         return {"deleted": item_id, "truth": "observed"}
 
     def favorite_history(self, item_id: str, value: bool) -> dict[str, Any]:
-        item = self._find_history_item(item_id)
-        metadata_path = Path(item["metadataPath"])
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
-            metadata["favorite"] = value
-            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-        except (OSError, json.JSONDecodeError) as exc:
-            raise DreamApiError("HISTORY_METADATA_WRITE_FAILED", str(exc), detail={"path": str(metadata_path)}) from exc
-        return self.history_item(item_id)
+        with history_mutation_lock(self.config.dream_root):
+            item = self._find_history_item(item_id)
+            metadata_path = Path(item["metadataPath"])
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+                metadata["favorite"] = value
+                metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            except (OSError, json.JSONDecodeError) as exc:
+                raise DreamApiError("HISTORY_METADATA_WRITE_FAILED", str(exc), detail={"path": str(metadata_path)}) from exc
+            return self.history_item(item_id)
 
     def _experiment_path(self, experiment_id: str) -> Path:
         return self.config.dream_root / "data" / "experiments" / f"{experiment_id}.json"
@@ -485,7 +486,7 @@ class DreamRuntime:
             return self._public_experiment(record)
 
     def research_status(self) -> dict[str, Any]:
-        ready = self.config.h7_attention_ready()
+        ready = self.config.h7_research_ready()
         return {
             "available": ready,
             "message": "H7 研究引擎已就绪（独立 Debug UNet）" if ready else "H7 研究引擎未安装或构建清单无效",
@@ -519,7 +520,7 @@ class DreamRuntime:
                     if self._is_runtime_trace_document(value):
                         resolved_id = candidate.stem
                         break
-                except (OSError, json.JSONDecodeError):
+                except (OSError, ValueError, RecursionError):
                     continue
         return resolved_id, self.config.dream_root / "traces" / f"{resolved_id}.json"
 
@@ -532,7 +533,7 @@ class DreamRuntime:
             if not self._is_runtime_trace_document(value):
                 raise DreamApiError("TRACE_INVALID", "Runtime trace has an invalid structure", detail={"path": str(trace_path)})
             return resolved_id, trace_path, value
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             raise DreamApiError("TRACE_INVALID", "Runtime trace is invalid", detail={"path": str(trace_path)}) from exc
 
     def _public_latent_frames(self, run_id: str, trace_path: Path, trace: dict[str, Any]) -> list[dict[str, Any]]:
@@ -583,6 +584,8 @@ class DreamRuntime:
                 }
                 for channel in sample["channels"]
             ]
+            if "deltaFileName" in sample:
+                sample["deltaImageUrl"] = f"/api/traces/{run_id}/latent/frames/{sample['deltaFileName']}"
             samples.append(sample)
         return sorted(samples, key=lambda item: item["step"])
 
@@ -598,7 +601,7 @@ class DreamRuntime:
             value.get("contractVersion") == cls.H7_ATTENTION_CONTRACT_VERSION
             and value.get("kind") == "cross-attention"
             and value.get("truth") == "observed"
-            and value.get("source") == "debug-unet"
+            and value.get("source") in ("debug-unet", "diffusers-unet")
         )
 
     def _attention_index_document(self, run_id: str) -> tuple[str, dict[str, Any] | None]:
@@ -609,20 +612,48 @@ class DreamRuntime:
         if not self.config.path_under_dream(index_path) or not index_path.is_file():
             return resolved_id, None
         try:
-            raw = json.loads(index_path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
+            raw = read_bounded_json(index_path, INDEX_BYTES)
+        except InvalidArtifact:
             return resolved_id, None
         if not isinstance(raw, dict) or not self._attention_marker_is_observed(raw):
             return resolved_id, None
+
+        identity_research = raw['source'] == 'diffusers-unet'
+        evidence = trace.get('evidence')
+        backend = evidence.get('backend') if isinstance(evidence, dict) else None
+        if (identity_research or backend == 'diffusers-unet') and (
+                trace.get('runId') != resolved_id or backend != raw['source'] or not identity_research):
+            return resolved_id, None
+        try:
+            provenance_fields = validate_research_provenance(raw)
+        except InvalidArtifact:
+            return resolved_id, None
+        provenance = provenance_fields.get('provenance')
+        visual_root = isinstance(evidence, dict) and (
+            evidence.get('referenceKind') == 'visual' or is_visual_model_id(evidence.get('modelId')))
+        if ('provenance' in trace or visual_root) and provenance is None:
+            return resolved_id, None
+        if visual_root and provenance['referenceKind'] != 'visual':
+            return resolved_id, None
+        if provenance is not None:
+            try:
+                root_provenance = validate_research_provenance(
+                    {'source': backend, 'provenance': trace.get('provenance')})
+            except InvalidArtifact:
+                return resolved_id, None
+            if (root_provenance != provenance_fields or not isinstance(evidence, dict)
+                    or evidence.get('modelId') != provenance['modelId']
+                    or evidence.get('referenceKind') != provenance['referenceKind']):
+                return resolved_id, None
 
         raw_tokens = raw.get("tokens")
         raw_layers = raw.get("layers")
         raw_maps = raw.get("maps")
         if not isinstance(raw_tokens, list) or not 1 <= len(raw_tokens) <= self.MAX_ATTENTION_TOKENS:
             return resolved_id, None
-        if not isinstance(raw_layers, list) or not 1 <= len(raw_layers) <= self.MAX_ATTENTION_LAYERS:
+        if not isinstance(raw_layers, list) or not 1 <= len(raw_layers) <= (32 if identity_research else self.MAX_ATTENTION_LAYERS):
             return resolved_id, None
-        if not isinstance(raw_maps, list) or not 1 <= len(raw_maps) <= self.MAX_ATTENTION_MAPS:
+        if not isinstance(raw_maps, list) or not 1 <= len(raw_maps) <= (30000 if identity_research else self.MAX_ATTENTION_MAPS):
             return resolved_id, None
 
         tokens: list[dict[str, Any]] = []
@@ -657,7 +688,7 @@ class DreamRuntime:
             layer_id = self._safe_attention_id(raw_layer.get("id"))
             stage = raw_layer.get("stage")
             label = raw_layer.get("label")
-            if layer_id is None or layer_id in layer_ids or stage not in {"down", "mid", "up"} or stage in layer_stages:
+            if layer_id is None or layer_id in layer_ids or stage not in {"down", "mid", "up"} or (not identity_research and stage in layer_stages):
                 return resolved_id, None
             if not isinstance(label, str) or not label or len(label) > 128:
                 return resolved_id, None
@@ -720,7 +751,8 @@ class DreamRuntime:
             "contractVersion": self.H7_ATTENTION_CONTRACT_VERSION,
             "kind": "cross-attention",
             "truth": "observed",
-            "source": "debug-unet",
+            "source": raw['source'],
+            **provenance_fields,
             "tokens": sorted(tokens, key=lambda item: item["slot"]),
             "layers": layers,
             "maps": sorted(maps, key=lambda item: (item["step"], item["layerId"], item["tokenSlot"])),
@@ -744,6 +776,15 @@ class DreamRuntime:
         ]
         return {"available": True, "runId": resolved_id, **{**index, "maps": public_maps}}
 
+    def influence(self, run_id: str) -> dict[str, Any]:
+        return self.research_traces.influence(run_id)
+
+    def self_attention_index(self, run_id: str) -> dict[str, Any]:
+        return self.research_traces.self_attention_index(run_id)
+
+    def self_attention_map(self, run_id: str, map_id: str) -> dict[str, Any]:
+        return self.research_traces.self_attention_map(run_id, map_id)
+
     def attention_map(self, run_id: str, map_id: str) -> dict[str, Any]:
         resolved_id, index = self._attention_index_document(run_id)
         safe_map_id = self._safe_attention_id(map_id)
@@ -756,11 +797,14 @@ class DreamRuntime:
         if not self.config.path_under_dream(map_path) or not map_path.is_file():
             raise DreamApiError("ATTENTION_MAP_NOT_FOUND", "H7 attention map is not available", status_code=404)
         try:
-            raw = json.loads(map_path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError) as exc:
+            raw = read_bounded_json(map_path, MAP_BYTES)
+            provenance_fields = validate_research_provenance(raw)
+        except InvalidArtifact as exc:
             raise DreamApiError("ATTENTION_MAP_INVALID", "H7 attention map is invalid", status_code=422) from exc
-        if not isinstance(raw, dict) or not self._attention_marker_is_observed(raw):
+        if not isinstance(raw, dict) or not self._attention_marker_is_observed(raw) or raw.get('source') != index['source']:
             raise DreamApiError("ATTENTION_MAP_INVALID", "H7 attention map is invalid", status_code=422)
+        if provenance_fields.get('provenance') != index.get('provenance'):
+            raise DreamApiError("ATTENTION_MAP_INVALID", "H7 attention map provenance does not match its index", status_code=422)
         for key in ("id", "step", "layerId", "tokenSlot", "width", "height", "entropy", "peak", "coverage"):
             if raw.get(key) != descriptor.get(key):
                 raise DreamApiError("ATTENTION_MAP_INVALID", "H7 attention map does not match its index", status_code=422)
@@ -776,7 +820,8 @@ class DreamRuntime:
             "contractVersion": self.H7_ATTENTION_CONTRACT_VERSION,
             "kind": "cross-attention",
             "truth": "observed",
-            "source": "debug-unet",
+            "source": index['source'],
+            **provenance_fields,
             **{key: value for key, value in descriptor.items() if key != "fileName"},
             "values": [float(value) for value in values],
         }
@@ -924,6 +969,8 @@ class DreamRuntime:
                 "totalTimeMs": trace.get("totalTimeMs", 0),
                 "hasAttention": attention is not None,
                 "hasLatent": bool(trace.get("latentPreviewFrames") or trace.get("latentTelemetry")),
+                "hasInfluence": self.influence(run_id)["available"],
+                "hasSelfAttention": self.self_attention_index(run_id)["available"],
                 "modifiedAt": datetime.fromtimestamp(trace_path.stat().st_mtime, tz=timezone.utc).isoformat(),
                 "truth": "observed",
             }
@@ -960,6 +1007,7 @@ class DreamRuntime:
         telemetry = self._public_latent_telemetry(resolved_id, trace_path, value)
         declared_files = {frame["fileName"] for frame in frames}
         declared_files.update(channel["fileName"] for sample in telemetry for channel in sample["channels"])
+        declared_files.update(sample["deltaFileName"] for sample in telemetry if "deltaFileName" in sample)
         if file_name not in declared_files:
             raise DreamApiError("TRACE_FRAME_NOT_FOUND", "Latent frame is not available", status_code=404)
         frame_path = trace_path.parent / resolved_id / file_name
@@ -1028,12 +1076,16 @@ class DreamRuntime:
         return {"opened": True, "entry": entry, "path": str(path), "truth": "observed"}
 
     def generate(self, request):
+        if request.trace_level in {"h6", "h7"} and max(request.width, request.height) > 1024:
+            raise DreamApiError("RESEARCH_RESOLUTION_LIMIT", "H6/H7 研究采集的宽高各限 1024 像素；请缩小分辨率或改为仅阶段耗时。", status_code=422)
         model = self.get_model(request.model_id)
         if model["status"] != "ready":
             raise DreamApiError("MODEL_FILE_MISSING", "Selected model is not available on E:", detail={"modelId": request.model_id, "path": model["path"]})
-        selected_engine = self.config.h7_engine_exe if request.trace_level == "h7" else self.config.engine_exe
-        if request.trace_level == "h7" and not self.config.h7_attention_ready():
-            raise DreamApiError("H7_ENGINE_MISSING", "H7 研究引擎未安装或构建清单无效", detail={"engine": str(selected_engine), "manifest": str(self.config.h7_manifest_path)})
+        selected_engine = self.config.h7_engine_exe if request.trace_level in {"h6", "h7"} else self.config.engine_exe
+        if request.trace_level == "h6" and not self.config.h6_conditioning_ready():
+            raise DreamApiError("H6_ENGINE_MISSING", "H6 研究引擎未安装或构建清单无效")
+        if request.trace_level == "h7" and not self.config.h7_research_ready():
+            raise DreamApiError("H7_ENGINE_MISSING", "H7 研究引擎未安装或构建清单无效")
         if not self.config.core_exe.exists() or not selected_engine.exists() or not self.config.wrapper.exists():
             raise DreamApiError("DREAM_DEPENDENCY_MISSING", "Native CUDA generation dependencies are not ready", detail={"dreamCore": str(self.config.core_exe), "engine": str(selected_engine), "wrapper": str(self.config.wrapper)})
         if request.model_id != model["id"]:

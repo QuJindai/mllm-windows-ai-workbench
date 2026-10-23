@@ -5,8 +5,8 @@ export type HardwareSnapshot = {
   vramTotalMiB: number;
   vramUsedMiB: number;
   gpuUtil: number;
-  gpuTempC?: number;
-  gpuPowerW?: number;
+  gpuTempC?: number | null;
+  gpuPowerW?: number | null;
   ramTotalBytes: number;
   ramUsedBytes: number;
   cudaReady: boolean;
@@ -19,4 +19,13 @@ export type HardwareSnapshot = {
   driverVersion?: string;
   eDriveTotalBytes?: number;
   eDriveFreeBytes?: number;
+  sampledAt?: string;
+  telemetrySource?: string;
 };
+
+export const HARDWARE_MAX_AGE_MS = 10_000;
+
+export function isFreshHardware(snapshot: HardwareSnapshot, now = Date.now()): boolean {
+  const sampled = Date.parse(snapshot.sampledAt ?? "");
+  return Number.isFinite(sampled) && sampled <= now + 1000 && now - sampled < HARDWARE_MAX_AGE_MS;
+}

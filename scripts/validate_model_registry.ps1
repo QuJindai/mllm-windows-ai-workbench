@@ -101,9 +101,7 @@ if ($null -ne $Registry) {
         }
         if ($Model.status -eq "uninstalled") { $Warnings.Add("$Prefix is explicitly uninstalled; W1 generation must remain blocked") }
       }
-      if ($null -eq $Model.android_reference) {
-        Add-Error "$Prefix.android_reference is required"
-      } else {
+      if ($null -ne $Model.android_reference) {
         if ([string]::IsNullOrWhiteSpace([string]$Model.android_reference.branch)) { Add-Error "$Prefix.android_reference.branch is required" }
         if ([string]$Model.android_reference.commit -notmatch "^[0-9a-f]{40}$") { Add-Error "$Prefix.android_reference.commit must be a 40-character commit" }
         if ($Model.android_reference.artifact_policy -ne "reference-only") { Add-Error "$Prefix.android_reference.artifact_policy must be reference-only" }

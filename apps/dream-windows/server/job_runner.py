@@ -8,7 +8,7 @@ import secrets
 import subprocess
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -56,6 +56,26 @@ class JobRunner:
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dream-generate")
+        self._before_run: list[Callable[[], None]] = []
+
+    def add_before_run(self, callback: Callable[[], None]) -> None:
+        """Register a release barrier before every native inference path."""
+        with self._lock:
+            if callback not in self._before_run:
+                self._before_run.append(callback)
+
+    def remove_before_run(self, callback: Callable[[], None]) -> None:
+        with self._lock:
+            if callback in self._before_run:
+                self._before_run.remove(callback)
+
+    def submit_serial(self, operation: Callable[..., Any], *args: Any) -> Future:
+        """Schedule work on the same exclusive queue as native generation."""
+        return self._executor.submit(operation, *args)
+
+    def release_native_for_identity(self) -> None:
+        """Must be called from queued work before loading an identity model."""
+        self.persistent_engine.release_for_identity()
 
     def _job_path(self, job_id: str) -> Path:
         return self.config.dream_root / "data" / "jobs" / f"{job_id}.json"
@@ -117,7 +137,7 @@ class JobRunner:
         with self._lock:
             self._jobs[job_id] = record
             self._persist(record)
-        self._executor.submit(self._execute, job_id, request, seed, output, metadata)
+        self.submit_serial(self._execute, job_id, request, seed, output, metadata)
         return dict(record)
 
     def get(self, job_id: str) -> dict[str, Any]:
@@ -237,6 +257,14 @@ class JobRunner:
 
     def _execute(self, job_id: str, request: GenerateRequest, seed: int, output: Path, metadata: Path) -> None:
         if self._update_if_active(job_id, state="preparing", progress=12, message="正在验证模型并准备 CUDA") is None:
+            return
+        try:
+            with self._lock:
+                barriers = tuple(self._before_run)
+            for barrier in barriers:
+                barrier()
+        except Exception:
+            self._update_if_active(job_id, state="failed", progress=0, message="无法确认上一任务已释放 GPU", error="GPU release barrier failed; no native generation was started")
             return
         output.parent.mkdir(parents=True, exist_ok=True)
         trace_dir = self._trace_dir(job_id)
@@ -565,7 +593,56 @@ class JobRunner:
             # Preserve measured deltas (including zero) when reading a saved run.
             value = raw.get(raw_key, raw.get(public_key))
             sample[public_key] = float(value) if self._finite_number(value) else None
+        if "channel_correlation" in raw or "channelCorrelation" in raw:
+            channel_count = validated_shape[2] if len(validated_shape) >= 3 else 1
+            if channel_count > 16 or sorted(channel_ids) != list(range(channel_count)):
+                return None
+            for key in ("correlation_method", "correlationMethod"):
+                if key in raw and raw[key] != "pearson":
+                    return None
+            matrices = [self._validated_channel_correlation(raw[key], channel_count)
+                        for key in ("channel_correlation", "channelCorrelation") if key in raw]
+            if any(matrix is None for matrix in matrices) or any(matrix != matrices[0] for matrix in matrices):
+                return None
+            sample["channelCorrelation"] = matrices[0]
+            sample["correlationMethod"] = "pearson"
+        delta_names = [raw[key] for key in ("delta_file_name", "deltaFileName") if key in raw]
+        if delta_names:
+            name = delta_names[0]
+            match = re.fullmatch(r"latent-step-(\d{3,})-delta\.png", name) if isinstance(name, str) else None
+            if (match is None or self._bounded_int(match.group(1), minimum=0, maximum=self.MAX_LATENT_STEP) != step
+                    or any(value != name for value in delta_names)):
+                return None
+            path = trace_dir / name
+            if not self.config.path_under_dream(path) or not path.is_file():
+                return None
+            sample["deltaFileName"] = name
         return sample
+
+    @staticmethod
+    def _validated_channel_correlation(raw: Any, channels: int) -> list[list[float | None]] | None:
+        if not isinstance(raw, list) or len(raw) != channels:
+            return None
+        matrix: list[list[float | None]] = []
+        for row in raw:
+            if not isinstance(row, list) or len(row) != channels:
+                return None
+            if any(value is not None and (type(value) not in (int, float)
+                   or not JobRunner._finite_number(value) or not -1 <= value <= 1) for value in row):
+                return None
+            matrix.append([None if value is None else float(value) for value in row])
+        for row in range(channels):
+            diagonal = matrix[row][row]
+            # Identity's float64 norm product can round a valid diagonal below one.
+            if diagonal is not None and not math.isclose(diagonal, 1.0, rel_tol=0.0, abs_tol=1e-12):
+                return None
+            for column in range(channels):
+                value = matrix[row][column]
+                # Undefined variance invalidates the entire row/column, including its diagonal.
+                undefined = diagonal is None or matrix[column][column] is None
+                if (value is None) != undefined or value != matrix[column][row]:
+                    return None
+        return matrix
 
     def _validated_latent_channel(self, raw: Any, trace_dir: Path, step: int) -> dict[str, Any] | None:
         if not isinstance(raw, dict) or raw.get("truth", "observed") != "observed" or raw.get("kind", "latent-channel") != "latent-channel":
@@ -651,7 +728,7 @@ class JobRunner:
 
     def _environment(self, request: GenerateRequest | None = None) -> dict[str, str]:
         env = os.environ.copy()
-        engine = self.config.h7_engine_exe if request is not None and request.trace_level == "h7" else self.config.engine_exe
+        engine = self.config.h7_engine_exe if request is not None and request.trace_level in {"h6", "h7"} else self.config.engine_exe
         env.update(
             {
                 "DREAM_HOME": str(self.config.dream_root),

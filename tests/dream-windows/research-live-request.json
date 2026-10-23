@@ -1,0 +1,17 @@
+{
+  "model_id": "cyberrealistic-xl-v10-standard",
+  "model_path": "E:\\Dream\\models\\windows\\gguf\\cyberrealisticXL_v100_standard_q8_0.gguf",
+  "prompt": "A photograph of a serene alpine lake at sunrise, snow capped mountain peaks reflected in crystal clear water, pine forest on the shoreline, a small wooden cabin, delicate golden clouds, cinematic natural lighting, realistic fine textures, balanced composition, peaceful atmosphere, detailed rocks in the foreground, morning mist drifting above the water, a winding path through the forest, warm sunlight illuminating the distant mountain summit, soft shadows, subtle color grading, landscape photography, sharp focus, high dynamic range, no people",
+  "negative": "blurry, low quality, distorted, text, watermark, cartoon",
+  "seed": 4202026,
+  "steps": 20,
+  "cfg": 4,
+  "width": 512,
+  "height": 512,
+  "sampling_method": "dpm++2m_sde",
+  "scheduler": "karras",
+  "trace_level": "h7",
+  "trace_dir": "E:\\Dream\\traces\\research-acceptance-20260920",
+  "output": "E:\\Dream\\outputs\\research-acceptance-20260920.png",
+  "metadata": "E:\\Dream\\outputs\\research-acceptance-20260920.json"
+}

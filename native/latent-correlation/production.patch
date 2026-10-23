@@ -1,0 +1,658 @@
+diff --git a/examples/cli/main.cpp b/examples/cli/main.cpp
+--- a/examples/cli/main.cpp
++++ b/examples/cli/main.cpp
+@@ -439,180 +439,7 @@
+     }
+ }
+ 
+-static void write_json_number(std::ostream& output, float value) {
+-    if (std::isfinite(value)) {
+-        output << std::setprecision(9) << value;
+-    } else {
+-        output << "null";
+-    }
+-}
+-
+-static void latent_trace_callback(int step,
+-                                  const float* values,
+-                                  int64_t value_count,
+-                                  int n_dims,
+-                                  const int64_t* shape,
+-                                  void* data) {
+-    auto* cli_params = static_cast<SDCliParams*>(data);
+-    if (cli_params == nullptr || cli_params->latent_trace_path.empty() || values == nullptr || shape == nullptr || value_count <= 0 || n_dims < 2 || n_dims > 4) {
+-        return;
+-    }
+-    // Some higher-order samplers evaluate a logical step more than once. Keep
+-    // one sample per displayed step so the UI scrubber matches user intent.
+-    if (step <= cli_params->last_latent_trace_step) {
+-        return;
+-    }
+-
+-    int64_t width = shape[0];
+-    int64_t height = shape[1];
+-    int64_t channels = n_dims >= 3 ? shape[2] : 1;
+-    int64_t batch = n_dims >= 4 ? shape[3] : 1;
+-    if (width <= 0 || height <= 0 || channels <= 0 || batch <= 0 || channels > 16 || width * height * channels * batch != value_count) {
+-        LOG_WARN("ignoring invalid latent trace shape at step %d", step);
+-        return;
+-    }
+-    const int64_t plane = width * height;
+-    const int channel_count = static_cast<int>(channels);
+-    const size_t count = static_cast<size_t>(value_count);
+-    double sum = 0.0;
+-    double sum_sq = 0.0;
+-    float aggregate_min = std::numeric_limits<float>::infinity();
+-    float aggregate_max = -std::numeric_limits<float>::infinity();
+-    for (size_t index = 0; index < count; ++index) {
+-        const float value = values[index];
+-        if (!std::isfinite(value)) {
+-            continue;
+-        }
+-        sum += value;
+-        sum_sq += static_cast<double>(value) * value;
+-        aggregate_min = std::min(aggregate_min, value);
+-        aggregate_max = std::max(aggregate_max, value);
+-    }
+-    const double mean = sum / static_cast<double>(count);
+-    const double variance = std::max(0.0, sum_sq / static_cast<double>(count) - mean * mean);
+-    const double l2 = std::sqrt(sum_sq);
+-
+-    double delta_l2 = std::numeric_limits<double>::quiet_NaN();
+-    double delta_mean_abs = std::numeric_limits<double>::quiet_NaN();
+-    double cosine = std::numeric_limits<double>::quiet_NaN();
+-    if (cli_params->previous_latent.size() == count) {
+-        double delta_sq = 0.0;
+-        double delta_abs = 0.0;
+-        double dot = 0.0;
+-        double previous_sq = 0.0;
+-        for (size_t index = 0; index < count; ++index) {
+-            const double current = values[index];
+-            const double previous = cli_params->previous_latent[index];
+-            const double delta = current - previous;
+-            delta_sq += delta * delta;
+-            delta_abs += std::abs(delta);
+-            dot += current * previous;
+-            previous_sq += previous * previous;
+-        }
+-        delta_l2 = std::sqrt(delta_sq);
+-        delta_mean_abs = delta_abs / static_cast<double>(count);
+-        const double denominator = std::sqrt(sum_sq * previous_sq);
+-        cosine = denominator > 0.0 ? dot / denominator : 0.0;
+-    }
+-
+-    fs::path metrics_path(cli_params->latent_trace_path);
+-    std::error_code error;
+-    fs::create_directories(metrics_path.parent_path(), error);
+-    std::ofstream metrics(metrics_path, std::ios::app);
+-    if (!metrics) {
+-        LOG_ERROR("open latent trace '%s' failed", metrics_path.string().c_str());
+-        return;
+-    }
+-    metrics << "{\"step\":" << step << ",\"shape\":[";
+-    for (int dimension = 0; dimension < n_dims; ++dimension) {
+-        if (dimension > 0) metrics << ',';
+-        metrics << shape[dimension];
+-    }
+-    metrics << "],\"mean\":";
+-    write_json_number(metrics, static_cast<float>(mean));
+-    metrics << ",\"std\":";
+-    write_json_number(metrics, static_cast<float>(std::sqrt(variance)));
+-    metrics << ",\"l2\":";
+-    write_json_number(metrics, static_cast<float>(l2));
+-    metrics << ",\"delta_l2\":";
+-    write_json_number(metrics, static_cast<float>(delta_l2));
+-    metrics << ",\"delta_mean_abs\":";
+-    write_json_number(metrics, static_cast<float>(delta_mean_abs));
+-    metrics << ",\"cosine\":";
+-    write_json_number(metrics, static_cast<float>(cosine));
+-    metrics << ",\"truth\":\"observed\",\"kind\":\"latent-state\",\"channels\":[";
+-
+-    for (int channel = 0; channel < channel_count; ++channel) {
+-        if (channel > 0) metrics << ',';
+-        float channel_min = std::numeric_limits<float>::infinity();
+-        float channel_max = -std::numeric_limits<float>::infinity();
+-        double channel_sum = 0.0;
+-        double channel_sq = 0.0;
+-        std::vector<int> histogram(32, 0);
+-        for (int64_t batch_index = 0; batch_index < batch; ++batch_index) {
+-            const size_t offset = static_cast<size_t>((batch_index * channel_count + channel) * plane);
+-            for (int64_t pixel = 0; pixel < plane; ++pixel) {
+-                const float value = values[offset + static_cast<size_t>(pixel)];
+-                if (!std::isfinite(value)) continue;
+-                channel_min = std::min(channel_min, value);
+-                channel_max = std::max(channel_max, value);
+-                channel_sum += value;
+-                channel_sq += static_cast<double>(value) * value;
+-            }
+-        }
+-        const size_t channel_value_count = static_cast<size_t>(plane * batch);
+-        const double channel_mean = channel_sum / static_cast<double>(channel_value_count);
+-        const double channel_variance = std::max(0.0, channel_sq / static_cast<double>(channel_value_count) - channel_mean * channel_mean);
+-        if (std::isfinite(channel_min) && std::isfinite(channel_max)) {
+-            const double range = static_cast<double>(channel_max) - channel_min;
+-            for (int64_t batch_index = 0; batch_index < batch; ++batch_index) {
+-                const size_t offset = static_cast<size_t>((batch_index * channel_count + channel) * plane);
+-                for (int64_t pixel = 0; pixel < plane; ++pixel) {
+-                    const float value = values[offset + static_cast<size_t>(pixel)];
+-                    if (!std::isfinite(value)) continue;
+-                    int bin = range > 0.0 ? static_cast<int>(((value - channel_min) / range) * 32.0) : 16;
+-                    bin = std::clamp(bin, 0, 31);
+-                    histogram[bin]++;
+-                }
+-            }
+-        }
+-        char file_name_buffer[64];
+-        std::snprintf(file_name_buffer, sizeof(file_name_buffer), "latent-step-%03d-ch%d.png", step, channel);
+-        const std::string file_name = file_name_buffer;
+-        std::vector<uint8_t> image(static_cast<size_t>(plane));
+-        const double range = static_cast<double>(channel_max) - channel_min;
+-        const size_t first_batch_offset = static_cast<size_t>(channel * plane);
+-        for (int64_t pixel = 0; pixel < plane; ++pixel) {
+-            const float value = values[first_batch_offset + static_cast<size_t>(pixel)];
+-            const double normalized = std::isfinite(value) && range > 0.0 ? (value - channel_min) / range : 0.5;
+-            image[static_cast<size_t>(pixel)] = static_cast<uint8_t>(std::clamp(normalized * 255.0, 0.0, 255.0));
+-        }
+-        if (!write_image_to_file((metrics_path.parent_path() / file_name).string(), image.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, "", cli_params->compression_quality)) {
+-            LOG_WARN("save latent channel map '%s' failed", file_name.c_str());
+-        }
+-
+-        metrics << "{\"channel\":" << channel << ",\"file_name\":\"" << file_name << "\",\"min\":";
+-        write_json_number(metrics, channel_min);
+-        metrics << ",\"max\":";
+-        write_json_number(metrics, channel_max);
+-        metrics << ",\"mean\":";
+-        write_json_number(metrics, static_cast<float>(channel_mean));
+-        metrics << ",\"std\":";
+-        write_json_number(metrics, static_cast<float>(std::sqrt(channel_variance)));
+-        metrics << ",\"l2\":";
+-        write_json_number(metrics, static_cast<float>(std::sqrt(channel_sq)));
+-        metrics << ",\"histogram\":[";
+-        for (size_t bin = 0; bin < histogram.size(); ++bin) {
+-            if (bin > 0) metrics << ',';
+-            metrics << histogram[bin];
+-        }
+-        metrics << "],\"truth\":\"observed\",\"kind\":\"latent-channel\"}";
+-    }
+-    metrics << "]}\n";
+-    metrics.flush();
+-    cli_params->previous_latent.assign(values, values + count);
+-    cli_params->last_latent_trace_step = step;
+-}
++#include "latent_trace_writer.h"
+ 
+ static fs::path get_video_audio_sidecar_path(const SDCliParams& cli_params) {
+     fs::path out_path     = cli_params.output_path;
+diff --git a/examples/cli/latent_trace_writer.h b/examples/cli/latent_trace_writer.h
+new file mode 100644
+--- /dev/null
++++ b/examples/cli/latent_trace_writer.h
+@@ -0,0 +1,215 @@
++#ifndef __SD_CLI_LATENT_TRACE_WRITER_H__
++#define __SD_CLI_LATENT_TRACE_WRITER_H__
++#include "latent_correlation.h"
++static void write_json_number(std::ostream& output, float value) {
++    if (std::isfinite(value)) {
++        output << std::setprecision(9) << value;
++    } else {
++        output << "null";
++    }
++}
++
++static void latent_trace_callback(int step,
++                                  const float* values,
++                                  int64_t value_count,
++                                  int n_dims,
++                                  const int64_t* shape,
++                                  void* data) {
++    auto* cli_params = static_cast<SDCliParams*>(data);
++    if (cli_params == nullptr || cli_params->latent_trace_path.empty() || values == nullptr || shape == nullptr || value_count <= 0 || n_dims < 2 || n_dims > 4) {
++        return;
++    }
++    // Some higher-order samplers evaluate a logical step more than once. Keep
++    // one sample per displayed step so the UI scrubber matches user intent.
++    if (step <= cli_params->last_latent_trace_step) {
++        return;
++    }
++
++    int64_t width = shape[0];
++    int64_t height = shape[1];
++    int64_t channels = n_dims >= 3 ? shape[2] : 1;
++    int64_t batch = n_dims >= 4 ? shape[3] : 1;
++    if (width <= 0 || height <= 0 || channels <= 0 || batch <= 0 || channels > 16 || width * height * channels * batch != value_count) {
++        LOG_WARN("ignoring invalid latent trace shape at step %d", step);
++        return;
++    }
++    const int64_t plane = width * height;
++    const int channel_count = static_cast<int>(channels);
++    const size_t count = static_cast<size_t>(value_count);
++    const auto correlation = sd_latent::channel_correlation(values, static_cast<size_t>(plane),
++                                                           static_cast<size_t>(channels), static_cast<size_t>(batch));
++    double sum = 0.0;
++    double sum_sq = 0.0;
++    float aggregate_min = std::numeric_limits<float>::infinity();
++    float aggregate_max = -std::numeric_limits<float>::infinity();
++    for (size_t index = 0; index < count; ++index) {
++        const float value = values[index];
++        if (!std::isfinite(value)) {
++            continue;
++        }
++        sum += value;
++        sum_sq += static_cast<double>(value) * value;
++        aggregate_min = std::min(aggregate_min, value);
++        aggregate_max = std::max(aggregate_max, value);
++    }
++    const double mean = sum / static_cast<double>(count);
++    const double variance = std::max(0.0, sum_sq / static_cast<double>(count) - mean * mean);
++    const double l2 = std::sqrt(sum_sq);
++
++    double delta_l2 = std::numeric_limits<double>::quiet_NaN();
++    double delta_mean_abs = std::numeric_limits<double>::quiet_NaN();
++    double cosine = std::numeric_limits<double>::quiet_NaN();
++    std::vector<double> spatial_delta;
++    if (cli_params->previous_latent.size() == count) {
++        spatial_delta.assign(static_cast<size_t>(plane), 0.0);
++        bool finite_delta = true;
++        double delta_sq = 0.0;
++        double delta_abs = 0.0;
++        double dot = 0.0;
++        double previous_sq = 0.0;
++        for (size_t index = 0; index < count; ++index) {
++            const double current = values[index];
++            const double previous = cli_params->previous_latent[index];
++            const double delta = current - previous;
++            finite_delta = finite_delta && std::isfinite(delta);
++            spatial_delta[index % static_cast<size_t>(plane)] += std::abs(delta);
++            delta_sq += delta * delta;
++            delta_abs += std::abs(delta);
++            dot += current * previous;
++            previous_sq += previous * previous;
++        }
++        delta_l2 = std::sqrt(delta_sq);
++        delta_mean_abs = delta_abs / static_cast<double>(count);
++        const double denominator = std::sqrt(sum_sq * previous_sq);
++        cosine = denominator > 0.0 ? dot / denominator : 0.0;
++        if (!finite_delta) spatial_delta.clear();
++        else for (auto& value : spatial_delta) value /= static_cast<double>(channels) * batch;
++    }
++
++    fs::path metrics_path(cli_params->latent_trace_path);
++    std::error_code error;
++    fs::create_directories(metrics_path.parent_path(), error);
++    std::ofstream metrics(metrics_path, std::ios::app);
++    if (!metrics) {
++        LOG_ERROR("open latent trace '%s' failed", metrics_path.string().c_str());
++        return;
++    }
++    std::string delta_file_name;
++    if (!spatial_delta.empty()) {
++        const double maximum = *std::max_element(spatial_delta.begin(), spatial_delta.end());
++        std::vector<uint8_t> image(spatial_delta.size());
++        for (size_t pixel = 0; pixel < image.size(); ++pixel) {
++            image[pixel] = maximum > 0.0 ? static_cast<uint8_t>(std::clamp(spatial_delta[pixel] / maximum * 255.0, 0.0, 255.0)) : 0;
++        }
++        char name[64];
++        std::snprintf(name, sizeof(name), "latent-step-%03d-delta.png", step);
++        if (write_image_to_file((metrics_path.parent_path() / name).string(), image.data(),
++                                static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, "", cli_params->compression_quality)) {
++            delta_file_name = name;
++        } else {
++            LOG_WARN("save latent delta map '%s' failed", name);
++        }
++    }
++    metrics << "{\"step\":" << step;
++    if (!delta_file_name.empty()) metrics << ",\"delta_file_name\":\"" << delta_file_name << '\"';
++    metrics << ",\"shape\":[";
++    for (int dimension = 0; dimension < n_dims; ++dimension) {
++        if (dimension > 0) metrics << ',';
++        metrics << shape[dimension];
++    }
++    metrics << "],\"mean\":";
++    write_json_number(metrics, static_cast<float>(mean));
++    metrics << ",\"std\":";
++    write_json_number(metrics, static_cast<float>(std::sqrt(variance)));
++    metrics << ",\"l2\":";
++    write_json_number(metrics, static_cast<float>(l2));
++    metrics << ",\"delta_l2\":";
++    write_json_number(metrics, static_cast<float>(delta_l2));
++    metrics << ",\"delta_mean_abs\":";
++    write_json_number(metrics, static_cast<float>(delta_mean_abs));
++    metrics << ",\"cosine\":";
++    write_json_number(metrics, static_cast<float>(cosine));
++    metrics << ",\"channel_correlation\":[";
++    for (size_t row = 0; row < correlation.size(); ++row) {
++        if (row > 0) metrics << ',';
++        metrics << '[';
++        for (size_t column = 0; column < correlation[row].size(); ++column) {
++            if (column > 0) metrics << ',';
++            write_json_number(metrics, static_cast<float>(correlation[row][column]));
++        }
++        metrics << ']';
++    }
++    metrics << "],\"truth\":\"observed\",\"kind\":\"latent-state\",\"channels\":[";
++
++    for (int channel = 0; channel < channel_count; ++channel) {
++        if (channel > 0) metrics << ',';
++        float channel_min = std::numeric_limits<float>::infinity();
++        float channel_max = -std::numeric_limits<float>::infinity();
++        double channel_sum = 0.0;
++        double channel_sq = 0.0;
++        std::vector<int> histogram(32, 0);
++        for (int64_t batch_index = 0; batch_index < batch; ++batch_index) {
++            const size_t offset = static_cast<size_t>((batch_index * channel_count + channel) * plane);
++            for (int64_t pixel = 0; pixel < plane; ++pixel) {
++                const float value = values[offset + static_cast<size_t>(pixel)];
++                if (!std::isfinite(value)) continue;
++                channel_min = std::min(channel_min, value);
++                channel_max = std::max(channel_max, value);
++                channel_sum += value;
++                channel_sq += static_cast<double>(value) * value;
++            }
++        }
++        const size_t channel_value_count = static_cast<size_t>(plane * batch);
++        const double channel_mean = channel_sum / static_cast<double>(channel_value_count);
++        const double channel_variance = std::max(0.0, channel_sq / static_cast<double>(channel_value_count) - channel_mean * channel_mean);
++        if (std::isfinite(channel_min) && std::isfinite(channel_max)) {
++            const double range = static_cast<double>(channel_max) - channel_min;
++            for (int64_t batch_index = 0; batch_index < batch; ++batch_index) {
++                const size_t offset = static_cast<size_t>((batch_index * channel_count + channel) * plane);
++                for (int64_t pixel = 0; pixel < plane; ++pixel) {
++                    const float value = values[offset + static_cast<size_t>(pixel)];
++                    if (!std::isfinite(value)) continue;
++                    int bin = range > 0.0 ? static_cast<int>(((value - channel_min) / range) * 32.0) : 16;
++                    bin = std::clamp(bin, 0, 31);
++                    histogram[bin]++;
++                }
++            }
++        }
++        char file_name_buffer[64];
++        std::snprintf(file_name_buffer, sizeof(file_name_buffer), "latent-step-%03d-ch%d.png", step, channel);
++        const std::string file_name = file_name_buffer;
++        std::vector<uint8_t> image(static_cast<size_t>(plane));
++        const double range = static_cast<double>(channel_max) - channel_min;
++        const size_t first_batch_offset = static_cast<size_t>(channel * plane);
++        for (int64_t pixel = 0; pixel < plane; ++pixel) {
++            const float value = values[first_batch_offset + static_cast<size_t>(pixel)];
++            const double normalized = std::isfinite(value) && range > 0.0 ? (value - channel_min) / range : 0.5;
++            image[static_cast<size_t>(pixel)] = static_cast<uint8_t>(std::clamp(normalized * 255.0, 0.0, 255.0));
++        }
++        if (!write_image_to_file((metrics_path.parent_path() / file_name).string(), image.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, "", cli_params->compression_quality)) {
++            LOG_WARN("save latent channel map '%s' failed", file_name.c_str());
++        }
++
++        metrics << "{\"channel\":" << channel << ",\"file_name\":\"" << file_name << "\",\"min\":";
++        write_json_number(metrics, channel_min);
++        metrics << ",\"max\":";
++        write_json_number(metrics, channel_max);
++        metrics << ",\"mean\":";
++        write_json_number(metrics, static_cast<float>(channel_mean));
++        metrics << ",\"std\":";
++        write_json_number(metrics, static_cast<float>(std::sqrt(channel_variance)));
++        metrics << ",\"l2\":";
++        write_json_number(metrics, static_cast<float>(std::sqrt(channel_sq)));
++        metrics << ",\"histogram\":[";
++        for (size_t bin = 0; bin < histogram.size(); ++bin) {
++            if (bin > 0) metrics << ',';
++            metrics << histogram[bin];
++        }
++        metrics << "],\"truth\":\"observed\",\"kind\":\"latent-channel\"}";
++    }
++    metrics << "]}\n";
++    metrics.flush();
++    cli_params->previous_latent.assign(values, values + count);
++    cli_params->last_latent_trace_step = step;
++}
++#endif
+diff --git a/examples/cli/latent_correlation.h b/examples/cli/latent_correlation.h
+new file mode 100644
+--- /dev/null
++++ b/examples/cli/latent_correlation.h
+@@ -0,0 +1,69 @@
++#ifndef __SD_CLI_LATENT_CORRELATION_H__
++#define __SD_CLI_LATENT_CORRELATION_H__
++
++#include <algorithm>
++#include <cmath>
++#include <cstddef>
++#include <limits>
++#include <vector>
++
++namespace sd_latent {
++
++// Input is contiguous [batch][channel][spatial]. NaN represents an undefined
++// Pearson coefficient; the JSON writer serializes it as null.
++inline std::vector<std::vector<double>> channel_correlation(const float* values,
++                                                           size_t plane,
++                                                           size_t channels,
++                                                           size_t batch) {
++    const double undefined = std::numeric_limits<double>::quiet_NaN();
++    std::vector<std::vector<double>> result(channels, std::vector<double>(channels, undefined));
++    if (!values || plane == 0 || batch == 0) return result;
++    std::vector<double> means(channels, 0.0);
++    std::vector<double> squares(channels, 0.0);
++    std::vector<bool> valid(channels, true);
++    for (size_t channel = 0; channel < channels; ++channel) {
++        for (size_t b = 0; b < batch; ++b) {
++            const size_t offset = (b * channels + channel) * plane;
++            for (size_t p = 0; p < plane; ++p) {
++                const double value = values[offset + p];
++                if (!std::isfinite(value)) valid[channel] = false;
++                else means[channel] += value;
++            }
++        }
++        means[channel] /= static_cast<double>(plane) * static_cast<double>(batch);
++        if (!valid[channel]) continue;
++        // Center before squaring: E[x*x]-E[x]^2 loses small variance at large offsets.
++        for (size_t b = 0; b < batch; ++b) {
++            const size_t offset = (b * channels + channel) * plane;
++            for (size_t p = 0; p < plane; ++p) {
++                const double centered = static_cast<double>(values[offset + p]) - means[channel];
++                squares[channel] += centered * centered;
++            }
++        }
++        valid[channel] = squares[channel] > 0.0 && std::isfinite(squares[channel]);
++    }
++    for (size_t left = 0; left < channels; ++left) {
++        if (!valid[left]) continue;
++        result[left][left] = 1.0;
++        for (size_t right = left + 1; right < channels; ++right) {
++            if (!valid[right]) continue;
++            double cross = 0.0;
++            for (size_t b = 0; b < batch; ++b) {
++                const size_t left_offset = (b * channels + left) * plane;
++                const size_t right_offset = (b * channels + right) * plane;
++                for (size_t p = 0; p < plane; ++p) {
++                    cross += (static_cast<double>(values[left_offset + p]) - means[left]) *
++                             (static_cast<double>(values[right_offset + p]) - means[right]);
++                }
++            }
++            const double coefficient = cross / std::sqrt(squares[left]) / std::sqrt(squares[right]);
++            if (std::isfinite(coefficient)) {
++                result[left][right] = result[right][left] = std::clamp(coefficient, -1.0, 1.0);
++            }
++        }
++    }
++    return result;
++}
++
++}  // namespace sd_latent
++#endif
+diff --git a/tests/test_latent_correlation.cpp b/tests/test_latent_correlation.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/test_latent_correlation.cpp
+@@ -0,0 +1,77 @@
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <filesystem>
++#include <fstream>
++#include <iomanip>
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <string>
++#include <vector>
++#include "json.hpp"
++#define STB_IMAGE_WRITE_IMPLEMENTATION
++#include "stb_image_write.h"
++
++namespace fs = std::filesystem;
++struct SDCliParams {
++    std::string latent_trace_path;
++    int last_latent_trace_step = -1;
++    std::vector<float> previous_latent;
++    int compression_quality = 0;
++};
++#define LOG_WARN(...) std::fprintf(stderr, __VA_ARGS__)
++#define LOG_ERROR(...) std::fprintf(stderr, __VA_ARGS__)
++static bool write_image_to_file(const std::string& path, uint8_t* pixels, uint32_t width,
++                                uint32_t height, int channels, const std::string&, int) {
++    return stbi_write_png(path.c_str(), width, height, channels, pixels, width * channels) != 0;
++}
++#include "latent_trace_writer.h"
++
++static void require(bool condition, const char* message) {
++    if (!condition) throw std::runtime_error(message);
++}
++static nlohmann::json capture(const fs::path& root, const char* name, const std::vector<float>& values,
++                              int64_t plane, int64_t channels, int64_t batch) {
++    fs::path directory = root / name;
++    fs::create_directories(directory);
++    fs::path path = directory / "latent-metrics.jsonl";
++    require(!fs::exists(path), "use a fresh output directory");
++    SDCliParams params;
++    params.latent_trace_path = path.string();
++    const int64_t shape[] = {plane, 1, channels, batch};
++    latent_trace_callback(0, values.data(), values.size(), 4, shape, &params);
++    std::ifstream input(path);
++    nlohmann::json raw;
++    input >> raw;
++    require(raw.contains("channel_correlation"), "writer must export channel_correlation from floats");
++    return raw["channel_correlation"];
++}
++int main(int argc, char** argv) {
++    try {
++        require(argc == 2, "pass a fresh artifact directory");
++        const fs::path root(argv[1]);
++        // C0=[1,2,3,4], C1=2*C0, C2=-C0, C3=constant, split across two batches.
++        auto matrix = capture(root, "signed-constant", {1,2, 2,4, -1,-2, 7,7, 3,4, 6,8, -3,-4, 7,7}, 2, 4, 2);
++        require(matrix == nlohmann::json::parse("[[1,1,-1,null],[1,1,-1,null],[-1,-1,1,null],[null,null,null,null]]"), "positive/negative/constant Pearson mismatch");
++        // With one pixel per batch each PNG is constant; across batches r=-1.
++        matrix = capture(root, "batch-only", {1,2, 2,1}, 1, 2, 2);
++        require(matrix == nlohmann::json::parse("[[1,-1],[-1,1]]"), "must reduce across every batch");
++        // Centered vectors have dot=1 and squared norms=2, hence r=1/2.
++        matrix = capture(root, "half", {-1,0,1, -1,1,0}, 3, 2, 1);
++        require(std::abs(matrix[0][1].get<double>() - .5) < 1e-7, "hand-derived r=1/2 mismatch");
++        matrix = capture(root, "zero", {-1,0,1, 1,-2,1}, 3, 2, 1);
++        require(matrix[0][1] == 0, "orthogonal centered channels must have zero correlation");
++        matrix = capture(root, "large-offset", {100000000,100000008,100000016, -1,0,1}, 3, 2, 1);
++        require(matrix[0][1] == 1, "centered covariance must resist cancellation");
++        matrix = capture(root, "nonfinite", {1,2,3, 1,std::numeric_limits<float>::infinity(),3, 1,2,std::numeric_limits<float>::quiet_NaN()}, 3, 3, 1);
++        require(matrix == nlohmann::json::parse("[[1,null,null],[null,null,null],[null,null,null]]"), "nonfinite channels must be undefined, including diagonal");
++        matrix = capture(root, "singleton", {2,3}, 1, 2, 1);
++        require(matrix == nlohmann::json::parse("[[null,null],[null,null]]"), "one observation has zero variance");
++        std::cout << "PASS: 7 original-float writer cases (CPU only)\n";
++    } catch (const std::exception& error) {
++        std::cerr << error.what() << '\n';
++        return 1;
++    }
++}
+diff --git a/tests/test_latent_delta.cpp b/tests/test_latent_delta.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/test_latent_delta.cpp
+@@ -0,0 +1,92 @@
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <filesystem>
++#include <fstream>
++#include <iomanip>
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <string>
++#include <vector>
++#include "json.hpp"
++#define STB_IMAGE_IMPLEMENTATION
++#include "stb_image.h"
++#define STB_IMAGE_WRITE_IMPLEMENTATION
++#include "stb_image_write.h"
++
++namespace fs = std::filesystem;
++struct SDCliParams {
++    std::string latent_trace_path;
++    int last_latent_trace_step = -1;
++    std::vector<float> previous_latent;
++    int compression_quality = 0;
++};
++#define LOG_WARN(...) std::fprintf(stderr, __VA_ARGS__)
++#define LOG_ERROR(...) std::fprintf(stderr, __VA_ARGS__)
++static bool fail_delta_write = false;
++static bool write_image_to_file(const std::string& path, uint8_t* pixels, uint32_t width,
++                                uint32_t height, int channels, const std::string&, int) {
++    if (fail_delta_write && path.find("-delta.png") != std::string::npos) return false;
++    return stbi_write_png(path.c_str(), width, height, channels, pixels, width * channels) != 0;
++}
++#include "latent_trace_writer.h"
++
++static void require(bool condition, const char* message) {
++    if (!condition) throw std::runtime_error(message);
++}
++static nlohmann::json latest(const fs::path& path) {
++    std::ifstream input(path);
++    std::string line, last;
++    while (std::getline(input, line)) if (!line.empty()) last = line;
++    return nlohmann::json::parse(last);
++}
++static void pixels_equal(const fs::path& path, const std::vector<uint8_t>& expected) {
++    int width, height, channels;
++    auto* pixels = stbi_load(path.string().c_str(), &width, &height, &channels, 1);
++    require(pixels != nullptr, "delta PNG must decode");
++    const bool valid = width == 3 && height == 1 && std::equal(expected.begin(), expected.end(), pixels);
++    stbi_image_free(pixels);
++    require(valid, "delta pixels must represent actual float differences across batches/channels");
++}
++int main(int argc, char** argv) {
++    try {
++        require(argc == 2, "pass a fresh artifact directory");
++        fs::path root(argv[1]);
++        fs::create_directories(root);
++        fs::path path = root / "latent-metrics.jsonl";
++        require(!fs::exists(path), "use a fresh output directory");
++        SDCliParams params;
++        params.latent_trace_path = path.string();
++        const int64_t shape[] = {3, 1, 2, 2};
++        std::vector<float> previous(12, 5.f);
++        latent_trace_callback(2, previous.data(), previous.size(), 4, shape, &params);
++        require(!latest(path).contains("delta_file_name"), "first sample must not invent a delta image");
++        // Spatial mean |delta| = [0, (1+3+2+1)/4, (2+4+6+4)/4] = [0,1.75,4].
++        std::vector<float> current = {5,6,7, 5,8,9, 5,7,11, 5,6,9};
++        latent_trace_callback(7, current.data(), current.size(), 4, shape, &params);
++        require(latest(path).value("delta_file_name", "") == "latent-step-007-delta.png", "writer must export step-matched delta_file_name");
++        pixels_equal(root / "latent-step-007-delta.png", {0,111,255});
++        latent_trace_callback(9, current.data(), current.size(), 4, shape, &params);
++        pixels_equal(root / "latent-step-009-delta.png", {0,0,0});
++        std::vector<float> uniform = current;
++        for (auto& value : uniform) value += 2;
++        latent_trace_callback(10, uniform.data(), uniform.size(), 4, shape, &params);
++        pixels_equal(root / "latent-step-010-delta.png", {255,255,255});
++        fail_delta_write = true;
++        latent_trace_callback(11, current.data(), current.size(), 4, shape, &params);
++        require(!latest(path).contains("delta_file_name"), "failed image writes must not be declared");
++        fail_delta_write = false;
++        current[0] = std::numeric_limits<float>::infinity();
++        latent_trace_callback(12, current.data(), current.size(), 4, shape, &params);
++        require(!latest(path).contains("delta_file_name"), "nonfinite differences must not be displayed");
++        const int64_t other_shape[] = {3, 1, 1, 1};
++        latent_trace_callback(13, previous.data(), 3, 4, other_shape, &params);
++        require(!latest(path).contains("delta_file_name"), "incompatible previous sample must not create a delta image");
++        std::cout << "PASS: 7 spatial delta writer cases (CPU only)\n";
++    } catch (const std::exception& error) {
++        std::cerr << error.what() << '\n';
++        return 1;
++    }
++}

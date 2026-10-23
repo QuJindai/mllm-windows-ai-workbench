@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import subprocess
 import threading
@@ -76,7 +77,10 @@ class PersistentEngineClient:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            # base_url is validated as loopback; Windows/system proxies must
+            # not turn a refused local endpoint into a remote proxy timeout.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=timeout) as response:
                 body = response.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -180,9 +184,22 @@ class PersistentEngineClient:
             raise PersistentEngineUnavailable("sd-server did not become ready before the startup timeout")
 
     def _persist_state(self, model_path: Path) -> None:
+        psutil = self._process_library()
+        if self._process is None:
+            raise PersistentEngineUnavailable("无法记录常驻引擎身份：缺少本服务启动的进程")
+        try:
+            identity = psutil.Process(self._process.pid)
+            start_time = identity.create_time()
+            executable = identity.exe()
+            if not identity.is_running() or not self._same_path(executable, self.executable):
+                raise PersistentEngineUnavailable("常驻引擎身份校验失败，无法保存启动状态")
+        except psutil.Error as exc:
+            raise PersistentEngineUnavailable("无法读取常驻引擎启动时间及程序路径，请检查进程访问权限") from exc
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         state = {
-            "pid": self._process.pid if self._process is not None else None,
+            "pid": self._process.pid,
+            "executable": executable,
+            "startTime": start_time,
             "base_url": self.base_url,
             "model_path": str(model_path),
             "flash_attention": True,
@@ -190,6 +207,163 @@ class PersistentEngineClient:
         temporary = self._state_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self._state_path)
+
+    @staticmethod
+    def _process_library():
+        try:
+            import psutil
+        except ImportError as exc:
+            raise PersistentEngineUnavailable("缺少进程身份校验组件，无法安全释放常驻引擎") from exc
+        return psutil
+
+    def _release_snapshot(self) -> tuple[bytes, float, dict[str, Any]] | None:
+        try:
+            with self._state_path.open("rb") as stream:
+                raw = stream.read(65537)
+                modified = os.fstat(stream.fileno()).st_mtime
+            state = json.loads(raw.decode("utf-8-sig")) if len(raw) <= 65536 else None
+            if not isinstance(state, dict):
+                raise ValueError("invalid state")
+            return raw, modified, state
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise PersistentEngineUnavailable("常驻引擎状态文件损坏或无法读取，无法确认进程归属") from exc
+
+    def _state_unchanged(self, snapshot: tuple[bytes, float, dict[str, Any]]) -> None:
+        current = self._release_snapshot()
+        if current is None or current[0] != snapshot[0]:
+            raise PersistentEngineUnavailable("常驻引擎状态已被其他服务更新，已停止释放操作")
+
+    def _clear_release_state(self, snapshot: tuple[bytes, float, dict[str, Any]] | None) -> None:
+        if snapshot is not None:
+            self._state_unchanged(snapshot)
+            self._state_path.unlink()
+
+    def _release_endpoint(self) -> dict[str, Any] | None:
+        """Only an actual refused connection proves that no listener remains."""
+        try:
+            # Windows may deliver loopback ECONNREFUSED after roughly 2.05s.
+            # A 2s timeout masks that evidence as an ambiguous timeout.
+            return self._transport("GET", "/sdcpp/v1/capabilities", None, 5.0)
+        except PersistentEngineUnavailable as exc:
+            cause = exc.__cause__
+            if isinstance(cause, urllib.error.URLError) and isinstance(cause.reason, ConnectionRefusedError):
+                return None
+            raise PersistentEngineUnavailable("常驻引擎接口无响应或返回异常，无法确认进程归属；请稍后重试") from exc
+
+    @staticmethod
+    def _command_option(command: list[str], names: set[str]) -> str:
+        values = []
+        for index, token in enumerate(command[1:], 1):
+            key, separator, value = token.partition("=")
+            if key in names:
+                if not separator:
+                    if index + 1 >= len(command):
+                        raise ValueError("missing command option")
+                    value = command[index + 1]
+                values.append(value)
+        if len(values) != 1 or not values[0]:
+            raise ValueError("missing or duplicate command option")
+        return values[0]
+
+    def _adopt_for_release(self, snapshot: tuple[bytes, float, dict[str, Any]]):
+        """Return the same psutil identity that was verified, never just a PID."""
+        psutil = self._process_library()
+        state = snapshot[2]
+        pid = state.get("pid")
+        model_path = state.get("model_path")
+        if type(pid) is not int or pid <= 0 or state.get("base_url") != self.base_url or not isinstance(model_path, str) or not Path(model_path).is_absolute():
+            raise PersistentEngineUnavailable("常驻引擎状态与当前服务配置不一致，无法确认进程归属")
+        if "executable" in state and (not isinstance(state["executable"], str) or not self._same_path(state["executable"], self.executable)):
+            raise PersistentEngineUnavailable("常驻引擎记录的程序路径不一致，进程身份校验失败")
+        try:
+            process = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return None
+        except psutil.Error as exc:
+            raise PersistentEngineUnavailable("无法读取常驻引擎进程身份，访问权限不足；未执行终止操作") from exc
+        try:
+            parsed = urlparse(self.base_url)
+            if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.port is None or parsed.username or parsed.path or parsed.query or parsed.fragment:
+                raise ValueError("invalid endpoint")
+            started = process.create_time()
+            if type(started) not in {int, float} or not math.isfinite(started) or started <= 0:
+                raise ValueError("invalid creation time")
+            if "startTime" in state:
+                recorded = state["startTime"]
+                if type(recorded) not in {int, float} or not math.isfinite(recorded) or recorded != started:
+                    raise PersistentEngineUnavailable("常驻引擎启动时间与记录不一致，PID 可能已复用；已拒绝终止")
+            elif started > snapshot[1]:
+                # Legacy records lack startTime. A process created after the
+                # original record cannot be the process that record described.
+                raise PersistentEngineUnavailable("常驻引擎启动时间晚于旧状态文件，无法确认进程归属")
+            command = process.cmdline()
+            if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
+                raise ValueError("invalid command line")
+            if not self._same_path(process.exe(), self.executable) or not self._same_path(command[0], self.executable):
+                raise ValueError("wrong executable")
+            if not self._same_path(self._command_option(command, {"-m", "--model"}), model_path):
+                raise ValueError("wrong model")
+            listen_ip = self._command_option(command, {"--listen-ip"})
+            addresses = {parsed.hostname} if parsed.hostname != "localhost" else {"localhost", "127.0.0.1", "::1"}
+            if listen_ip not in addresses or self._command_option(command, {"--listen-port"}) != str(parsed.port):
+                raise ValueError("wrong bind endpoint")
+            listener_addresses = {"127.0.0.1", "::1"} if listen_ip == "localhost" else {listen_ip}
+            if not any(connection.status == psutil.CONN_LISTEN and connection.laddr.ip in listener_addresses and connection.laddr.port == parsed.port for connection in process.net_connections(kind="tcp")):
+                raise ValueError("listener belongs to another process")
+            capabilities = self._release_endpoint()
+            if capabilities is None:
+                raise ValueError("live process has no responding endpoint")
+            try:
+                self._verify_capabilities(capabilities, Path(model_path))
+            except PersistentEngineUnavailable as exc:
+                raise ValueError("model capabilities mismatch") from exc
+            self._state_unchanged(snapshot)
+            if not process.is_running():
+                raise ValueError("process exited or PID was reused")
+            return process
+        except (psutil.Error, OSError, ValueError, TypeError, AttributeError) as exc:
+            raise PersistentEngineUnavailable("常驻引擎进程身份校验失败：程序、模型、监听地址或访问权限不匹配；未终止任何未知进程") from exc
+
+    def release_for_identity(self) -> None:
+        """Release a held child or a fully verified inherited native resident."""
+        with self._start_lock:
+            snapshot = self._release_snapshot()
+            process = self._process
+            if process is not None:
+                if snapshot is not None and (snapshot[2].get("pid") != getattr(process, "pid", None) or snapshot[2].get("base_url") != self.base_url):
+                    raise PersistentEngineUnavailable("常驻引擎状态属于另一个进程或服务，已停止释放操作")
+                try:
+                    if process.poll() is None:
+                        process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                except OSError as exc:
+                    raise PersistentEngineUnavailable("无法释放本服务启动的常驻引擎，请检查进程访问权限") from exc
+                self._process = None
+            elif snapshot is not None:
+                psutil = self._process_library()
+                identity = self._adopt_for_release(snapshot)
+                if identity is not None:
+                    try:
+                        # psutil rechecks PID + creation time for terminate/kill.
+                        # Retain this object through wait; do not reopen by PID.
+                        identity.terminate()
+                        try:
+                            identity.wait(timeout=5)
+                        except psutil.TimeoutExpired:
+                            identity.kill()
+                            identity.wait()
+                    except psutil.Error as exc:
+                        raise PersistentEngineUnavailable("常驻引擎身份发生变化或无法终止，已停止释放操作") from exc
+            if self._release_endpoint() is not None:
+                raise PersistentEngineUnavailable("常驻引擎接口仍有进程监听且归属未确认，暂不能启动人物生成")
+            self._clear_release_state(snapshot)
+            self._flash_attention_verified = False
 
     @staticmethod
     def _payload(request: GenerateRequest, seed: int) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 # Generated releases
 /dist/
 /apps/dream-windows/dist/
+/apps/dream-windows/.identity-build/
 /apps/dream-windows/node_modules/
 /apps/dream-windows/src-tauri/gen/
 /M_LLM_WINDOWS_BOOTSTRAP.cmd
@@ -24,3 +25,28 @@
 # Local browser QA artifacts
 /.playwright-cli/
 /output/
+/data/
+/outputs/
+/traces/
+/exports/
+/.superpowers/
+*.safetensors
+*.ckpt
+*.onnx
+*.pt
+.env
+.env.local
+
+# Historical local acceptance receipts contain personal reference identifiers.
+# Keep them on the workstation, outside the public source release.
+/docs/dream-windows/ANIME_IMPORT_20261010.md
+/docs/dream-windows/CORE_COMPLETION_20260928.md
+/docs/dream-windows/CORE_COMPLETION_PROGRESS_20260928.md
+/docs/dream-windows/IDENTITY_ACCEPTANCE_20260920.md
+/docs/dream-windows/IDENTITY_FACE_POLISH_ACCEPTANCE_20260920.md
+/docs/dream-windows/IDENTITY_GUIDE.md
+/docs/dream-windows/IDENTITY_ILLUSTRIOUS_20261010.md
+/docs/dream-windows/IDENTITY_PROFILES_ACCEPTANCE_20260920.md
+/docs/dream-windows/ILLUSTRIOUS_QUALITY_20261010.md
+/docs/superpowers/plans/2026-09-20-dream-identity-sd15.md
+/docs/superpowers/specs/2026-09-28-core-completion-design.md

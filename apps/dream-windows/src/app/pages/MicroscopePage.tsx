@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useDreamProvider } from "../providers";
 import { isRuntimeTrace } from "../../domain/trace";
+import { JsonViewer } from "../components/JsonViewer";
+import { AttentionAnalysis } from "../components/AttentionAnalysis";
+import { captureMessage, RecordedResearchPanel, useCaptureContext } from "./microscope-research";
+import type { CaptureContext } from "./microscope-research";
+import { CorrelationMatrix } from "../components/CorrelationMatrix";
+import { LatentDeltaImage } from "../components/LatentDeltaImage";
+import { SelectedChannelComparison } from "../components/SelectedChannelComparison";
 import type { CurrentHardwareSnapshot, ResearchStatus, RuntimeAttentionIndex, RuntimeAttentionMap, RuntimeAttentionMapDescriptor, RuntimeCapabilities, RuntimeLatentTelemetry, RuntimeNode, RuntimeTrace, RuntimeTraceEvent, RuntimeTraceSummary } from "../../domain/trace";
 
 type MicroscopeTab = "runtime" | "semantic" | "influence" | "latent" | "mechanism" | "expert" | "attention";
@@ -9,8 +16,10 @@ type MicroscopeTab = "runtime" | "semantic" | "influence" | "latent" | "mechanis
 export function MicroscopePage() {
   const provider = useDreamProvider();
   const [tab, setTab] = useState<MicroscopeTab>("runtime");
+  const [attentionKind, setAttentionKind] = useState<"cross" | "self">("cross");
   const [traceRuns, setTraceRuns] = useState<RuntimeTraceSummary[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState("latest");
+  const [selectedRunId, setSelectedRunId] = useState(() => new URLSearchParams(window.location.search).get("run") || "latest");
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [trace, setTrace] = useState<RuntimeTrace | null>(null);
   const [traceMessage, setTraceMessage] = useState("等待 native 运行记录…");
   const [hardware, setHardware] = useState<CurrentHardwareSnapshot | null>(null);
@@ -49,7 +58,7 @@ export function MicroscopePage() {
     return () => {
       active = false;
     };
-  }, [provider]);
+  }, [provider, refreshVersion]);
 
   useEffect(() => {
     let active = true;
@@ -68,7 +77,7 @@ export function MicroscopePage() {
             : `数据来自运行记录 ${value.runId}。`);
       } else {
         setTrace(null);
-        setTraceMessage(value.message);
+        setTraceMessage(localizeResearchMessage(value.message));
       }
     }).catch((reason: unknown) => {
       if (!active) return;
@@ -76,7 +85,7 @@ export function MicroscopePage() {
       setTraceMessage(reason instanceof Error ? reason.message : "运行记录不可用");
     });
     return () => { active = false; };
-  }, [provider, selectedRunId]);
+  }, [provider, selectedRunId, refreshVersion]);
 
   useEffect(() => {
     const runId = trace?.runId;
@@ -85,22 +94,22 @@ export function MicroscopePage() {
       setAttentionMessage("等待包含运行 ID 的 native 记录…");
       return;
     }
-    const needsAttention = tab === "semantic" || tab === "expert" || tab === "attention";
+    const needsAttention = tab === "semantic" || tab === "expert" || (tab === "attention" && attentionKind === "cross");
     if (!needsAttention || attentionIndex?.runId === runId) return;
     let active = true;
     setAttentionMessage("正在读取 H7 注意力记录…");
     void provider.getAttentionIndex(runId).then((value) => {
       if (!active) return;
       setAttentionIndex(value);
-      setAttentionMessage(value.available ? "已读取实测 H7 attention 索引。" : value.message);
+      setAttentionMessage(value.available ? "已读取实测 H7 注意力索引。" : localizeResearchMessage(value.message));
     }).catch((reason: unknown) => {
       if (!active) return;
-      const message = reason instanceof Error ? reason.message : "H7 注意力记录不可用";
+      const message = `H7 注意力索引读取失败。${localizeResearchMessage(reason instanceof Error ? reason.message : "H7 注意力记录不可用")}`;
       setAttentionIndex({ available: false, runId, message, truth: "unavailable" });
       setAttentionMessage(message);
     });
     return () => { active = false; };
-  }, [attentionIndex?.runId, provider, tab, trace?.runId]);
+  }, [attentionIndex?.runId, provider, tab, trace?.runId, attentionKind]);
 
   const tabs: Array<{ id: MicroscopeTab; label: string }> = [
     { id: "runtime", label: "运行时" },
@@ -112,6 +121,21 @@ export function MicroscopePage() {
     { id: "attention", label: "H7 注意力" },
   ];
   const tabRefs = useRef<Partial<Record<MicroscopeTab, HTMLButtonElement | null>>>({});
+  const needsSelfAttention = tab === "attention" && attentionKind === "self";
+  const needsInfluence = tab === "influence";
+  const needsAttention = (tab === "attention" && attentionKind === "cross") || tab === "semantic";
+  const needsLatent = tab === "latent" || tab === "mechanism";
+  const researchRunId = selectedRunId === "latest" ? trace?.runId ?? null : selectedRunId;
+  const currentSummary = traceRuns.find((run) => run.runId === researchRunId);
+  const currentTrace = trace?.runId === researchRunId ? trace : null;
+  const currentAttentionIndex = attentionIndex?.runId === researchRunId ? attentionIndex : null;
+  const needsCaptureContext = tab === "attention" || tab === "influence" || tab === "semantic" || tab === "expert";
+  const captureContext = useCaptureContext(needsCaptureContext && researchRunId !== "latest" ? researchRunId : null, currentTrace?.evidence?.modelId ?? currentSummary?.modelId, refreshVersion);
+  const attentionLoading = currentTrace !== null && !currentAttentionIndex;
+  const attentionGuidance = captureMessage(captureContext, "H7", attentionMessage, attentionLoading);
+  const compatibleRun = traceRuns.find((run) => needsSelfAttention ? run.hasSelfAttention === true : needsInfluence ? run.hasInfluence === true : needsAttention ? run.hasAttention : needsLatent ? run.hasLatent : false);
+  const missingCompatibleData = needsSelfAttention ? !currentSummary?.hasSelfAttention : needsInfluence ? !currentSummary?.hasInfluence : needsAttention ? !currentSummary?.hasAttention && !attentionIndex?.available : needsLatent ? !currentSummary?.hasLatent && !trace?.latentTelemetry?.length : false;
+  const compatibleLabel = needsSelfAttention ? "H7自注意力" : needsInfluence ? "H6条件影响" : needsAttention ? "H7" : "潜空间";
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
@@ -127,6 +151,16 @@ export function MicroscopePage() {
 
   return (
     <section className="microscope-page">
+      <div className="surface-card microscope-run-bar">
+        <label>运行记录<select value={selectedRunId} aria-label="选择运行记录" onChange={(event) => setSelectedRunId(event.target.value)}>
+          <option value="latest">最近一次本地生成</option>
+          {traceRuns.map((run) => <option key={run.runId} value={run.runId}>{[run.hasInfluence && "H6条件影响", run.hasSelfAttention && "H7自注意力", run.hasAttention && "H7交叉注意力", run.hasLatent && "潜空间"].filter(Boolean).join(" / ") || "基础"} · {run.runId} · {run.modelId ?? "未知模型"}</option>)}
+        </select></label>
+        <button type="button" className="secondary-button" onClick={() => setRefreshVersion((value) => value + 1)}>刷新记录</button>
+        {missingCompatibleData && compatibleRun && <button type="button" className="secondary-button" onClick={() => setSelectedRunId(compatibleRun.runId)}>选择最近的{compatibleLabel}记录</button>}
+        {missingCompatibleData && <p>{compatibleRun ? "当前记录缺少此视图的数据，可选择上方的兼容记录。" : "暂无兼容记录。当前任务的采集情况见下方；可在生成完成后刷新记录。"}</p>}
+      </div>
+      {needsCaptureContext && captureContext.publicationFailed && <p role="status">运行记录发布失败：本次任务的研究产物未完整发布，已生成图片仍保留。各视图的采集状态按本次请求的级别判断。</p>}
       <div className="microscope-tabs" role="tablist" aria-label="显微镜视图">
         {tabs.map((entry, index) => (
           <button
@@ -147,13 +181,24 @@ export function MicroscopePage() {
         ))}
       </div>
       <div id={`microscope-panel-${tab}`} role="tabpanel" aria-labelledby={`microscope-tab-${tab}`}>
-        {tab === "runtime" && <RuntimePanel trace={trace} traceMessage={traceMessage} traceRuns={traceRuns} selectedRunId={selectedRunId} onSelectRun={setSelectedRunId} hardware={hardware} hardwareMessage={hardwareMessage} />}
-        {tab === "semantic" && <SemanticPanel trace={trace} attentionIndex={attentionIndex} attentionMessage={attentionMessage} />}
-        {tab === "influence" && <InfluencePanel trace={trace} />}
+        {tab === "runtime" && <RuntimePanel trace={trace} traceMessage={traceMessage} hardware={hardware} hardwareMessage={hardwareMessage} />}
+        {tab === "semantic" && <SemanticPanel trace={currentTrace} attentionIndex={currentAttentionIndex} attentionMessage={`${attentionGuidance} ${attentionMessage}`} />}
+        {tab === "influence" && <RecordedResearchPanel key={`${selectedRunId}/${refreshVersion}`} kind="influence" runId={researchRunId} context={captureContext} cfg={currentTrace?.evidence?.cfg} />}
         {tab === "latent" && <LatentPanel trace={trace} />}
         {tab === "mechanism" && <MechanismPanel trace={trace} />}
-        {tab === "expert" && <ExpertPanel trace={trace} traceMessage={traceMessage} attentionIndex={attentionIndex} attentionMessage={attentionMessage} />}
-        {tab === "attention" && <AttentionPanel runId={trace?.runId ?? "latest"} capability={capabilities?.attention ?? null} researchStatus={researchStatus} index={attentionIndex} indexMessage={attentionMessage} />}
+        {tab === "expert" && <ExpertPanel trace={currentTrace} traceMessage={traceMessage} attentionIndex={currentAttentionIndex} attentionMessage={attentionMessage} />}
+        {tab === "expert" && !currentAttentionIndex?.available && <p role="status">{attentionGuidance}</p>}
+        {tab === "attention" && <>
+          <div className="notebook-tabs" role="tablist" aria-label="注意力类型">
+            <button type="button" role="tab" id="attention-kind-cross" aria-controls="attention-kind-panel-cross" aria-selected={attentionKind === "cross"} className={attentionKind === "cross" ? "is-active" : ""} onClick={() => setAttentionKind("cross")}>Cross-attention 交叉注意力</button>
+            <button type="button" role="tab" id="attention-kind-self" aria-controls="attention-kind-panel-self" aria-selected={attentionKind === "self"} className={attentionKind === "self" ? "is-active" : ""} onClick={() => setAttentionKind("self")}>Self-attention 自注意力</button>
+          </div>
+          <div role="tabpanel" id={`attention-kind-panel-${attentionKind}`} aria-labelledby={`attention-kind-${attentionKind}`}>
+            {attentionKind === "self"
+              ? <RecordedResearchPanel key={`${selectedRunId}/${refreshVersion}`} kind="self" runId={researchRunId} context={captureContext} />
+              : <AttentionPanel key={`${researchRunId}/${refreshVersion}`} runId={researchRunId ?? "latest"} capability={capabilities?.attention ?? null} researchStatus={researchStatus} index={currentAttentionIndex} indexMessage={attentionMessage} captureContext={captureContext} indexLoading={attentionLoading} />}
+          </div>
+        </>}
       </div>
     </section>
   );
@@ -199,12 +244,6 @@ function SemanticPanel({ trace, attentionIndex, attentionMessage }: { trace: Run
   );
 }
 
-function InfluencePanel({ trace }: { trace: RuntimeTrace | null }) {
-  const cfg = trace?.evidence?.cfg;
-  const conditioningObserved = trace?.nodes.some((node) => node.truth === "observed" && /condition/i.test(node.name));
-  return <div className="microscope-layout microscope-evidence-layout"><div className="microscope-main"><div className="surface-card influence-panel"><div className="section-title">H6 条件影响 <span className="truth-label truth-unavailable">张量未导出</span></div><h2>仅在 trace 导出真实逐步条件影响时显示指标与图像。</h2><div className="influence-formula"><span>ε<sub>guided</sub></span><b>=</b><span>ε<sub>uncond</sub></span><b>+</b><strong>{cfg ?? "—"}</strong><span>× (ε<sub>cond</sub> − ε<sub>uncond</sub>)</span><span className="truth-label truth-derived">公式 · 派生说明</span></div><div className="metric-cards"><Metric label="CFG · 实测" value={cfg === undefined ? "—" : String(cfg)} /><Metric label="条件阶段 · 实测" value={conditioningObserved ? "已观测" : "—"} /><Metric label="逐步 chunk 影响" value="不可用" /></div><div className="unavailable-panel"><strong>H6 条件影响张量不可用</strong><p>当前 native 记录没有导出条件影响张量。当前 trace 未导出 chunk prediction、fused prediction、delta L2 或贡献图，因此不生成估算曲线。</p><p className="truth-boundary">这是 chunk prediction 相对 fused prediction 的差异，不是 cross-attention。</p></div></div></div><aside className="surface-card measured-card"><div className="section-title">H6 / H7 边界</div><p>H6 条件影响需要真实 chunk-vs-fused delta；当前生产记录未导出。</p><p>H7 需要 token × step × layer attention 张量；两者不能互相冒充。</p></aside></div>;
-}
-
 function MechanismPanel({ trace }: { trace: RuntimeTrace | null }) {
   const telemetry = (trace?.latentTelemetry ?? []).filter((sample) => sample.truth === "observed");
   const events = (trace?.events ?? []).filter((event) => event.truth === "observed");
@@ -220,15 +259,12 @@ function ExpertPanel({ trace, traceMessage, attentionIndex, attentionMessage }: 
         ? { className: "truth-derived", text: "当前 trace · 派生" }
         : { className: "truth-observed", text: "当前 trace · 实测" };
   const availableAttention = attentionIndex?.available ? attentionIndex : null;
-  return <div className="microscope-layout microscope-evidence-layout"><div className="microscope-main"><div className="surface-card expert-panel"><div className="section-title">原始运行记录 <span className={`truth-label ${badge.className}`}>{badge.text}</span></div><p className="expert-warning">不会把推测当作实测。以下内容是后端公开边界过滤后的当前 trace 响应。</p>{trace ? <pre className="trace-json">{JSON.stringify(trace, null, 2)}</pre> : <div className="unavailable-panel"><strong>原始记录不可用</strong><p>{traceMessage}</p></div>}</div><div className="surface-card expert-panel"><div className="section-title">H7 attention 索引 <span className={`truth-label ${availableAttention ? "truth-observed" : "truth-unavailable"}`}>{availableAttention ? "实测" : "不可用"}</span></div>{availableAttention ? <pre className="trace-json">{JSON.stringify(availableAttention, null, 2)}</pre> : <div className="unavailable-panel"><strong>H7 attention 索引不可用</strong><p>{attentionMessage}</p></div>}</div></div><aside className="surface-card measured-card"><div className="section-title">诊断清单</div><ul><li>运行 ID：{trace?.runId ?? "—"}</li><li>观测节点：{trace?.nodes.filter((node) => node.truth === "observed").length ?? "—"}</li><li>观测阶段事件：{trace?.events?.filter((event) => event.truth === "observed").length ?? "—"}</li><li>Latent 遥测：{trace?.latentTelemetry?.length ? "已导出" : "未导出"}</li><li>{availableAttention ? `H7 attention 张量：${availableAttention.maps.length} 张实测图` : "H7 attention 张量：未导出"}</li></ul></aside></div>;
+  return <div className="microscope-layout microscope-evidence-layout"><div className="microscope-main"><div className="surface-card expert-panel"><div className="section-title">原始运行记录 <span className={`truth-label ${badge.className}`}>{badge.text}</span></div><p className="expert-warning">不会把推测当作实测。以下内容是后端公开边界过滤后的当前 trace 响应。</p>{trace ? <JsonViewer value={trace} filename={`${trace.runId}-trace.json`} /> : <div className="unavailable-panel"><strong>原始记录不可用</strong><p>{traceMessage}</p></div>}</div><div className="surface-card expert-panel"><div className="section-title">H7 attention 索引 <span className={`truth-label ${availableAttention ? "truth-observed" : "truth-unavailable"}`}>{availableAttention ? "实测" : "不可用"}</span></div>{availableAttention ? <JsonViewer value={availableAttention} filename={`${availableAttention.runId}-attention.json`} /> : <div className="unavailable-panel"><strong>H7 attention 索引不可用</strong><p>{attentionMessage}</p></div>}</div></div><aside className="surface-card measured-card"><div className="section-title">诊断清单</div><ul><li>运行 ID：{trace?.runId ?? "—"}</li><li>观测节点：{trace?.nodes.filter((node) => node.truth === "observed").length ?? "—"}</li><li>观测阶段事件：{trace?.events?.filter((event) => event.truth === "observed").length ?? "—"}</li><li>Latent 遥测：{trace?.latentTelemetry?.length ? "已导出" : "未导出"}</li><li>{availableAttention ? `H7 attention 张量：${availableAttention.maps.length} 张实测图` : "H7 attention 张量：未导出"}</li></ul></aside></div>;
 }
 
-function RuntimePanel({ trace, traceMessage, traceRuns, selectedRunId, onSelectRun, hardware, hardwareMessage }: {
+function RuntimePanel({ trace, traceMessage, hardware, hardwareMessage }: {
   trace: RuntimeTrace | null;
   traceMessage: string;
-  traceRuns: RuntimeTraceSummary[];
-  selectedRunId: string;
-  onSelectRun: (runId: string) => void;
   hardware: CurrentHardwareSnapshot | null;
   hardwareMessage: string;
 }) {
@@ -253,15 +289,7 @@ function RuntimePanel({ trace, traceMessage, traceRuns, selectedRunId, onSelectR
     <div className="microscope-layout">
       <div className="microscope-main">
         <div className="surface-card run-selector">
-          <span>运行记录</span>
-          <select value={selectedRunId} aria-label="选择运行记录" onChange={(event) => onSelectRun(event.target.value)}>
-            <option value="latest">最近一次本地生成</option>
-            {traceRuns.map((run) => (
-              <option key={run.runId} value={run.runId}>
-                {run.hasAttention ? "H7" : run.hasLatent ? "潜空间" : "基础"} · {run.runId} · {run.modelId ?? "未知模型"}
-              </option>
-            ))}
-          </select>
+          <span>{trace?.runId ?? "等待读取记录"}</span>
           <span className={`live-pill ${trace ? "is-live" : ""} ${traceBadge.className}`}>● {traceBadge.text}</span>
         </div>
 
@@ -483,8 +511,8 @@ function LatentPanel({ trace }: { trace: RuntimeTrace | null }) {
         <h3>直接测量</h3>
         <p>只显示原生元数据、wrapper 日志和真实回调输出的数值。</p>
         <ul><li>原生总生成耗时</li><li>条件编码耗时</li><li>UNet 采样耗时</li><li>VAE 解码耗时</li><li>每步 Latent 投影</li>{telemetry.length > 0 && <><li>每步 Latent Δz 指标</li><li>四通道统计与直方图</li></>}</ul>
-        <h3>当前未导出</h3>
-        <p>生产 UNet 仍未导出 cross-attention；H7 注意力页会明确显示不可用，不展示伪造热力图。</p>
+        <h3>独立研究采集</h3>
+        <p>H7 注意力页读取独立研究产物；是否采集成功以所选记录的有效 Self/Cross 张量为准。</p>
       </aside>
     </div>
   );
@@ -550,7 +578,9 @@ function LatentTelemetryInspector({ telemetry, selectedIndex, onSelect }: { tele
         </div>
       </> : <div className="unavailable-panel"><strong>四通道 Latent 检查器不可用</strong><p>当前步骤没有完整导出 C0–C3 的真实通道数据。</p></div>}
 
-      <div className="unavailable-panel"><strong>通道相关性不可用</strong><p>当前 trace 未导出实测的 4 × 4 通道相关矩阵。</p></div>
+      <CorrelationMatrix sample={sample} />
+      <LatentDeltaImage sample={sample} />
+      <SelectedChannelComparison previous={previous} current={sample} final={final} />
 
       <div className="latent-step-comparison">
         <div className="section-title">步骤对比 <small>上一步 / 当前 / 最终</small></div>
@@ -568,7 +598,7 @@ function formatLatentMetric(value: number | null | undefined): string {
   return value === null || value === undefined || !Number.isFinite(value) ? "—" : value.toFixed(4);
 }
 
-function AttentionPanel({ runId, capability, researchStatus, index, indexMessage }: { runId: string; capability: RuntimeCapabilities["attention"] | null; researchStatus: ResearchStatus | null; index: RuntimeAttentionIndex | null; indexMessage: string }) {
+function AttentionPanel({ runId, capability, researchStatus, index, indexMessage, captureContext, indexLoading }: { runId: string; capability: RuntimeCapabilities["attention"] | null; researchStatus: ResearchStatus | null; index: RuntimeAttentionIndex | null; indexMessage: string; captureContext: CaptureContext; indexLoading: boolean }) {
   const provider = useDreamProvider();
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
   const [attentionMap, setAttentionMap] = useState<RuntimeAttentionMap | null>(null);
@@ -600,10 +630,7 @@ function AttentionPanel({ runId, capability, researchStatus, index, indexMessage
 
   const message = mapMessage || indexMessage;
 
-  const bothReady = capability?.available === true && researchStatus?.available === true;
-  const boundaryMessage = bothReady
-    ? "能力和研究引擎已就绪，但当前 trace 没有导出 attention 张量。"
-    : "生产图、研究引擎或当前 trace 尚未提供完整的 attention 张量证据。";
+  const boundaryMessage = captureMessage(captureContext, "H7", indexMessage, indexLoading);
   const availableIndex = index?.available ? index : null;
   const selectedDescriptor = availableIndex?.maps.find((entry) => entry.id === selectedMapId) ?? null;
   const selectedToken = selectedDescriptor ? availableIndex?.tokens.find((entry) => entry.slot === selectedDescriptor.tokenSlot) ?? null : null;
@@ -611,8 +638,8 @@ function AttentionPanel({ runId, capability, researchStatus, index, indexMessage
   const selectableTokens = availableIndex?.tokens.filter((token) => availableIndex.maps.some((entry) => entry.tokenSlot === token.slot)) ?? [];
   const attentionRange = attentionMap ? attentionValueRange(attentionMap.values) : null;
 
-  const selectDescriptor = (predicate: (entry: RuntimeAttentionMapDescriptor) => boolean) => {
-    const next = availableIndex?.maps.find(predicate);
+  const selectDescriptor = (predicate: (entry: RuntimeAttentionMapDescriptor) => boolean, preferred?: (entry: RuntimeAttentionMapDescriptor) => boolean) => {
+    const next = availableIndex?.maps.find((entry) => predicate(entry) && (preferred?.(entry) ?? true)) ?? availableIndex?.maps.find(predicate);
     if (next) setSelectedMapId(next.id);
   };
 
@@ -620,18 +647,19 @@ function AttentionPanel({ runId, capability, researchStatus, index, indexMessage
     return (
       <div className="attention-layout">
         <div className="surface-card attention-main attention-workbench">
-          <div className="research-banner">ⓘ　当前页面只渲染 Debug UNet 导出的实测 cross-attention；每次仅加载一个经过边界校验的热力图。</div>
+          <div className="research-banner">ⓘ　当前显示研究引擎采集的 Cross-attention。聚合值来自已采集记录；区域比较按需读取同层、同一步骤的 Token。</div>
+          {availableIndex.source === "diffusers-unet" && <p className="research-banner">人物引擎：从实测 Q/K 以 FP32 softmax 重算条件分支文本注意力，再对多头取均值；不是逐头转储，也不是 FaceID 图像条件本身。当前 {availableIndex.layers.length} 层、{new Set(availableIndex.maps.map(entry => entry.step)).size} 步、{availableIndex.tokens.length} 个文本 Token。</p>}
           <div className="section-title">{attentionMap ? "H7 注意力工作台" : "正在准备 H7 注意力工作台…"} <span className="truth-label truth-observed">Cross-attention · 实测</span></div>
           <div className="h7-workbench-grid">
             <section className="h7-token-panel" aria-label="Attention Token 列表">
-              <strong>Token 与权重</strong>
+              <strong>Token 与提示词权重</strong><p className="muted-copy">右侧数值为输入权重，不是注意力强度。</p>
               <div className="h7-token-list">
-                {selectableTokens.map((token) => <button type="button" key={token.slot} className={token.slot === selectedToken?.slot ? "is-selected" : ""} aria-label={`选择 token ${token.text}`} aria-pressed={token.slot === selectedToken?.slot} onClick={() => selectDescriptor((entry) => entry.tokenSlot === token.slot)}><span>{String(token.slot).padStart(4, "0")}</span><b>{token.text}</b><small>{token.weight.toFixed(2)}</small></button>)}
+                {selectableTokens.map((token) => <button type="button" key={token.slot} className={token.slot === selectedToken?.slot ? "is-selected" : ""} aria-label={`选择 token ${token.text}`} aria-pressed={token.slot === selectedToken?.slot} onClick={() => selectDescriptor((entry) => entry.tokenSlot === token.slot, (entry) => entry.step === selectedDescriptor?.step && entry.layerId === selectedDescriptor?.layerId)}><span>{String(token.slot).padStart(4, "0")}</span><b>{token.text}</b><small>{token.weight.toFixed(2)}</small></button>)}
               </div>
             </section>
             <section className="h7-map-panel">
               <div className="h7-map-controls">
-                <label>层<select aria-label="注意力层" value={selectedDescriptor?.layerId ?? ""} onChange={(event) => selectDescriptor((entry) => entry.tokenSlot === selectedToken?.slot && entry.layerId === event.target.value)}>{availableIndex.layers.filter((layer) => availableIndex.maps.some((entry) => entry.tokenSlot === selectedToken?.slot && entry.layerId === layer.id)).map((layer) => <option key={layer.id} value={layer.id}>{layer.label}</option>)}</select></label>
+                <label>层<select aria-label="注意力层" value={selectedDescriptor?.layerId ?? ""} onChange={(event) => selectDescriptor((entry) => entry.tokenSlot === selectedToken?.slot && entry.layerId === event.target.value, (entry) => entry.step === selectedDescriptor?.step)}>{availableIndex.layers.filter((layer) => availableIndex.maps.some((entry) => entry.tokenSlot === selectedToken?.slot && entry.layerId === layer.id)).map((layer) => <option key={layer.id} value={layer.id}>{layer.label}</option>)}</select></label>
                 <label>去噪步骤<select aria-label="注意力步骤" value={selectedDescriptor?.id ?? ""} onChange={(event) => setSelectedMapId(event.target.value)}>{availableIndex.maps.filter((entry) => entry.tokenSlot === selectedToken?.slot && entry.layerId === selectedDescriptor?.layerId).map((entry) => <option key={entry.id} value={entry.id}>第 {entry.step + 1} 步</option>)}</select></label>
               </div>
               {attentionMap && selectedToken && selectedLayer ? <>
@@ -655,6 +683,7 @@ function AttentionPanel({ runId, capability, researchStatus, index, indexMessage
             <div className="h7-evidence"><strong>证据边界</strong><p>来源：{availableIndex.source}</p><p>契约：{availableIndex.contractVersion}</p><p>运行：{availableIndex.runId}</p></div>
           </> : <div className="empty-state"><span className="empty-icon">⌕</span><span>{message}</span></div>}
         </aside>
+        <div className="h7-analysis-full"><AttentionAnalysis key={runId} index={availableIndex} map={attentionMap} onSelect={setSelectedMapId} /></div>
       </div>
     );
   }
@@ -662,14 +691,14 @@ function AttentionPanel({ runId, capability, researchStatus, index, indexMessage
   return (
     <div className="attention-layout">
       <div className="surface-card attention-main">
-        <div className="research-banner">ⓘ　H7 同时检查能力声明、研究引擎状态和当前 trace 张量；缺一项就不渲染热力图。</div>
+        <div className="research-banner">ⓘ　能力与研究引擎状态用于说明采集条件；实际显示以所选记录中有效的实测张量为准。</div>
         <div className="section-title">H7 注意力探索器 <span className="truth-label truth-unavailable">Attention 张量不可用</span></div>
         <h2>检查提示词如何影响图像。</h2>
-        <div className="h7-status-grid">
-          <div><span>生产能力</span><strong>{capability?.message ?? "Attention 能力状态不可用"}</strong><small>{capability?.available ? "已声明可用" : "不可用"}</small></div>
-          <div><span>研究引擎</span><strong>{researchStatus?.message ?? "研究状态不可用"}</strong><small>{researchStatus?.available ? "已连接" : "不可用"}</small></div>
-        </div>
-        <div className="attention-empty"><strong>Cross-attention 未采集</strong><p>{boundaryMessage}</p><p>{indexMessage}</p><p>没有真实 token × step × layer 张量时，不显示伪造热力图。</p></div>
+        {captureContext.route !== "visual" && <div className="h7-status-grid">
+          <div><span>全局生产能力（不代表当前任务路线）</span><strong>{localizeResearchMessage(capability?.message ?? "Attention 能力状态不可用")}</strong><small>{capability?.available ? "已声明可用" : "不可用"}</small></div>
+          <div><span>全局研究引擎</span><strong>{localizeResearchMessage(researchStatus?.message ?? "研究状态不可用")}</strong><small>{researchStatus?.available ? "已连接" : "不可用"}</small></div>
+        </div>}
+        <div className="attention-empty"><strong>Cross-attention 张量不可用</strong><p role="status">{boundaryMessage}</p><p>{indexMessage}</p><p>没有真实 token × step × layer 张量时，不显示伪造热力图。</p></div>
       </div>
       <aside className="surface-card focused-card">
         <div className="section-title">焦点区域与统计</div>
@@ -684,6 +713,13 @@ function attentionCellColor(value: number): string {
   const hue = 232 - bounded * 232;
   const lightness = 18 + bounded * 42;
   return `hsl(${hue.toFixed(0)} 92% ${lightness.toFixed(0)}%)`;
+}
+
+function localizeResearchMessage(message: string): string {
+  if (/No native runtime trace is available/i.test(message)) return "暂无原生运行记录，请先完成一次生成。";
+  if (/No validated native H7 attention trace/i.test(message)) return "当前运行没有有效的 H7 注意力数据。";
+  if (/[\u3400-\u9fff]/.test(message)) return message;
+  return "当前研究数据不可用。请刷新记录并检查所选记录的采集级别；原始信息可在日志中查看。";
 }
 
 function attentionValueRange(values: number[]): { minimum: number; maximum: number } {

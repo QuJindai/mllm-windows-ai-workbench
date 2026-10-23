@@ -41,6 +41,129 @@
         "commit": "381713f6985e1d48da16a14636989a4b27f1ae98",
         "artifact_policy": "reference-only"
       }
+    },
+    {
+      "model_id": "animagine-xl-4.0-opt-standard",
+      "aliases": [
+        "animagine-xl-4.0-opt"
+      ],
+      "display_name": "Animagine XL 4.0 Opt（动漫）",
+      "architecture": "SDXL",
+      "status": "installed",
+      "dmd2": {
+        "enabled": false,
+        "variant": "standard",
+        "reason": "Official SDXL anime checkpoint; this artifact is not a dedicated DMD2-distilled model.",
+        "steps_default": 28
+      },
+      "generation_defaults": {
+        "width": 768,
+        "height": 768,
+        "steps": 28,
+        "cfg": 5.0,
+        "sampling_method": "euler_a",
+        "scheduler": "discrete"
+      },
+      "source": {
+        "provider": "Hugging Face",
+        "repo_id": "cagliostrolab/animagine-xl-4.0",
+        "revision": "2b7c1b397761bf5bd3cc42e5b39ec99314a75a96",
+        "file": "animagine-xl-4.0-opt.safetensors",
+        "download_url": "https://huggingface.co/cagliostrolab/animagine-xl-4.0/resolve/2b7c1b397761bf5bd3cc42e5b39ec99314a75a96/animagine-xl-4.0-opt.safetensors",
+        "path": "E:\\Dream\\models\\source\\animagine-xl-4.0-opt.safetensors",
+        "sha256": "6327eca98bfb6538dd7a4edce22484a1bbc57a8cff6b11d075d40da1afb847ac",
+        "expected_sha256": "6327eca98bfb6538dd7a4edce22484a1bbc57a8cff6b11d075d40da1afb847ac",
+        "identity_status": "verified-from-hugging-face-pinned-revision"
+      },
+      "windows": {
+        "backend": "stable-diffusion.cpp",
+        "format": "gguf",
+        "path": "E:\\Dream\\models\\windows\\gguf\\animagine-xl-4.0-opt-q8_0.gguf",
+        "sha256": "d8a087e5453cd5d394e24fad17980044b11a59460a17b5dd0edd078634b2698e",
+        "identity_status": "verified-local-conversion-q8_0"
+      }
+    },
+    {
+      "model_id": "dreamshaper-xl-lightning",
+      "aliases": [
+        "dreamshaper-xl-lightning-4step"
+      ],
+      "display_name": "DreamShaper XL Lightning（通用创意）",
+      "architecture": "SDXL",
+      "status": "installed",
+      "dmd2": {
+        "enabled": false,
+        "variant": "lightning",
+        "reason": "Official SDXL Lightning checkpoint, not a DMD2 model. Eight-step CFG2 DPM++2M SDE/Karras defaults passed a four-image local CUDA visual regression on 2026-09-28. Prompt counting/fine-detail limitations remain; this is not universal image-quality acceptance.",
+        "steps_default": 8
+      },
+      "generation_defaults": {
+        "width": 768,
+        "height": 768,
+        "steps": 8,
+        "cfg": 2.0,
+        "sampling_method": "dpm++2m_sde",
+        "scheduler": "karras"
+      },
+      "source": {
+        "provider": "Hugging Face",
+        "repo_id": "Lykon/dreamshaper-xl-lightning",
+        "revision": "561086c22aba3925b1e8803a73857f061635c7c3",
+        "file": "DreamShaperXL_Lightning.safetensors",
+        "download_url": "https://huggingface.co/Lykon/dreamshaper-xl-lightning/resolve/561086c22aba3925b1e8803a73857f061635c7c3/DreamShaperXL_Lightning.safetensors",
+        "path": "E:\\Dream\\models\\source\\DreamShaperXL_Lightning.safetensors",
+        "sha256": "fdbe56354b8f876b736f24d3ad867ecd4140c019f57642ec8ddd878088d44f64",
+        "expected_sha256": "fdbe56354b8f876b736f24d3ad867ecd4140c019f57642ec8ddd878088d44f64",
+        "identity_status": "verified-from-hugging-face-pinned-revision"
+      },
+      "windows": {
+        "backend": "stable-diffusion.cpp",
+        "format": "gguf",
+        "path": "E:\\Dream\\models\\windows\\gguf\\dreamshaper-xl-lightning-q8_0.gguf",
+        "sha256": "2b8407a7667fa1b8c6d5bad971309341bf370adbd5ce58e5e5812c677863c728",
+        "identity_status": "verified-local-conversion-q8_0"
+      }
+    },
+    {
+      "model_id": "illustrious-xl-v2.0",
+      "aliases": [
+        "illustrious-xl-v2.0-stable"
+      ],
+      "display_name": "Illustrious XL v2.0（插画）",
+      "architecture": "SDXL",
+      "status": "installed",
+      "dmd2": {
+        "enabled": false,
+        "variant": "standard",
+        "reason": "Official Illustrious XL v2.0-STABLE SDXL checkpoint; this artifact is not a dedicated DMD2-distilled model.",
+        "steps_default": 30
+      },
+      "generation_defaults": {
+        "width": 1024,
+        "height": 1024,
+        "steps": 30,
+        "cfg": 7.0,
+        "sampling_method": "euler_a",
+        "scheduler": "discrete"
+      },
+      "source": {
+        "provider": "Hugging Face",
+        "repo_id": "OnomaAIResearch/Illustrious-XL-v2.0",
+        "revision": "69459c1fe6f46db41ab31e6114f05acc0e06bcaa",
+        "file": "Illustrious-XL-v2.0.safetensors",
+        "download_url": "https://huggingface.co/OnomaAIResearch/Illustrious-XL-v2.0/resolve/69459c1fe6f46db41ab31e6114f05acc0e06bcaa/Illustrious-XL-v2.0.safetensors",
+        "path": "E:\\Dream\\models\\source\\Illustrious-XL-v2.0.safetensors",
+        "sha256": "c2a1a3eaa13d4c107dc7e00c3fe830cab427aa026362740ea094745b3422a331",
+        "expected_sha256": "c2a1a3eaa13d4c107dc7e00c3fe830cab427aa026362740ea094745b3422a331",
+        "identity_status": "verified-from-hugging-face-pinned-revision"
+      },
+      "windows": {
+        "backend": "stable-diffusion.cpp",
+        "format": "gguf",
+        "path": "E:\\Dream\\models\\windows\\gguf\\illustrious-xl-v2.0-q8_0.gguf",
+        "sha256": "0529ac9f17bc5470e5d5516c53a207df2e03706ae8614604141b405c92d1b0bb",
+        "identity_status": "verified-local-conversion-q8_0"
+      }
     }
   ]
 }

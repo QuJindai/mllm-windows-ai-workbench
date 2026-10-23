@@ -57,10 +57,17 @@ describe("Microscope page", () => {
 
     const selector = await screen.findByRole("combobox", { name: "选择运行记录" });
     expect(within(selector).getByRole("option", { name: /H7.*run-h7.*model-h7/ })).toBeVisible();
-    fireEvent.change(selector, { target: { value: "run-h7" } });
+    fireEvent.click(screen.getByRole("tab", { name: "H7 注意力" }));
+    expect(screen.getByRole("combobox", { name: "选择运行记录" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "选择最近的H7记录" }));
     await waitFor(() => expect(provider.requestedRunIds).toContain("run-h7"));
     fireEvent.click(screen.getByRole("tab", { name: "专家" }));
-    expect(await screen.findByText(/"runId": "run-h7"/)).toBeVisible();
+    const disclosure = await screen.findByText(/展开原始记录/);
+    const json = disclosure.parentElement!.querySelector("pre")!;
+    expect(JSON.parse(json.textContent!).runId).toBe("run-h7");
+    expect(json).not.toBeVisible();
+    fireEvent.click(disclosure);
+    expect(json).toBeVisible();
   });
 
   it("connects all seven microscope tabs to accessible tab panels", async () => {
@@ -119,7 +126,7 @@ describe("Microscope page", () => {
     render(<DreamProviderContext.Provider value={new UnavailableTraceProvider()}><MicroscopePage /></DreamProviderContext.Provider>);
 
     expect(await screen.findByText(/等待 native 记录/)).toBeVisible();
-    expect(screen.getAllByText("No native runtime trace is available")[0]).toBeVisible();
+    expect(screen.getAllByText("暂无原生运行记录，请先完成一次生成。")[0]).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "专家" }));
     expect(screen.getByText("当前 trace · 不可用")).toHaveClass("truth-unavailable");
     expect(screen.queryByText("当前 trace · 实测")).not.toBeInTheDocument();
@@ -531,7 +538,8 @@ describe("Microscope page", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "条件影响" }));
     expect(screen.getByText("H6 条件影响张量不可用")).toBeVisible();
-    expect(screen.getByText("这是 chunk prediction 相对 fused prediction 的差异，不是 cross-attention。")).toBeVisible();
+    expect(screen.getByText(/不代表 Windows 生产路径对分块预测取算术平均/)).toBeVisible();
+    expect(await screen.findByText(/当前 native 记录没有导出条件影响张量/)).toBeVisible();
   });
 
   it("uses H7 capability and research reasons but stays unavailable without tensors", async () => {
@@ -553,7 +561,8 @@ describe("Microscope page", () => {
     expect(await within(panel).findByText("Debug UNet Graph 已声明 attention 能力")).toBeVisible();
     expect(within(panel).getByText("研究引擎已连接")).toBeVisible();
     expect(within(panel).getByText("Attention 张量不可用")).toBeVisible();
-    expect(within(panel).getByText("能力和研究引擎已就绪，但当前 trace 没有导出 attention 张量。")).toBeVisible();
+    expect(within(panel).getByText(/全局生产能力.*不代表当前任务路线/)).toBeVisible();
+    expect(await within(panel).findByText(/无法确认.*采集设置/)).toBeVisible();
     expect(within(panel).queryByRole("img")).not.toBeInTheDocument();
     expect(panel.querySelector("canvas, [data-attention-heatmap]")).toBeNull();
   });
@@ -633,6 +642,21 @@ describe("Microscope page", () => {
     fireEvent.click(screen.getByRole("button", { name: "选择 token mountain" }));
     expect(await screen.findByRole("img", { name: "mountain 在 Mid 1 第 5 步的注意力热力图" })).toBeVisible();
     expect(screen.getByText("0.920")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "lake 第 1 步 聚合峰值 0.8000" }));
+    expect(await screen.findByRole("img", { name: "lake 在 Down 1 第 1 步的注意力热力图" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "图像叠加与区域" }));
+    const regionPanel = screen.getByRole("tabpanel", { name: "图像叠加与区域" });
+    expect(within(regionPanel).getByText("0.3750")).toBeVisible();
+    fireEvent.change(within(regionPanel).getByRole("spinbutton", { name: "区域宽度（%）" }), { target: { value: "50" } });
+    // Left column is [0, 0.5]; compare raw attention, not normalized display colors.
+    expect(within(regionPanel).getByText("0.2500")).toBeVisible();
+    fireEvent.click(within(regionPanel).getByRole("button", { name: "比较区域 Top 5 Token" }));
+    await waitFor(() => expect(within(regionPanel).getByRole("listitem")).toHaveTextContent("lake0.2500"));
+    expect(within(regionPanel).queryByText("mountain")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Self-attention 自注意力" }));
+    expect(screen.getByText("Self-attention 未采集")).toBeVisible();
+    expect(await screen.findByText("测试提供方没有原生 H7 自注意力张量")).toBeVisible();
   });
 
   it("exposes the mobile microscope sections with honest evidence boundaries", async () => {
@@ -649,7 +673,7 @@ describe("Microscope page", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "条件影响" }));
     expect(screen.getByText("H6 条件影响")).toBeVisible();
-    expect(screen.getByText(/当前 native 记录没有导出条件影响张量/)).toBeVisible();
+    expect(await screen.findByText(/当前 native 记录没有导出条件影响张量/)).toBeVisible();
 
     fireEvent.click(screen.getByRole("tab", { name: "机制" }));
     expect(screen.getByText("可验证的计算关系")).toBeVisible();

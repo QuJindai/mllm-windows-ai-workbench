@@ -5,6 +5,18 @@ import { DreamProviderContext } from "../providers";
 import { MockDreamProvider } from "../../providers/MockDreamProvider";
 import type { HistoryItem } from "../../domain/history";
 import "../shell.css";
+import { announceImageDeleted } from "../image-deletion";
+
+it("removes a result deleted in another page and does not restore it from a stale refresh", async () => {
+  render(<DreamProviderContext.Provider value={new PagedHistoryProvider()}><HistoryPage /></DreamProviderContext.Provider>);
+  await screen.findByRole("button", { name: "打开 历史项目 1" });
+  act(() => announceImageDeleted("paged-history-1"));
+  expect(screen.queryByRole("button", { name: "打开 历史项目 1" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "打开 历史项目 2" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+  await waitFor(() => expect(screen.getByText("历史记录已刷新")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "打开 历史项目 1" })).not.toBeInTheDocument();
+});
 
 const pagedHistoryItems: HistoryItem[] = Array.from({ length: 28 }, (_, index) => {
   const position = index + 1;
@@ -29,6 +41,18 @@ const pagedHistoryItems: HistoryItem[] = Array.from({ length: 28 }, (_, index) =
     status: "complete",
     truth: "observed",
   };
+});
+
+it("resets pagination after deletion in another page without skipping the shifted item", async () => {
+  const provider = new DeletingPagedHistoryProvider();
+  render(<DreamProviderContext.Provider value={provider}><HistoryPage /></DreamProviderContext.Provider>);
+  await screen.findByRole("button", { name: "打开 历史项目 24" });
+  await provider.deleteHistory("paged-history-1");
+  act(() => announceImageDeleted("paged-history-1"));
+  await screen.findByRole("button", { name: "打开 历史项目 25" });
+  fireEvent.click(screen.getByRole("button", { name: "加载更多历史记录" }));
+  await screen.findByRole("button", { name: "打开 历史项目 28" });
+  expect(screen.getAllByRole("button", { name: /^打开 历史项目 / })).toHaveLength(27);
 });
 
 class PagedHistoryProvider extends MockDreamProvider {
@@ -212,12 +236,12 @@ describe("History page", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除结果" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "打开 历史项目 27" })).not.toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "加载更多历史记录" }));
+    fireEvent.click(await screen.findByRole("button", { name: "加载更多历史记录" }));
 
     await waitFor(() => expect(provider.requestedPages.filter((page) => page === 2)).toHaveLength(2));
     expect(provider.requestedPages.at(-1)).toBe(2);
     for (const position of [25, 26, 28]) {
-      expect(screen.getByRole("button", { name: `打开 历史项目 ${position}` })).toBeVisible();
+      expect(await screen.findByRole("button", { name: `打开 历史项目 ${position}` })).toBeVisible();
     }
   });
 
@@ -410,6 +434,37 @@ describe("History page", () => {
     render(<DreamProviderContext.Provider value={new LowQualityHistoryProvider()}><HistoryPage /></DreamProviderContext.Provider>);
 
     expect(await screen.findByText("质量风险")).toBeVisible();
+  });
+
+  it("does not flag a distilled model at its registered low-step profile", async () => {
+    class DistilledHistoryProvider extends MockDreamProvider {
+      override async listHistory(query: Parameters<MockDreamProvider["listHistory"]>[0]) {
+        const page = await super.listHistory(query);
+        return {
+          ...page,
+          items: page.items.slice(0, 1).map((item) => ({
+            ...item,
+            width: 768,
+            height: 768,
+            steps: 4,
+            generationDefaults: {
+              width: 768,
+              height: 768,
+              steps: 4,
+              cfg: 2,
+              samplingMethod: "dpm++2m" as const,
+              scheduler: "discrete" as const,
+            },
+          })),
+          total: 1,
+        };
+      }
+    }
+
+    render(<DreamProviderContext.Provider value={new DistilledHistoryProvider()}><HistoryPage /></DreamProviderContext.Provider>);
+
+    await screen.findByRole("button", { name: "全部（1）" });
+    expect(screen.queryByText("质量风险")).not.toBeInTheDocument();
   });
 
   it("lazy loads history thumbnails to reduce renderer image pressure", async () => {

@@ -5,12 +5,13 @@ import type { GenerationJob, GenerationRequest, JobHandle } from "../domain/gene
 import type { HistoryItem, HistoryPage, HistoryQuery } from "../domain/history";
 import type { ResearchStatus, RuntimeAttentionIndex, RuntimeAttentionMap, RuntimeCapabilities, RuntimeTraceResponse, RuntimeTraceSummary } from "../domain/trace";
 import type { DreamSettings, WorkspaceEntry, WorkspaceOpenResult } from "../domain/settings";
+import type { RuntimeInfluence, RuntimeSelfAttentionIndex, RuntimeSelfAttentionMapResponse } from "../domain/trace";
 
 export type { ExperimentRequest } from "../domain/experiment";
 
 export interface DreamProvider {
   readonly mode: "mock" | "backend";
-  getHardware(): Promise<HardwareSnapshot>;
+  getHardware(signal?: AbortSignal): Promise<HardwareSnapshot>;
   getCapabilities(): Promise<RuntimeCapabilities>;
   listModels(): Promise<ModelRecord[]>;
   getModel(id: string): Promise<ModelRecord>;
@@ -29,6 +30,9 @@ export interface DreamProvider {
   getRuntimeTrace(runId: string): Promise<RuntimeTraceResponse>;
   getAttentionIndex(runId: string): Promise<RuntimeAttentionIndex>;
   getAttentionMap(runId: string, mapId: string): Promise<RuntimeAttentionMap>;
+  getInfluence(runId: string): Promise<RuntimeInfluence>;
+  getSelfAttentionIndex(runId: string): Promise<RuntimeSelfAttentionIndex>;
+  getSelfAttentionMap(runId: string, mapId: string): Promise<RuntimeSelfAttentionMapResponse>;
   getResearchStatus(): Promise<ResearchStatus>;
   getSettings(): Promise<DreamSettings>;
   updateSettings(updates: Partial<DreamSettings>): Promise<DreamSettings>;

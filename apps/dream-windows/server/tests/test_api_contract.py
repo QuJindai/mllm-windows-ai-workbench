@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import create_app
 from config import DreamServerConfig
+from research_fixtures import install_research_engine
 from runtime import DreamRuntime
 from models import ExperimentRequest
 
@@ -182,6 +183,7 @@ def test_native_semantic_experiment_queues_same_seed_variants(tmp_path):
     for path in (config.core_exe, config.engine_exe, config.wrapper, config.registry_path):
         path.write_text("ready", encoding="utf-8")
     runner = CapturingRunner()
+    install_research_engine(config)
     runtime = DreamRuntime(config, job_runner=runner)
     runtime.models = lambda: [{"id": "test-model", "status": "ready", "path": "model.safetensors"}]
     client = TestClient(create_app(config=config, runtime=runtime))
@@ -240,6 +242,7 @@ def test_semantic_experiment_uses_truthful_prompt_level_variant_labels(tmp_path)
     config.dream_root.mkdir()
     for path in (config.core_exe, config.engine_exe, config.wrapper, config.registry_path):
         path.write_text("ready", encoding="utf-8")
+    install_research_engine(config)
     runtime = DreamRuntime(config, job_runner=CompletedRunner())
     runtime.models = lambda: [{"id": "test-model", "status": "ready", "path": "model.safetensors"}]
 
@@ -281,6 +284,7 @@ def test_model_experiment_includes_requested_and_actual_model_identity(tmp_path)
     for path in (config.core_exe, config.engine_exe, config.wrapper, config.registry_path):
         path.write_text("ready", encoding="utf-8")
     runner = CompletedRunner()
+    install_research_engine(config)
     runtime = DreamRuntime(config, job_runner=runner)
     runtime.models = lambda: [
         {"id": f"model-{index}", "displayName": f"Model {index}", "status": "ready", "path": f"model-{index}.safetensors"}
@@ -333,6 +337,7 @@ def test_semantic_experiment_stays_active_until_all_variant_jobs_are_terminal(tm
     for path in (config.core_exe, config.engine_exe, config.wrapper, config.registry_path):
         path.write_text("ready", encoding="utf-8")
     runner = StatefulRunner()
+    install_research_engine(config)
     runtime = DreamRuntime(config, job_runner=runner)
     runtime.models = lambda: [{"id": "test-model", "status": "ready", "path": "model.safetensors"}]
 
@@ -454,6 +459,8 @@ def test_runtime_trace_list_returns_only_valid_top_level_runs_newest_first(tmp_p
             "backend": "CUDA",
             "hasAttention": False,
             "hasLatent": False,
+            "hasInfluence": False,
+            "hasSelfAttention": False,
             "modifiedAt": "1970-01-01T00:00:20+00:00",
             "truth": "observed",
         },
@@ -465,6 +472,8 @@ def test_runtime_trace_list_returns_only_valid_top_level_runs_newest_first(tmp_p
             "backend": "CUDA",
             "hasAttention": False,
             "hasLatent": False,
+            "hasInfluence": False,
+            "hasSelfAttention": False,
             "modifiedAt": "1970-01-01T00:00:10+00:00",
             "truth": "observed",
         },
@@ -660,7 +669,11 @@ def test_runtime_trace_sanitizes_overflow_and_unbounded_numeric_evidence(tmp_pat
     }
 
 
-def test_hardware_snapshot_labels_the_detected_backend_as_derived(tmp_path: Path):
+def test_hardware_snapshot_labels_the_detected_backend_as_derived(tmp_path: Path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+    import psutil
+
     config = DreamServerConfig(
         repo_root=tmp_path,
         dream_root=tmp_path / "Dream",
@@ -673,11 +686,10 @@ def test_hardware_snapshot_labels_the_detected_backend_as_derived(tmp_path: Path
     for dependency in (config.core_exe, config.engine_exe, config.wrapper, config.registry_path):
         dependency.write_text("ready", encoding="utf-8")
     runtime = DreamRuntime(config)
-    runtime._run_core = lambda *args: json.dumps({
-        "nvidia": {"name": "Test GPU", "memory_total_mib": 6144, "memory_free_mib": 5120, "temperature_c": 57},
-        "ram": {"total_bytes": 64 * 1024 ** 3, "free_bytes": 56 * 1024 ** 3},
-        "e_drive": {"root": str(config.dream_root)},
-    })
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(
+        command, 0, "Test GPU, 6144, 1024, 12, 57, 32.5, 595.95\n", "",
+    ))
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(total=64 * 1024**3, available=56 * 1024**3))
     client = TestClient(create_app(config=config, runtime=runtime))
 
     response = client.get("/api/hardware")

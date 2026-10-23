@@ -1,0 +1,28 @@
+{
+  "python": "E:/Dream/env/identity/Scripts/python.exe",
+  "persistentWorker": false,
+  "allowExperimentalVisualModels": false,
+  "checkpoint": "E:/Dream/models/identity/Realistic_Vision_V5.1_fp16-no-ema.safetensors",
+  "adapter": "E:/Dream/models/identity/ip-adapter-faceid-plusv2_sd15.bin",
+  "faceLora": "E:/Dream/models/identity/ip-adapter-faceid-plusv2_sd15_lora.safetensors",
+  "clipVision": "E:/Dream/models/identity/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+  "insightfaceRoot": "E:/Dream/models/identity/insightface",
+  "pipelineConfig": "E:/Dream/models/identity/sd15-config",
+  "lorasDir": "E:/Dream/models/identity/loras",
+  "faceSwapModel": "E:/Dream/models/identity/insightface/inswapper_128.onnx",
+  "faceRestoreModel": "E:/Dream/models/identity/facerestore_models/GFPGANv1.4.pth",
+  "faceDetectionRoot": "E:/Dream/models/identity/facedetection",
+  "models": {
+    "cyberrealistic-xl-plus-face": {
+      "checkpoint": "E:/Dream/models/source/cyberrealisticXL_v100.safetensors",
+      "adapter": "E:/Dream/models/identity/reference-adapters/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors",
+      "pipelineConfig": "E:/Dream/models/identity/sdxl-config"
+    },
+    "illustrious-xl-v2.0-faceid": {
+      "checkpoint": "E:/Dream/models/source/Illustrious-XL-v2.0.safetensors",
+      "adapter": "E:/Dream/models/identity/faceid-sdxl/ip-adapter-faceid-plusv2_sdxl.bin",
+      "faceLora": "E:/Dream/models/identity/faceid-sdxl/ip-adapter-faceid-plusv2_sdxl_lora.safetensors",
+      "pipelineConfig": "E:/Dream/models/identity/sdxl-config"
+    }
+  }
+}

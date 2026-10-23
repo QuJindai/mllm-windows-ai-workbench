@@ -1,0 +1,3 @@
+# Unified diff blank context lines contain a mandatory single space.
+*.patch -text -whitespace
+*.h text eol=lf

@@ -3,6 +3,10 @@ import type { HardwareSnapshot } from "../../domain/hardware";
 import type { DreamSettings, WorkspaceEntry } from "../../domain/settings";
 import { useDreamProvider } from "../providers";
 import { TruthBadge } from "../components/TruthBadge";
+import { OperationsDiagnostics } from "../components/OperationsDiagnostics";
+import { saveUiPreferences, useUiPreferences } from "../ui-preferences";
+import type { UiPreferences } from "../ui-preferences";
+import type { RuntimeCapabilities } from "../../domain/trace";
 
 const defaults: DreamSettings = {
   dreamRoot: "E:\\Dream",
@@ -130,6 +134,7 @@ export function SettingsPage({ hardware }: { hardware: HardwareSnapshot | null }
         </div>
         {notice && <div className="inline-notice" role="status">{notice}</div>}
         {error && <div className="inline-error" role="alert">{error}</div>}
+        <OperationsDiagnostics enabled={provider.mode === "backend"} />
         <div id="settings-panel" role="tabpanel" aria-label={tabs.find((tab) => tab.id === activeTab)?.label}>
           {activeTab === "hardware" && <HardwarePanel hardware={hardware} settings={settings} nativeReady={nativeReady} openWorkspace={openWorkspace} toggle={toggle} update={update} saving={saving} workingAction={workingAction} />}
           {activeTab === "inference" && <InferencePanel settings={settings} toggle={toggle} update={update} saving={saving} />}
@@ -236,7 +241,7 @@ function InferencePanel({ settings, toggle, update, saving }: { settings: DreamS
   return (
     <div className="settings-grid">
       <div>
-        <div className="surface-card"><div className="section-title">模型加载与采样策略</div><p className="muted-copy">选择原生生成运行时使用的内存策略。更改会保存到本地工作区。</p><div className="detail-list"><div><span>模型目录</span><strong>{settings.modelsPath}</strong></div><div><span>默认采样器</span><strong>DPM++ 2M Karras</strong></div><div><span>默认步数</span><strong>20</strong></div><div><span>默认 CFG 缩放</span><strong>7</strong></div></div></div>
+        <div className="surface-card"><div className="section-title">模型加载与采样策略</div><p className="muted-copy">选择原生生成运行时使用的内存策略。更改会保存到本地工作区。</p><div className="detail-list"><div><span>模型目录</span><strong>{settings.modelsPath}</strong></div><div><span>采样器 / 步数 / CFG</span><strong>以生成页当前参数和所选预设为准</strong></div></div></div>
         <div className="surface-card"><div className="section-title">当前生成配置</div><p className="muted-copy">浏览器界面会将这些值发送给 Windows 原生运行时，不使用占位结果。</p><div className="profile-grid"><span>精度<strong>{settings.precisionMode.toUpperCase()}</strong></span><span>分块模式<strong>{settings.tileMode}</strong></span><span>VAE 内存<strong>{settings.vaeMemoryMode}</strong></span><span>CPU 回退<strong>{settings.fallbackToCpu ? "已启用" : "已禁用"}</strong></span></div></div>
       </div>
       <InferenceCard settings={settings} update={update} toggle={toggle} saving={saving} />
@@ -245,11 +250,70 @@ function InferencePanel({ settings, toggle, update, saving }: { settings: DreamS
 }
 
 function InterfacePanel() {
-  return <div className="settings-grid"><div className="surface-card"><div className="section-title">用户界面</div><p className="muted-copy">浏览器工作站会在操作过程中持续显示导航、状态和数据可信度标记。</p><div className="detail-list"><div><span>主题</span><strong>Dream 深色</strong></div><div><span>布局</span><strong>响应式桌面工作区</strong></div><div><span>通知</span><strong>内联状态消息</strong></div></div></div><div className="surface-card"><div className="section-title">交互</div><p className="muted-copy">键盘快捷键和确认对话框用于保护历史记录操作。生成文件会保留在配置的 E:\\Dream 工作区。</p></div></div>;
+  const preferences = useUiPreferences();
+  const [notice, setNotice] = useState("");
+  const update = (changes: Partial<UiPreferences>) => {
+    try { saveUiPreferences(changes); setNotice("已保存到当前浏览器，立即生效。"); }
+    catch { setNotice("浏览器存储不可用，设置未保存。"); }
+  };
+  return <div className="settings-grid"><div className="surface-card">
+    <div className="section-title">用户界面</div>
+    <label className="select-line">文字大小<select value={preferences.textSize} onChange={(event) => update({ textSize: event.target.value as UiPreferences["textSize"] })}><option value="standard">标准</option><option value="large">大字</option></select></label>
+    <label className="select-line">界面密度<select value={preferences.density} onChange={(event) => update({ density: event.target.value as UiPreferences["density"] })}><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></label>
+    <label className="select-line">动态效果<select value={preferences.reduceMotion ? "reduced" : "system"} onChange={(event) => update({ reduceMotion: event.target.value === "reduced" })}><option value="system">跟随系统</option><option value="reduced">减少动态效果</option></select></label>
+    {notice && <p className="ui-setting-message" role="status">{notice}</p>}
+  </div><div className="surface-card"><div className="section-title">交互</div><p className="muted-copy">设置仅作用于当前浏览器。生成任务切换页面后继续执行；窄屏下可通过顶部导航切换页面。</p><p className="muted-copy">主题：Dream 深色 · 语言：简体中文</p></div></div>;
 }
 
 function AdvancedPanel() {
-  return <div className="settings-grid"><div className="surface-card"><div className="section-title">高级运行时</div><p className="muted-copy">只有在原生运行时提供实测值时，才会显示高级研究遥测。</p><div className="detail-list"><div><span>追踪策略</span><strong>仅显示实测原生事件</strong></div><div><span>研究张量</span><strong>引擎未导出时不可用</strong></div><div><span>日志策略</span><strong>本地工作区日志</strong></div></div></div><div className="surface-card"><div className="section-title">数据安全</div><p className="muted-copy">工作区操作使用固定的应用目录，后端不接受任意路径。</p></div></div>;
+  const preferences = useUiPreferences();
+  const [notice, setNotice] = useState("");
+  const update = (changes: Partial<UiPreferences>) => {
+    try { saveUiPreferences(changes); setNotice("刷新策略已保存。"); }
+    catch { setNotice("浏览器存储不可用，设置未保存。"); }
+  };
+  return <div className="settings-grid"><div className="surface-card"><div className="section-title">历史刷新策略</div>
+    <label className="select-line">自动刷新<select value={preferences.historyAutoRefresh ? "on" : "off"} onChange={(event) => update({ historyAutoRefresh: event.target.value === "on" })}><option value="on">页面可见时刷新</option><option value="off">仅手动刷新</option></select></label>
+    <label className="select-line">刷新间隔<select disabled={!preferences.historyAutoRefresh} value={preferences.historyInterval} onChange={(event) => update({ historyInterval: Number(event.target.value) as UiPreferences["historyInterval"] })}>{[15, 30, 60].map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select></label>
+    <p className="muted-copy">离开历史页或切到其他浏览器标签后暂停刷新。也可以随时点击历史页的“刷新”。</p>
+    {notice && <p className="ui-setting-message" role="status">{notice}</p>}
+  </div><ResearchCaptureStatus /></div>;
+}
+
+function ResearchCaptureStatus() {
+  const provider = useDreamProvider();
+  const [capabilities, setCapabilities] = useState<RuntimeCapabilities | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setCapabilities(null);
+    setLoading(true);
+    setError("");
+    void provider.getCapabilities().then((value) => { if (active) setCapabilities(value); })
+      .catch(() => { if (active) setError("研究采集能力读取失败，请刷新重试。"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [provider, refreshVersion]);
+  const entries = [
+    { label: "H6 条件影响", capability: capabilities?.conditioningInfluence },
+    { label: "H7 自注意力", capability: capabilities?.selfAttention },
+    { label: "H7 交叉注意力", capability: capabilities?.attention },
+  ];
+  return <section className="surface-card" aria-label="研究采集">
+    <div className="section-title">研究采集</div>
+    <p className="muted-copy">在生成页选择“显微镜采集”级别：H6 采集条件影响与潜空间；H7 还采集自注意力和交叉注意力。研究采集增加额外前向计算、内存及写入开销。</p>
+    <div className="h7-matrix-scroll"><table className="h7-matrix" aria-label="研究采集能力"><thead><tr><th>采集类型</th><th>当前能力</th></tr></thead><tbody>{entries.map(({ label, capability }) => {
+      const ready = capability?.available === true && capability.truth === "observed";
+      const unknown = !capability || capability.message === "能力状态未返回" || (capability.available && !ready);
+      return <tr key={label}><th>{label}</th><td><TruthBadge truth={ready ? "observed" : "unavailable"} label={loading ? "读取中" : ready ? "采集已就绪" : unknown ? "未确认" : "不可用"} /></td></tr>;
+    })}</tbody></table></div>
+    <p className="muted-copy">各项状态独立读取后端能力声明。未返回能力或读取失败时保持未确认；能力就绪不代表每条历史记录都已采集，显微镜仍按有效产物显示数据。</p>
+    <p className="muted-copy">旧记录中未采集的张量无法补出。条件影响是分块与完整上下文预测的诊断比较，不代表生产路径对分块预测取算术平均。</p>
+    {error && <p role="status">{error}</p>}
+    <button type="button" className="secondary-button" disabled={loading} onClick={() => setRefreshVersion((value) => value + 1)}>刷新采集能力</button>
+  </section>;
 }
 
 function AboutPanel() {
@@ -257,10 +321,19 @@ function AboutPanel() {
 }
 
 function SettingsAside({ hardware, settings, nativeReady, openWorkspace, rebuildIndex, resetDefaults, workingAction }: { hardware: HardwareSnapshot | null; settings: DreamSettings; nativeReady: boolean; openWorkspace: (entry: WorkspaceEntry, label: string) => Promise<void>; rebuildIndex: () => Promise<void>; resetDefaults: () => void; workingAction: string | null }) {
-  const checks: Array<[string, boolean]> = [["CUDA 工具包", nativeReady], ["NVIDIA 驱动", nativeReady], ["GPU 可用性", nativeReady], ["模型索引", true], ["工作区路径", true], ["写入权限", true], ["磁盘空间（E:）", true], ["系统内存", Boolean(hardware)]];
+  const checks: Array<[string, boolean | null, string]> = [
+    ["CUDA 工具包", null, "未独立检测"],
+    ["NVIDIA 驱动", hardware?.driverVersion ? true : null, hardware?.driverVersion ?? "未返回版本"],
+    ["GPU 可用性", hardware ? nativeReady : null, hardware ? (nativeReady ? "就绪" : "不可用") : "未检测"],
+    ["模型索引", null, "请在模型页核查"],
+    ["工作区路径", null, settings.dreamRoot],
+    ["写入权限", null, "未独立检测"],
+    ["磁盘空间（E:）", hardware?.eDriveFreeBytes == null ? null : hardware.eDriveFreeBytes > 1024 ** 3, hardware?.eDriveFreeBytes == null ? "未返回容量" : `可用 ${(hardware.eDriveFreeBytes / 1024 ** 3).toFixed(1)} GB`],
+    ["系统内存", hardware ? hardware.ramTotalBytes > 0 : null, hardware ? `${Math.round(hardware.ramTotalBytes / 1024 ** 3)} GB` : "未检测"],
+  ];
   return (
     <aside className="settings-side">
-      <div className="surface-card diagnosis"><div className="section-title">系统诊断 <TruthBadge truth={nativeReady ? "observed" : "unavailable"} label={nativeReady ? "健康" : "检查"} /></div>{checks.map(([item, ok]) => <div className="diagnosis-row" key={item}><span className={`status-dot ${ok ? "" : "status-missing"}`} />{item}<strong>{ok ? "正常" : "检查"}</strong></div>)}<div className={`healthy ${nativeReady ? "" : "is-warning"}`}>{nativeReady ? "✓ 系统健康" : "! 原生硬件需要处理"}</div></div>
+      <div className="surface-card diagnosis"><div className="section-title">系统诊断 <TruthBadge truth={hardware?.truth ?? "unavailable"} label="检测快照" /></div>{checks.map(([item, ok, detail]) => <div className="diagnosis-row" key={item}><span className={`status-dot ${ok === null ? "status-unknown" : ok ? "" : "status-missing"}`} />{item}<strong>{detail}</strong></div>)}<p className="muted-copy">未检测的项目不参与健康判断。CUDA 可用并不代表工具包、磁盘和权限均已验证。</p></div>
       <div className="surface-card"><div className="section-title">操作</div><a className="action-button" href="/api/settings/export" download="dream-settings.json">导出配置<span>›</span></a><button className="action-button" type="button" disabled={workingAction !== null} onClick={() => void openWorkspace("logs", "日志")}>{workingAction === "日志" ? "打开中…" : "打开日志"}<span>›</span></button><button className="action-button" type="button" disabled={workingAction !== null} onClick={() => void rebuildIndex()}>{workingAction === "重建索引" ? "重建中…" : "重建索引"}<span>›</span></button><button className="action-button" type="button" disabled={workingAction !== null} onClick={resetDefaults}>恢复默认值<span>›</span></button></div>
       <div className="surface-card"><div className="section-title">工作区</div><p className="muted-copy">设置和生成数据会持久化保存到 {settings.dreamRoot}。</p></div>
     </aside>

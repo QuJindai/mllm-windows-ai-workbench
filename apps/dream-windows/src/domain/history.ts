@@ -1,4 +1,5 @@
 import type { TruthLevel } from "./hardware";
+import type { ModelGenerationDefaults } from "./models";
 
 export type HistoryItem = {
   id: string;
@@ -7,6 +8,7 @@ export type HistoryItem = {
   negativePrompt: string;
   modelId: string;
   modelName: string;
+  generationDefaults?: ModelGenerationDefaults | null;
   width: number;
   height: number;
   steps: number;

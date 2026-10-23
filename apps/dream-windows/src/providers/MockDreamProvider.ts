@@ -10,6 +10,7 @@ import type { HistoryItem, HistoryPage, HistoryQuery } from "../domain/history";
 import type { ResearchStatus, RuntimeAttentionIndex, RuntimeAttentionMap, RuntimeCapabilities, RuntimeTrace, RuntimeTraceSummary } from "../domain/trace";
 import type { DreamSettings, WorkspaceEntry, WorkspaceOpenResult } from "../domain/settings";
 import type { DreamProvider, ExperimentRequest } from "./DreamProvider";
+import type { RuntimeInfluence, RuntimeSelfAttentionIndex, RuntimeSelfAttentionMapResponse } from "../domain/trace";
 
 type FixtureModel = Omit<ModelRecord, "imageUrl"> & { imageKey: keyof typeof mockImages };
 type FixtureHistory = Omit<HistoryItem, "imageUrl"> & { imageKey: keyof typeof mockImages };
@@ -188,6 +189,18 @@ export class MockDreamProvider implements DreamProvider {
 
   async getAttentionMap(_runId: string, _mapId: string): Promise<RuntimeAttentionMap> {
     throw new Error("ATTENTION_MAP_NOT_FOUND: 测试提供方没有原生 H7 注意力张量");
+  }
+
+  async getInfluence(runId: string): Promise<RuntimeInfluence> {
+    return { available: false, runId, truth: "unavailable", message: "当前 native 记录没有导出条件影响张量；测试提供方不提供实测研究数据。" };
+  }
+
+  async getSelfAttentionIndex(runId: string): Promise<RuntimeSelfAttentionIndex> {
+    return { available: false, runId, truth: "unavailable", message: "测试提供方没有原生 H7 自注意力张量" };
+  }
+
+  async getSelfAttentionMap(runId: string, _mapId: string): Promise<RuntimeSelfAttentionMapResponse> {
+    return { available: false, runId, truth: "unavailable", message: "测试提供方没有原生 H7 自注意力空间图" };
   }
 
   async getResearchStatus(): Promise<ResearchStatus> {

@@ -1,0 +1,141 @@
+.operations-diagnostics {
+  display: grid;
+  gap: 16px;
+  font-size: var(--ui-text, 14px);
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+.operations-diagnostics .operations-diagnostics__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.operations-diagnostics .operations-diagnostics__title,
+.operations-diagnostics .operations-diagnostics__subtitle {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 650;
+}
+
+.operations-diagnostics .operations-diagnostics__refresh {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: inherit;
+  cursor: pointer;
+}
+
+.operations-diagnostics .operations-diagnostics__refresh:hover:not(:disabled) {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.operations-diagnostics .operations-diagnostics__refresh:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+.operations-diagnostics .operations-diagnostics__refresh:disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+.operations-diagnostics .operations-diagnostics__body,
+.operations-diagnostics .operations-diagnostics__group {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.operations-diagnostics .operations-diagnostics__metadata {
+  display: grid;
+  grid-template-columns: minmax(120px, .65fr) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.operations-diagnostics .operations-diagnostics__metadata dt { color: var(--text-2); }
+.operations-diagnostics .operations-diagnostics__metadata dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.operations-diagnostics .operations-diagnostics__capacity,
+.operations-diagnostics .operations-diagnostics__message {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+}
+
+.operations-diagnostics .operations-diagnostics__badge {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: var(--ui-small, 12px);
+  color: var(--text-3);
+}
+.operations-diagnostics .operations-diagnostics__badge[data-status="ok"] { color: var(--success); }
+.operations-diagnostics .operations-diagnostics__badge[data-status="warning"] { color: var(--warning); }
+.operations-diagnostics .operations-diagnostics__badge[data-status="blocked"],
+.operations-diagnostics .operations-diagnostics__message--error { color: var(--danger); }
+
+.operations-diagnostics .operations-diagnostics__groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 20px;
+}
+
+.operations-diagnostics .operations-diagnostics__list {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.operations-diagnostics .operations-diagnostics__check::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.operations-diagnostics .operations-diagnostics__check[data-status="ok"]::before { background: var(--success); }
+.operations-diagnostics .operations-diagnostics__check[data-status="missing"]::before { background: var(--danger); }
+
+.operations-diagnostics .operations-diagnostics__note,
+.operations-diagnostics .operations-diagnostics__footer {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--ui-small, 12px);
+  overflow-wrap: anywhere;
+}
+.operations-diagnostics .operations-diagnostics__footer {
+  max-width: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 600px) {
+  .operations-diagnostics .operations-diagnostics__metadata { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .operations-diagnostics .operations-diagnostics__metadata dd { margin-bottom: 8px; }
+}

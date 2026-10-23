@@ -5,6 +5,7 @@ on:
     branches:
       - feature/desktop-phase-a
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

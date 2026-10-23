@@ -10,7 +10,7 @@ Plan: `docs/superpowers/plans/2026-10-23-dream-upgrade.md`
 
 ## State
 
-- [ ] T1 source baseline/main and remote publication. Remote workflow_dispatch commit9ea8961 merged on main as e05ef04. Reviewed implementation is ready to commit/push; publication receipt follows independent remote readback.
+- [x] T1 source baseline/main and remote publication. Remote workflow_dispatch commit9ea8961 merged on main as e05ef04. Implementation commit107b007 pushed without force; both Git and GitHub API independently returned the full source SHA.
 - [x] T2 operations/low-disk safeguards implemented and tested; live diagnostics shows a real low-space warning (approximately 5.4 GiB at final check). No files deleted.
 - [x] T3 unfinished batch retry implemented and GUI/API-tested. Lost-response duplication was fixed and independently re-reviewed; new elapsed-time handling includes preparation and terminal failures.
 - [ ] T4 visual sampling-window and H6/H7 hooks implemented and real artifacts viewed. Illustrious + Plus Face failed visual quality acceptance (including strength comparisons); experimental route is gated OFF by default, with live API422 and disabled GUI submission verified. No silent substitution.
@@ -24,6 +24,7 @@ Plan: `docs/superpowers/plans/2026-10-23-dream-upgrade.md`
 - GUI failed-batch retry created a new child; it completed after the Windows stdin-reader lock repair. Original failed record and protected profiles remain intact.
 - Independent review closed both Important issues after 75 focused frontend tests: retry mode/key locking and unknown/read-failed capture reporting.
 - Real visual H7: 5 H6 steps, 135 self maps, 480 text-cross maps; self probability sums validated and all three panels opened in the browser. Artifacts are real but do not imply image-quality acceptance.
+- Cyber research output was also visually inspected; all135 Cyber self maps independently passed validation, with probability sums0.999999974–1.000000067. No likeness guarantee is inferred.
 - Illustrious cold/warm same-seed PNG hashes match, but both images are visually broken. Strength zero restores a coherent base image; 0.25 remains degraded. These are failed quality cases, retained locally.
 - Cyber produces a coherent character. Its first cold/warm experiment overlaps other workload (177.234 / 208.453 s wall time), so it does not prove a speed gain. Further controlled lifecycle/performance acceptance is required.
 - Read-only GPU inventory subsequently showed an external Blender process at 100% GPU / 1399 MiB and no Dream worker. This both confirms observed idle worker release and invalidates any uncontended performance claim. Blender was not stopped.

@@ -33,8 +33,8 @@ Files: `.gitignore`, dependency manifests, `scripts/`, new release documentation
 Interfaces: existing Git history, source-only release receipt and reproducible environment inventory.
 - [x] Record paths/hashes of protected archives and source baseline; review pending file list and secret patterns.
 - [x] Run backend `python -m pytest -q` and frontend `npm.cmd run test:run -- --maxWorkers=2`; inspect failures before proceeding.
-- [ ] Commit reviewed current served source on main and merge origin/main's workflow update without force. Preserve feature worktree unchanged.
-- [ ] Push verified baseline main; independently read remote SHA. Subsequent features land as additional commits.
+- [x] Commit reviewed current served source on main and merge origin/main's workflow update without force. Preserve feature worktree unchanged.
+- [x] Push reviewed source on main; independently read remote SHA. Source commit `107b007db505f100d7dcb1c5391c4938eb81a8ec` matched both `ls-remote` and the GitHub commits API.
 
 ## Task 2 — operations diagnostics (independent sidecar)
 
@@ -72,4 +72,4 @@ Files: performance probe/report, bounded worker/session implementation if suppor
 - [ ] Repeat uncontended performance and real GPU cancel/release/native hand-off under the final ownership repair. External GPU workload is preserved, not stopped.
 - [x] Independently review entire delta, fix Important/Critical regressions, rerun full frontend/backend tests and build.
 - [x] Deploy with scoped backup, preserve archives, perform real GUI retry/control/research/diagnostic checks, write itemized acceptance report.
-- [ ] Commit and push main, verify remote SHA and live release independently; no blanket completion claim for any open item.
+- [x] Commit and push main, verify remote SHA and live release independently; no blanket completion claim for any open item. See the publication receipt in `docs/dream-windows/UPGRADE_20261023.md`.

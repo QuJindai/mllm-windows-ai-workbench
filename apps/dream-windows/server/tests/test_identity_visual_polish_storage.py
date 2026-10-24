@@ -26,9 +26,13 @@ def visual_request(ref, **changes):
 def redraw_service(visual_service, monkeypatch):
     service, boundary = visual_service
     original = boundary.run
-    control = SimpleNamespace(damage=lambda metadata: None, failed=False, original=True)
+    control = SimpleNamespace(damage=lambda metadata: None, failed=False, original=True, anchor_ready=True)
 
     def render(operation, payload, cancelled=None):
+        if operation == "status":
+            return {**original(operation, payload, cancelled), "visualPolish": {
+                "ready": True, "message": "redraw ready", "referenceAnchorReady": control.anchor_ready,
+                "referenceAnchorMessage": "anchor ready" if control.anchor_ready else "missing faceParsingModel"}}
         if operation == "batch":
             for item in payload["items"]:
                 render("generate", item, cancelled)
@@ -226,7 +230,8 @@ def test_service_exposes_visual_polish_status_without_changing_other_capabilitie
 
 
 @pytest.mark.parametrize("detector_ready,model_ready", [(False, False), (False, True), (True, False), (True, True)])
-def test_worker_visual_status_requires_detector_and_visual_model(tmp_path, monkeypatch, detector_ready, model_ready):
+@pytest.mark.parametrize("anchor_ready", [False, True])
+def test_worker_visual_status_requires_detector_and_visual_model(tmp_path, monkeypatch, detector_ready, model_ready, anchor_ready):
     import identity_worker
     import identity_models
 
@@ -242,7 +247,8 @@ def test_worker_visual_status_requires_detector_and_visual_model(tmp_path, monke
         {"id": VISUAL_MODEL, "name": "Visual", "architecture": "SDXL", "referenceKind": "visual",
          "ready": model_ready, "message": "local model state", "loras": []}])
     monkeypatch.setitem(sys.modules, "identity_visual_polish", SimpleNamespace(
-        visual_polish_status=lambda config: {"ready": Path(config["animeFaceDetector"]).is_file(), "message": "复用当前视觉底模"}))
+        visual_polish_status=lambda config: {"ready": Path(config["animeFaceDetector"]).is_file(), "message": "复用当前视觉底模",
+            "referenceAnchorReady": detector_ready and anchor_ready, "referenceAnchorMessage": "anchor component status"}))
     monkeypatch.setattr(sys, "argv", ["identity_worker.py", "--operation", "status", "--request", str(request), "--result", str(result)])
     # Exercise the real CLI without replacing its JSON file protocol.
     with io.TextIOWrapper(io.BytesIO(), encoding="utf-8") as stdout, io.TextIOWrapper(io.BytesIO(), encoding="utf-8") as stderr:
@@ -253,3 +259,5 @@ def test_worker_visual_status_requires_detector_and_visual_model(tmp_path, monke
     status = read_json(result)
     assert status["visualPolish"]["ready"] is (detector_ready and model_ready)
     assert status["visualPolish"]["message"]
+    assert status["visualPolish"]["referenceAnchorReady"] is (detector_ready and model_ready and anchor_ready)
+    assert status["visualPolish"]["referenceAnchorMessage"]

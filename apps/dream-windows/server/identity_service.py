@@ -115,7 +115,8 @@ class FacePolishMetadata(BaseModel):
     cropBox: list[int] | None = Field(default=None,min_length=4,max_length=4)
     denoiseStrength: float | None = Field(default=None,ge=.15,le=.65)
     outsideMaskUnchanged: bool | None = None
-    detailerVersion: Literal['masked-face-v1', 'staged-face-v2'] | None = None
+    detailerVersion: Literal['masked-face-v1', 'staged-face-v2', 'protected-face-v3'] | None = None
+    featureProtection: Literal['central-features-v1'] | None = None
     polishMode: Literal['redraw', 'reference-anchor'] | None = None
     passes: list[VisualPolishPass] | None = Field(default=None, min_length=1, max_length=2)
     anchorStrength: float | None = Field(default=None, ge=.3, le=1)
@@ -557,10 +558,23 @@ class IdentityService:
     def batch_operation(self, method, *args):
         if method == 'submit':
             self._require_model_enabled(args[0].request.modelId)
+            self._require_visual_polish_ready(args[0].request.model_dump())
         elif method == 'retry':
-            self._require_model_enabled(self.batches.get(args[0])['request']['request']['modelId'])
+            request = self.batches.get(args[0])['request']['request']
+            self._require_model_enabled(request['modelId'])
         # Batch cancellation waits outside the lock for worker finalization.
         return getattr(self.batches, method)(*args)
+
+    def _require_visual_polish_ready(self, request):
+        if not request.get('facePolish') or request.get('visualPolishMode', 'redraw') != 'reference-anchor':
+            return
+        # Status uses the configured worker Python, which may have different
+        # packages from the controller. It checks files/specs without GPU work.
+        status = self.status()
+        visual = status.get('visualPolish', {})
+        if visual.get('referenceAnchorReady') is not True:
+            message = visual.get('referenceAnchorMessage') or status.get('message') or '参考脸对齐组件未就绪'
+            raise DreamApiError('IDENTITY_REFERENCE_ANCHOR_NOT_READY', message, status_code=422)
 
     def _require_model_enabled(self, model_id):
         if model_id != ILLUSTRIOUS_VISUAL_MODEL_ID:
@@ -763,6 +777,13 @@ class IdentityService:
             metadata["facePolish"] = {"enabled": False, "status": "disabled"}
             return
         polish = FacePolishMetadata.model_validate(value)
+        protected = polish.detailerVersion == 'protected-face-v3'
+        if protected or polish.featureProtection is not None:
+            if (not protected or polish.featureProtection != 'central-features-v1'
+                    or not polish.enabled or not is_visual_model_id(request.get('modelId'))
+                    or request.get('visualPolishMode', 'redraw') != 'reference-anchor'
+                    or polish.polishMode != 'reference-anchor'):
+                raise ValueError('受保护修脸凭据必须匹配参考脸对齐模式与中心五官保护版本')
         if polish.enabled != request.get("facePolish", False) or (polish.status == "disabled") == polish.enabled:
             raise ValueError("人物修复状态与请求不一致")
         if polish.status == "failed" and not (polish.message and polish.message.strip()):
@@ -819,7 +840,11 @@ class IdentityService:
                 detail_fields = {'detailerVersion', 'processingSize', 'detailPrompt', 'detailNegativePrompt'}
                 if staged or detail_fields.intersection(polish.model_fields_set):
                     from identity_visual_polish import detail_prompts, detail_size
-                    if (polish.detailerVersion != ('staged-face-v2' if staged else 'masked-face-v1')
+                    # Keep historical anchor v2 receipts valid without relabeling
+                    # them as protected. Redraw retains its existing v1/v2 rules.
+                    versions = (('staged-face-v2', 'protected-face-v3') if mode == 'reference-anchor'
+                                else ('staged-face-v2',) if staged else ('masked-face-v1',))
+                    if (polish.detailerVersion not in versions
                         or polish.processingSize != list(detail_size(crop, face))
                         or (polish.detailPrompt, polish.detailNegativePrompt) != detail_prompts(request)):
                         raise ValueError('蒙版细化参数与请求不一致')
@@ -1089,6 +1114,9 @@ class IdentityService:
             visual = value.get('visualPolish')
             if isinstance(visual, dict) and type(visual.get('ready')) is bool and isinstance(visual.get('message'), str):
                 result['visualPolish'] = {'ready': visual['ready'], 'message': visual['message']}
+                if type(visual.get('referenceAnchorReady')) is bool and isinstance(visual.get('referenceAnchorMessage'), str):
+                    result['visualPolish'].update(referenceAnchorReady=visual['referenceAnchorReady'],
+                                                 referenceAnchorMessage=visual['referenceAnchorMessage'])
             return result
         except WorkerCancelled as exc:
             raise DreamApiError("IDENTITY_SERVICE_CLOSED", "人物服务正在关闭，请稍后重试", status_code=503) from exc
@@ -1184,6 +1212,7 @@ class IdentityService:
         self._require_model_enabled(request.modelId)
         self._validate_face(request.referenceId, request.faceIndex, request_reference_kind(request))
         data = request.model_dump()
+        self._require_visual_polish_ready(data)
         self.anime_profiles.resolve_request(data)
         if data["seed"] == "random":
             data["seed"] = secrets.randbelow(2147483648)

@@ -35,7 +35,8 @@ function FacePolishPreview({ job }: { job: IdentityJob & { result: NonNullable<I
   // revision avoids that cache entry without busting the cache on every poll/render.
   const [path, fragment] = job.result.imageUrl.split("#", 2);
   const finalUrl = `${path}${path.includes("?") ? "&" : "?"}identityResult=${encodeURIComponent(`${job.id}:${polish?.status}`)}${fragment ? `#${fragment}` : ""}`;
-  const staged = visual && completed && polish?.detailerVersion === "staged-face-v2";
+  const protectedFace = visual && completed && polish?.detailerVersion === "protected-face-v3" && polish.featureProtection === "central-features-v1";
+  const staged = visual && completed && (polish?.detailerVersion === "staged-face-v2" || protectedFace);
   const snapshots = staged ? polish.snapshots ?? [] : [];
   const snapshot = snapshots.find(stage => stage.kind === selection);
   const showOriginal = selection === "original";
@@ -48,6 +49,7 @@ function FacePolishPreview({ job }: { job: IdentityJob & { result: NonNullable<I
     {visual && completed && <p className="identity-note">重绘强度 {polish?.denoiseStrength} · {polish?.outsideMaskUnchanged ? "掩膜外像素未改动" : "掩膜外像素有变化"}（服务记录）</p>}
     {staged && <>
       <p className="identity-note">模式：{polish.polishMode === "reference-anchor" ? "参考脸对齐" : "局部重绘"} · 已完成 {polish.passes?.length} 轮</p>
+      {protectedFace && <p className="identity-polish-complete">五官保护 v3 · 保留中央五官，仅融合边缘（服务记录）</p>}
       {polish.polishMode === "reference-anchor" && <p className="identity-note">参考脸融合强度 {polish.anchorStrength} · 几何对齐误差 {polish.alignmentError}（按眼距归一化，仅衡量位置拟合）</p>}
       <table aria-label="修脸分轮实测记录"><thead><tr><th>轮次</th><th>去噪强度</th><th>实测步数</th><th>实测耗时</th></tr></thead>
         <tbody>{polish.passes?.map(pass => <tr key={pass.kind}><td>{polishStageLabels[pass.kind]}</td><td>{pass.denoiseStrength}</td><td>{pass.steps}</td><td>{(pass.durationMs / 1000).toFixed(2)} 秒</td></tr>)}</tbody>

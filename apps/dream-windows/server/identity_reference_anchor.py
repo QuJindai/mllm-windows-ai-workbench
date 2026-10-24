@@ -65,8 +65,9 @@ class ReferenceAnchor:
         if not 0 <= face_index < len(ordered) or points is None:
             raise ValueError('参考图未取得可靠五点位置，请使用清晰近正脸')
         self.points = points[ordered[face_index]]
+        self.source_box = boxes[ordered[face_index]][:4].tolist()
 
-    def apply(self, image, strength):
+    def _target(self, image):
         import numpy as np
         boxes, points = self.detector.detect(np.asarray(image.convert('RGB'))[:,:,::-1].copy(), max_num=0)
         if len(boxes) > 1:
@@ -74,5 +75,29 @@ class ReferenceAnchor:
         if len(boxes) != 1 or points is None:
             raise ValueError('目标图未取得可靠五点位置，请使用清晰近正脸')
         box = [float(max(0,min(v,limit))) for v,limit in zip(boxes[0][:4],(image.width,image.height,image.width,image.height))]
-        result, info = align_reference_face(self.reference,image,self.points,points[0],box,strength)
+        return box, points[0]
+
+    def apply(self, image, strength):
+        box, points = self._target(image)
+        result, info = align_reference_face(self.reference,image,self.points,points,box,strength)
         return result, box, info
+
+    def apply_protected(self, image, strength, config):
+        import numpy as np
+        from PIL import Image
+        from identity_face_region import FaceRegionParser, region_masks, harmonized_anchor
+        if type(strength) not in (int,float) or not math.isfinite(strength) or not .3 <= strength <= 1:
+            raise ValueError('参考脸保留强度必须为 0.3–1')
+        box, points = self._target(image)
+        matrix, error = similarity_alignment(self.points, points)
+        inverse = tuple(np.linalg.inv(matrix)[:2].ravel())
+        if not hasattr(self, '_parser'):
+            parser = FaceRegionParser(config)
+            labels = parser.labels(self.reference, self.source_box)
+            self._parser, self._source_labels = parser, labels
+        aligned = self.reference.transform(image.size, Image.Transform.AFFINE, inverse, Image.Resampling.BICUBIC)
+        labels = Image.fromarray(self._source_labels).transform(image.size, Image.Transform.AFFINE, inverse, Image.Resampling.NEAREST)
+        transformed = np.column_stack([self.points,np.ones(5)]) @ matrix[:2].T
+        alpha, ring, _ = region_masks(np.asarray(labels), self._parser.labels(image, box), transformed, box)
+        result = harmonized_anchor(aligned, image, alpha, strength)
+        return result, box, {'anchorStrength':strength, 'alignmentError':error}, ring

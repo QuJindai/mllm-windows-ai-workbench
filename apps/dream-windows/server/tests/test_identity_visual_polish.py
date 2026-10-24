@@ -198,16 +198,18 @@ def staged_artifacts(monkeypatch):
 
 def test_anchor_initializes_before_redraw_and_records_each_stage(redraw_case,staged_artifacts,monkeypatch):
     import identity_reference_anchor
+    from identity_anime import face_mask
     processor,item,image,calls,_,_,_=redraw_case
     item.update(visualPolishMode='reference-anchor',visualAnchorStrength=.95,visualPolishPasses=1,
                 jobId='identity-'+'e'*24,imagePath='local-reference.png')
     anchor=Image.linear_gradient('L').resize(image.size).convert('RGB')
     monkeypatch.setattr(identity_reference_anchor,'ReferenceAnchor',lambda *a:SimpleNamespace(
-        apply=lambda image,strength:(anchor,[35.,30.,85.,95.],{'anchorStrength':strength,'alignmentError':.05})))
+        apply_protected=lambda image,strength,config:(anchor,[35.,30.,85.,95.],{'anchorStrength':strength,'alignmentError':.05},face_mask(image.size,[35.,30.,85.,95.]))))
     output,info=processor.apply(image,item,1.,lambda s:None)
     assert calls[0]['image'].getextrema() != image.getextrema()
     assert [kind for kind,_ in staged_artifacts[0]] == ['anchor','harmonize']
-    assert info['detailerVersion']=='staged-face-v2' and info['polishMode']=='reference-anchor'
+    assert info['detailerVersion']=='protected-face-v3' and info['polishMode']=='reference-anchor'
+    assert info['featureProtection']=='central-features-v1'
     assert info['alignmentError']==.05 and info['anchorStrength']==.95
     assert len(info['passes'])==1 and info['passes'][0]['steps']==10
     assert info['passes'][0]['durationMs']>=0
@@ -247,7 +249,7 @@ def test_unchanged_refinement_does_not_reintroduce_original_face_at_boundary(red
         patch = Image.linear_gradient('L').resize((crop[2]-crop[0], crop[3]-crop[1])).convert('RGB')
         anchor = blend_face(image, patch, box, crop)
         monkeypatch.setattr(identity_reference_anchor, 'ReferenceAnchor', lambda *a: SimpleNamespace(
-            apply=lambda image, strength: (anchor, box, {'anchorStrength':strength, 'alignmentError':.05})))
+            apply_protected=lambda image, strength, config: (anchor, box, {'anchorStrength':strength, 'alignmentError':.05}, face_mask(image.size,box))))
         control['unchanged_patch'] = True
     else:
         control['unchanged_second_patch'] = True
@@ -272,6 +274,28 @@ def test_second_pass_failure_retains_original_and_removes_partial_snapshots(redr
     assert len(calls)==2 and info['status']=='failed'
     assert output is image and staged_artifacts[1]==[item['jobId']]
     assert 'snapshots' not in info
+
+
+def test_protected_anchor_keeps_central_pixels_through_two_real_composite_passes(redraw_case, staged_artifacts, monkeypatch):
+    import identity_reference_anchor
+    from identity_face_region import region_masks
+    processor, item, _, calls, control, _, _ = redraw_case
+    image = Image.linear_gradient('L').resize((160,160)).convert('RGB')
+    box = [20.,10.,140.,150.]
+    labels = np.zeros((160,160), dtype=np.uint8)
+    labels[20:140,25:135] = 1
+    labels[45:50,45:63], labels[45:50,97:115] = 6, 7
+    points = np.array([[55.,63.],[105.,63.],[80.,83.],[65.,108.],[95.,108.]])
+    _, ring, protected = region_masks(labels,labels,points,box)
+    item.update(visualPolishMode='reference-anchor', visualPolishPasses=2,
+                jobId='identity-'+'e'*24, imagePath='local-reference.png')
+    monkeypatch.setattr(identity_reference_anchor, 'ReferenceAnchor', lambda *a: SimpleNamespace(
+        apply_protected=lambda image,strength,config:(image,box,{'anchorStrength':strength,'alignmentError':.05},ring)))
+    output,info = processor.apply(image,item,1.,lambda s:None)
+    assert len(calls)==2 and info['featureProtection']=='central-features-v1'
+    assert np.array_equal(np.asarray(output)[protected],np.asarray(image)[protected])
+    for _, saved in staged_artifacts[0]:
+        assert np.array_equal(np.asarray(saved)[protected],np.asarray(image)[protected])
 
 
 @pytest.mark.parametrize('change',[{'visualPolishMode':'reference-anchor'},{'visualAnchorStrength':.7},{'visualPolishPasses':2}])

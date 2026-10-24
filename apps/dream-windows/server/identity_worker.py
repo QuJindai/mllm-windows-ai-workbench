@@ -76,6 +76,9 @@ def main():
             result['visualPolish'] = {
                 'ready': visual['ready'] and visual_model_ready,
                 'message': visual['message'] if visual_model_ready else '动漫视觉底模未就绪，无法使用视觉局部重绘',
+                'referenceAnchorReady': visual.get('referenceAnchorReady', False) and visual_model_ready,
+                'referenceAnchorMessage': (visual.get('referenceAnchorMessage', '参考脸对齐组件状态不可用')
+                                           if visual_model_ready else '动漫视觉底模未就绪，无法使用参考脸对齐'),
             }
         elif args.operation == 'inspect':
             result = inspect_reference(config, request)

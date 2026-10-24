@@ -6,7 +6,14 @@ function decodeStatus(status: IdentityStatus): IdentityStatus {
   if (capability === undefined) return status;
   if (capability && typeof capability === "object" && !Array.isArray(capability)
     && "ready" in capability && typeof capability.ready === "boolean"
-    && "message" in capability && typeof capability.message === "string") return status;
+    && "message" in capability && typeof capability.message === "string") {
+    if (("referenceAnchorReady" in capability && capability.referenceAnchorReady !== undefined && typeof capability.referenceAnchorReady !== "boolean")
+      || ("referenceAnchorMessage" in capability && capability.referenceAnchorMessage !== undefined && typeof capability.referenceAnchorMessage !== "string")) {
+      return { ...status, visualPolish: { ...status.visualPolish!, referenceAnchorReady: false,
+        referenceAnchorMessage: "服务返回的参考脸对齐能力无效，当前不可用。" } };
+    }
+    return status;
+  }
   return { ...status, visualPolish: { ready: false, message: "服务返回的视觉重绘能力无效，当前不可用。" } };
 }
 

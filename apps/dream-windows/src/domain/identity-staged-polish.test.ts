@@ -57,6 +57,45 @@ describe("staged settings across request restoration", () => {
 });
 
 describe("staged completion evidence", () => {
+  it.each([1, 2] as const)("accepts protected-face-v3 for %s anchor passes without changing the request", count => {
+    const params = { ...request, visualPolishPasses: count };
+    const before = structuredClone(params);
+    expect(validVisualPolishResult({ ...receipt, detailerVersion: "protected-face-v3", featureProtection: "central-features-v1",
+      passes: count === 1 ? [harmonize] : [harmonize, detail], snapshots: count === 1 ? snapshots.slice(0, 2) : snapshots }, params, jobId)).toBe(true);
+    expect(params).toEqual(before);
+  });
+
+  it.each([undefined, null, "central-features-v2", true])("rejects v3 without its exact feature protection marker: %j", featureProtection => {
+    expect(validVisualPolishResult({ ...receipt, detailerVersion: "protected-face-v3", featureProtection }, request, jobId)).toBe(false);
+  });
+
+  it("does not allow redraw to claim protected-face-v3", () => {
+    const { anchorStrength: _anchor, alignmentError: _error, ...base } = receipt;
+    expect(validVisualPolishResult({ ...base, detailerVersion: "protected-face-v3", featureProtection: "central-features-v1",
+      polishMode: "redraw", snapshots: snapshots.slice(1) }, { ...request, visualPolishMode: "redraw" }, jobId)).toBe(false);
+  });
+
+  it("keeps v2 valid without reclassifying it as protected", () => {
+    expect(validVisualPolishResult(receipt, request, jobId)).toBe(true);
+    expect(validVisualPolishResult({ ...receipt, featureProtection: "central-features-v1" }, request, jobId)).toBe(false);
+    const { polishMode: _mode, anchorStrength: _anchor, alignmentError: _error, passes: _passes, snapshots: _snapshots, ...base } = receipt;
+    expect(validVisualPolishResult({ ...base, detailerVersion: "masked-face-v1", featureProtection: "central-features-v1" },
+      { ...request, visualPolishMode: "redraw", visualPolishPasses: 1 }, jobId)).toBe(false);
+  });
+
+  it.each([undefined, null])("keeps a nullable legacy v2 protection field unclaimed: %j", featureProtection => {
+    expect(validVisualPolishResult({ ...receipt, featureProtection }, request, jobId)).toBe(true);
+  });
+
+  it.each([
+    { snapshots: undefined }, { snapshots: [...snapshots].reverse() },
+    { passes: [harmonize, { ...detail, steps: 5 }] }, { alignmentError: .181 },
+    { passes: [harmonize] }, { processingSize: [512, 512] },
+  ])("applies the existing staged evidence checks to v3: %j", invalid => {
+    expect(validVisualPolishResult({ ...receipt, detailerVersion: "protected-face-v3", featureProtection: "central-features-v1", ...invalid },
+      request, jobId)).toBe(false);
+  });
+
   it("accepts complete passes bound to requested strengths with their measured timings", () => {
     expect(validVisualPolishResult(receipt, request, jobId)).toBe(true);
     expect(validVisualPolishResult({ ...receipt, passes: [harmonize], snapshots: snapshots.slice(0, 2) }, { ...request, visualPolishPasses: 1 }, jobId)).toBe(true);

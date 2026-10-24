@@ -133,6 +133,7 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
   const validStagedOptions = !isVisual || validVisualPolishMode(form.visualPolishMode ?? "redraw")
     && validVisualAnchorStrength(form.visualAnchorStrength ?? .95) && validVisualPolishPasses(form.visualPolishPasses ?? 1);
   const validPolish = !form.facePolish || validStagedOptions && (isVisual ? status?.visualPolish?.ready === true && !form.animeProfileId && validAnimeStrength(form.animeDenoiseStrength ?? .35)
+    && (form.visualPolishMode !== "reference-anchor" || status?.visualPolish?.referenceAnchorReady !== false)
     && (form.visualPolishPrompt ?? "").length <= 2000 && (form.visualPolishNegativePrompt ?? "").length <= 2000
     : form.animeProfileId ? isXL && !anime.error && status?.animePolish?.ready === true
     && matchingAnime.some(p=>p.id===form.animeProfileId && p.state==='ready') && validAnimeStrength(form.animeDenoiseStrength ?? .35)

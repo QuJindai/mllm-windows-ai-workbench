@@ -313,8 +313,10 @@ class IdentityBatches:
                             or any(profile[key] != getattr(params, key) for key in ("referenceId", "faceIndex"))):
                         raise DreamApiError("IDENTITY_PROFILE_CONFLICT", "原人物档案不可用或与批次不一致", status_code=409)
             original_indices = parent.get("originalItemIndices") or list(range(len(parent["items"])))
-            # Replayed keys above only read their accepted child. Check capacity
-            # here, under the submission lock, before persisting any new work.
+            # Replayed keys above only read their accepted child. Check runtime
+            # readiness and capacity only for new work, under the same lock as
+            # key lookup and publication so concurrent retries cannot duplicate it.
+            s._require_visual_polish_ready(frozen['request'])
             operations.ensure_generation_capacity(s.config)
             return self._submit_frozen(frozen, [item["request"] for _, item in selected],
                                        parentBatchId=batch_id, originalItemIndices=[original_indices[index] for index, _ in selected],

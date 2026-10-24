@@ -29,7 +29,7 @@ MAX_REQUEST = 256 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_ASSET_FILES = 10000
 MAX_BATCHES = 32
-ASSET_KEYS = ("checkpoint", "adapter", "faceLora", "clipVision", "pipelineConfig", "insightfaceRoot", "lorasDir", "faceSwapModel", "faceRestoreModel", "faceDetectionRoot", "animeFaceDetector")
+ASSET_KEYS = ("checkpoint", "adapter", "faceLora", "clipVision", "pipelineConfig", "insightfaceRoot", "lorasDir", "faceSwapModel", "faceRestoreModel", "faceDetectionRoot", "animeFaceDetector", "faceParsingModel")
 PER_RENDER = {"prompt", "negativePrompt", "seed", "steps"}
 OUTPUT_KEYS = {"jobId", "outputPath", "metadataPath"}
 

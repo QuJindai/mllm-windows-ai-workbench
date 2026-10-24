@@ -12,6 +12,7 @@
   "faceSwapModel": "E:/Dream/models/identity/insightface/inswapper_128.onnx",
   "faceRestoreModel": "E:/Dream/models/identity/facerestore_models/GFPGANv1.4.pth",
   "faceDetectionRoot": "E:/Dream/models/identity/facedetection",
+  "faceParsingModel": "E:/Dream/models/identity/facedetection/parsing_parsenet.pth",
   "models": {
     "cyberrealistic-xl-plus-face": {
       "checkpoint": "E:/Dream/models/source/cyberrealisticXL_v100.safetensors",

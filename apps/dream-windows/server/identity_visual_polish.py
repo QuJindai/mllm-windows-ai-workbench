@@ -31,11 +31,33 @@ def detail_size(crop, box):
     return size
 
 
-def visual_polish_status(config):
+def visual_polish_status(config, find_spec=None):
+    # Inspect package availability in the worker interpreter without importing
+    # model libraries, loading weights, or initializing a GPU context.
+    if find_spec is None:
+        from importlib.util import find_spec
     ready = Path(config.get('animeFaceDetector', '')).is_file()
+    missing = []
+    if not ready:
+        missing.append('animeFaceDetector')
+    if not Path(config.get('faceParsingModel') or '').is_file():
+        missing.append('faceParsingModel')
+    alignment_root = config.get('insightfaceRoot')
+    if not alignment_root or not (Path(alignment_root) / 'models/buffalo_l/det_10g.onnx').is_file():
+        missing.append('insightfaceRoot/models/buffalo_l/det_10g.onnx')
+    for name in ('facexlib', 'cv2', 'insightface', 'onnxruntime', 'torch'):
+        try:
+            available = find_spec(name) is not None
+        except (ImportError, ValueError):
+            available = False
+        if not available:
+            missing.append(name)
     return {'ready': ready, 'message': (
-        '支持局部重绘与分阶段细化；参考脸对齐会融合当前参考图的脸部像素，保留原图与阶段结果'
-        if ready else '动漫脸检测模型未配置，关闭修脸仍可生成')}
+        '支持局部重绘与分阶段细化；复用当前视觉参考底模，保留原图与阶段结果'
+        if ready else '动漫脸检测模型未配置，关闭修脸仍可生成'),
+        'referenceAnchorReady': not missing,
+        'referenceAnchorMessage': ('参考脸对齐与中心五官保护组件就绪；实际效果需生成验证'
+                                   if not missing else '参考脸对齐未就绪，缺少：' + ', '.join(missing))}
 
 
 class VisualReferencePolisher:
@@ -74,13 +96,19 @@ class VisualReferencePolisher:
                 if getattr(self, '_anchor_binding', None) != binding:
                     self._anchor = ReferenceAnchor(self.session.config, *binding)
                     self._anchor_binding = binding
-                current, box, anchor_info = self._anchor.apply(image, item.get('visualAnchorStrength', .95))
+                current, box, anchor_info, blend_mask = self._anchor.apply_protected(
+                    image, item.get('visualAnchorStrength', .95), self.session.config)
                 snapshots.append({'kind': 'anchor', 'imageUrl': save_visual_stage(current, item, 'anchor')})
             else:
                 box = one_face(self.detector.detect(image))
             crop = crop_box(image.size, box)
             width, height = detail_size(crop, box)
-            mask = face_mask(image.size, box).point(lambda value: 255 if value >= 128 else 0)
+            if mode != 'reference-anchor':
+                blend_mask = face_mask(image.size, box)
+            # Sample the entire nonzero seam, including its feathered outer edge.
+            # Native-resolution compositing separately enforces protected pixels.
+            cutoff = 0 if mode == 'reference-anchor' else 127
+            mask = blend_mask.point(lambda value: 255 if value > cutoff else 0)
             mask = mask.crop(crop).resize((width, height), Image.Resampling.NEAREST)
             from identity_pipeline import visual_reference_schedule
             for index in range(pass_count):
@@ -89,7 +117,8 @@ class VisualReferencePolisher:
                 strength_now = denoise if index == 0 else .15
                 total = max(1, int(30 * strength_now))
                 started = time.perf_counter()
-                stage(f'{label} · 脸部蒙版细化 {width}×{height}')
+                region = '保留五官，仅融合边缘' if mode == 'reference-anchor' else '脸部蒙版细化'
+                stage(f'{label} · {region} {width}×{height}')
                 source = current.crop(crop).resize((width, height), Image.Resampling.LANCZOS)
                 # Share offloaded modules. Each pass starts a fresh scheduler,
                 # and refines the preceding image rather than rerunning the scene.
@@ -111,7 +140,11 @@ class VisualReferencePolisher:
                 # Refine the preceding stage. Blending every pass against the
                 # original resurrects its face at feathered boundaries even
                 # when the model returns an unchanged patch.
-                current = blend_face(current, patch, box, crop)
+                if mode == 'reference-anchor':
+                    from identity_face_region import composite_region
+                    current = composite_region(current, patch, crop, blend_mask)
+                else:
+                    current = blend_face(current, patch, box, crop)
                 if staged:
                     snapshots.append({'kind': kind, 'imageUrl': save_visual_stage(current, item, kind)})
                     passes.append({'kind': kind, 'denoiseStrength': strength_now, 'steps': total,
@@ -135,4 +168,6 @@ class VisualReferencePolisher:
         if staged:
             details.update(detailerVersion='staged-face-v2', polishMode=mode,
                            passes=passes, snapshots=snapshots, **anchor_info)
+            if mode == 'reference-anchor':
+                details.update(detailerVersion='protected-face-v3', featureProtection='central-features-v1')
         return current, details

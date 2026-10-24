@@ -98,8 +98,10 @@ const stagedReceipt = { ...detailReceipt, detailerVersion: "staged-face-v2", pol
     { kind: "detail", denoiseStrength: .15, steps: 4, durationMs: 678 },
   ], snapshots: stagedSnapshots };
 
-it("chooses conservative denoise on anchor opt-in and submits user-adjusted staged settings", async () => {
+it.each([undefined, true])("allows anchor with compatible capability %s and submits user-adjusted staged settings", async referenceAnchorReady => {
+  capability = { ready: true, message: "视觉参考局部重绘可用", ...(referenceAnchorReady === undefined ? {} : { referenceAnchorReady, referenceAnchorMessage: "对齐依赖已就绪" }) };
   await open(); prepare(); fireEvent.click(checkbox());
+  expect(screen.getByRole("option", { name: "参考脸对齐" })).toBeEnabled();
   expect(screen.getByLabelText("修脸模式")).toHaveValue("redraw");
   expect(screen.getByLabelText("修脸轮次")).toHaveValue("1");
   fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
@@ -109,6 +111,65 @@ it("chooses conservative denoise on anchor opt-in and submits user-adjusted stag
   fireEvent.change(screen.getByLabelText("重绘强度"), { target: { value: ".4" } });
   fireEvent.change(screen.getByLabelText("修脸轮次"), { target: { value: "2" } });
   expect(await submit()).toMatchObject({ ...anchored, animeDenoiseStrength: .4 });
+});
+
+const anchorUnavailable = { ready: true, message: "视觉参考局部重绘可用", referenceAnchorReady: false,
+  referenceAnchorMessage: "缺少 ParseNet 依赖，参考脸对齐不可用" };
+
+it("disables unavailable anchor separately while ordinary redraw can still submit", async () => {
+  capability = anchorUnavailable;
+  await open(); prepare(); fireEvent.click(checkbox());
+  expect(screen.getByRole("option", { name: "参考脸对齐" })).toBeDisabled();
+  expect(screen.getByRole("option", { name: "局部重绘" })).toBeEnabled();
+  expect(screen.getByText("视觉参考局部重绘可用")).toBeVisible();
+  expect(screen.getByText(/缺少 ParseNet 依赖/)).toBeVisible();
+  expect(await submit()).toMatchObject({ facePolish: true, visualPolishMode: "redraw" });
+});
+
+it.each(["redraw", "off"])("blocks restored anchor drafts before POST until the user selects %s", async recovery => {
+  const view = await open(); prepare(); fireEvent.click(checkbox());
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  fireEvent.change(screen.getByLabelText("重绘强度"), { target: { value: ".4" } });
+  view.unmount(); capability = anchorUnavailable;
+  await open();
+  fireEvent.change(screen.getByLabelText("选择参考照"), { target: { value: "ref-a" } });
+  expect(checkbox()).toBeChecked();
+  expect(screen.getByLabelText("修脸模式")).toHaveValue("reference-anchor");
+  expect(screen.getByLabelText("重绘强度")).toHaveValue(.4);
+  expect(screen.getByText(/缺少 ParseNet 依赖/)).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(/切换.*局部重绘.*关闭修脸/);
+  expect(generate()).toBeDisabled();
+  fireEvent.submit(generate().closest("form")!);
+  expect(posts).toHaveLength(0);
+  if (recovery === "redraw") fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "redraw" } });
+  else fireEvent.click(checkbox());
+  expect(await submit()).toMatchObject({ facePolish: recovery === "redraw", visualPolishMode: recovery === "redraw" ? "redraw" : "reference-anchor",
+    animeDenoiseStrength: .4 });
+});
+
+it("handles malformed optional anchor capability without disabling ordinary redraw", async () => {
+  capability = { ready: true, message: "视觉参考局部重绘可用", referenceAnchorReady: "false", referenceAnchorMessage: {} };
+  await open(); prepare(); fireEvent.click(checkbox());
+  expect(checkbox()).toBeEnabled();
+  expect(screen.getByRole("option", { name: "参考脸对齐" })).toBeDisabled();
+  expect(screen.getByText(/参考脸对齐能力无效/)).toBeVisible();
+  expect(await submit()).toMatchObject({ facePolish: true, visualPolishMode: "redraw" });
+});
+
+it("explains protected anchor versus face-changing redraw without changing existing defaults", async () => {
+  await open(); prepare(); fireEvent.click(checkbox());
+  const controls = within(screen.getByRole("region", { name: "可选生成后修脸" }));
+  expect(controls.getByText(/不保证人物一致性/)).toBeVisible();
+  expect(controls.queryByText(/第二轮也不重画五官/)).not.toBeInTheDocument();
+  expect(controls.getByLabelText("重绘强度")).toHaveValue(.35);
+  expect(controls.getByLabelText("修脸轮次")).toHaveValue("1");
+  fireEvent.change(controls.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  expect(controls.getByText(/保留中央五官.*只融合.*边缘.*第二轮也不重画五官/)).toBeVisible();
+  expect(controls.queryByText(/不保证人物一致性/)).not.toBeInTheDocument();
+  expect(controls.getByLabelText("重绘强度")).toHaveValue(.25);
+  expect(controls.getByLabelText("参考脸融合强度")).toHaveValue(.95);
+  expect(controls.getByLabelText("修脸轮次")).toHaveValue("1");
+  expect(posts).toHaveLength(0);
 });
 
 it.each(["", ".29", "1.01"])("blocks invalid anchor strength %j before POST", async strength => {
@@ -186,11 +247,14 @@ it("resets staged settings when crossing model families and never leaks them int
   expect(screen.getByLabelText("重绘强度")).toHaveValue(.35);
 });
 
-it("renders actual staged measurements and switches only among available canonical snapshots", async () => {
+it.each(["staged-face-v2", "protected-face-v3"])("renders %s measurements and snapshots and labels only v3 as protected", async detailerVersion => {
   const snapshots = ["anchor", "harmonize", "detail"].map(kind => ({ kind, imageUrl: `/api/identity/jobs/${jobId}/stages/${kind}` }));
-  jobs = [makeJob(stagedRequest, { ...stagedReceipt, snapshots })];
+  jobs = [makeJob(stagedRequest, { ...stagedReceipt, snapshots, detailerVersion,
+    ...(detailerVersion === "protected-face-v3" ? { featureProtection: "central-features-v1" } : {}) })];
   await open({ id: jobId, revision: 1 });
   const result = within(screen.getByRole("region", { name: `原图与重绘结果 ${jobId}` }));
+  if (detailerVersion === "protected-face-v3") expect(result.getByText(/五官保护 v3/)).toBeVisible();
+  else expect(result.queryByText(/五官保护/)).not.toBeInTheDocument();
   expect(result.getByText(/模式：参考脸对齐/)).toBeVisible();
   expect(result.getByText(/几何对齐误差.*0.04/)).toBeVisible();
   expect(result.queryByText(/相似度/)).not.toBeInTheDocument();
@@ -207,6 +271,15 @@ it("renders actual staged measurements and switches only among available canonic
   expect(result.getByAltText("生成原图")).toHaveAttribute("src", originalUrl);
   fireEvent.click(result.getByRole("button", { name: "查看重绘结果" }));
   expect(result.getByAltText("重绘结果")).toHaveAttribute("src", expect.stringContaining("/final.png?identityResult="));
+});
+
+it("never presents an unverified v3 receipt as feature protection", async () => {
+  jobs = [makeJob(stagedRequest, { ...stagedReceipt, detailerVersion: "protected-face-v3" })];
+  await open({ id: jobId, revision: 1 });
+  expect(screen.getByRole("alert")).toHaveTextContent(/视觉重绘记录无效/);
+  expect(screen.queryByText(/五官保护 v3/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "对齐预览" })).not.toBeInTheDocument();
+  expect(screen.getByAltText("生成结果")).toHaveAttribute("src", "/final.png");
 });
 
 it("shows the exact single-pass stages and preserves images without claiming completion when snapshots are missing", async () => {

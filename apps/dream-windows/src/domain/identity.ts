@@ -27,7 +27,11 @@ export type IdentityStatus = {
   models?: IdentityModel[];
   facePolish?: { ready: boolean; message: string };
   animePolish?: { ready: boolean; message: string };
-  visualPolish?: { ready: boolean; message: string };
+  visualPolish?: {
+    ready: boolean; message: string;
+    referenceAnchorReady?: boolean;
+    referenceAnchorMessage?: string;
+  };
 };
 
 export type IdentityReference = {
@@ -86,7 +90,8 @@ export type IdentityFacePolishResult = {
   cropBox?: number[];
   outsideMaskUnchanged?: boolean;
   restoreModel?: string;
-  detailerVersion?: "masked-face-v1" | "staged-face-v2";
+  detailerVersion?: "masked-face-v1" | "staged-face-v2" | "protected-face-v3";
+  featureProtection?: "central-features-v1" | null;
   polishMode?: VisualPolishMode;
   anchorStrength?: number;
   alignmentError?: number;
@@ -258,6 +263,12 @@ export function validVisualPolishResult(value: unknown, request: IdentityRequest
   if (typeof record.enabled !== "boolean" || typeof record.status !== "string" || !["disabled", "completed", "failed"].includes(record.status)) return false;
   if (record.originalImageUrl != null && (typeof record.originalImageUrl !== "string" || !record.originalImageUrl)) return false;
   if (record.message != null && typeof record.message !== "string") return false;
+  const protectedFace = record.detailerVersion === "protected-face-v3";
+  if (protectedFace) {
+    if (record.featureProtection !== "central-features-v1" || record.enabled !== true || request.facePolish !== true
+      || identityReferenceKind(request.modelId) !== "visual" || request.visualPolishMode !== "reference-anchor"
+      || record.polishMode !== "reference-anchor") return false;
+  } else if (record.featureProtection != null) return false;
   if (record.status === "disabled") return record.enabled === false;
   if (record.status === "failed") return record.enabled === true && (record.method == null || record.method === "visual-reference-local-redraw");
   const box = (value: unknown, integer = false): value is number[] => Array.isArray(value) && value.length === 4
@@ -265,7 +276,7 @@ export function validVisualPolishResult(value: unknown, request: IdentityRequest
     && value[2] > value[0] && value[3] > value[1];
   const detailFields = ["detailerVersion", "processingSize", "detailPrompt", "detailNegativePrompt"];
   if (detailFields.some(key => key in record)) {
-    if ((record.detailerVersion !== "masked-face-v1" && record.detailerVersion !== "staged-face-v2") || !box(record.faceBox) || !box(record.cropBox, true)
+    if ((record.detailerVersion !== "masked-face-v1" && record.detailerVersion !== "staged-face-v2" && !protectedFace) || !box(record.faceBox) || !box(record.cropBox, true)
       || !Array.isArray(record.processingSize) || record.processingSize.length !== 2) return false;
     const face = record.faceBox, crop = record.cropBox;
     const width = crop[2] - crop[0], height = crop[3] - crop[1];
@@ -278,7 +289,7 @@ export function validVisualPolishResult(value: unknown, request: IdentityRequest
   }
   const mode = request.visualPolishMode ?? "redraw", passCount = request.visualPolishPasses ?? 1;
   const stagedFields = ["polishMode", "anchorStrength", "alignmentError", "passes", "snapshots"];
-  if (record.detailerVersion === "staged-face-v2") {
+  if (record.detailerVersion === "staged-face-v2" || protectedFace) {
     if (!validVisualPolishMode(mode) || record.polishMode !== mode || !validVisualPolishPasses(passCount)
       || !Array.isArray(record.passes) || record.passes.length !== passCount) return false;
     if (!record.passes.every((pass: unknown, index: number) => {

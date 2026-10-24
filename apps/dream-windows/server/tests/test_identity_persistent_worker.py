@@ -103,6 +103,26 @@ def test_key_invalidates_changed_assets_and_config(fixture, asset):
     assert module.build_compatibility_key({**config, "futureSetting": 1}, payload()) != original
 
 
+def test_parsing_model_content_change_at_same_path_invalidates_warm_session(fixture, tmp_path):
+    config, payload = fixture
+    parser = tmp_path / "parsing_parsenet.pth"
+    parser.write_bytes(b"parse-one")
+    config["faceParsingModel"] = str(parser)
+    module = transport()
+    worker = module.WarmBatchWorker(lambda request: config, session_factory=CpuSession, reset_metrics=lambda: None)
+    worker.run_batch(payload())
+    original_key = module.build_compatibility_key(config, payload())
+    before = parser.stat()
+    parser.write_bytes(b"parse-two")
+    os.utime(parser, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert parser.stat().st_size == before.st_size
+    assert module.build_compatibility_key(config, payload()) != original_key
+    with pytest.raises(module.WorkerRestartRequired):
+        worker.run_batch(payload(1))
+    assert worker.closed
+    assert not Path(payload(1)["items"][0]["outputPath"]).exists()
+
+
 def test_unreadable_asset_directory_fails_closed(fixture, monkeypatch):
     config, payload = fixture
     def denied(*args, **kwargs):

@@ -22,21 +22,28 @@ describe("Dream app shell", () => {
     expect(screen.getByText("演示 / 模拟")).toBeVisible();
   });
 
-  it("surfaces a hardware probe failure and disables generation", async () => {
+  it("keeps the monitoring warning visible while submitting generation after a probe failure", async () => {
     class HardwareFailureProvider extends MockDreamProvider {
       override async getHardware(): Promise<never> {
         throw new Error("Hardware probe failed");
       }
     }
 
+    const provider = new HardwareFailureProvider();
+    const generate = vi.spyOn(provider, "generate");
     render(
-      <DreamProviderContext.Provider value={new HardwareFailureProvider()}>
+      <DreamProviderContext.Provider value={provider}>
         <App />
       </DreamProviderContext.Provider>,
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Hardware probe failed");
-    expect(screen.getByRole("button", { name: "生成图像" })).toBeDisabled();
+    const warning = await screen.findByRole("alert", { name: "硬件监控提示" });
+    expect(warning).toHaveTextContent("Hardware probe failed");
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "生成图像" }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect(warning).toBeVisible();
+    expect(await screen.findByRole("button", { name: "取消生成" })).toBeVisible();
   });
 
   it("keeps the active generation session visible after navigating away and back", async () => {

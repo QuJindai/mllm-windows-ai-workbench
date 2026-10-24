@@ -79,7 +79,7 @@ export function App() {
         clearTimeout(staleTimer);
         if (provider.mode === "backend") {
           staleTimer = setTimeout(() => {
-            if (active) setHardwareError("硬件采样已过期，等待刷新");
+            if (active) setHardwareError(current => current ?? "硬件采样已过期，等待刷新");
           }, Math.max(0, Date.parse(snapshot.sampledAt!) + HARDWARE_MAX_AGE_MS - Date.now()));
         }
       } catch (reason: unknown) {
@@ -107,7 +107,8 @@ export function App() {
       }
     };
     document.addEventListener("visibilitychange", visibilityChanged);
-    void poll();
+    if (document.hidden) visibilityChanged();
+    else void poll();
     return () => {
       active = false;
       controller?.abort();
@@ -132,7 +133,7 @@ export function App() {
     setGenerationPrefill({ ...request, fusionMode: "none", traceLevel: "basic" });
     setRoute("generate");
   };
-  return <div className="dream-app"><TopBar hardware={hardware} loading={hardwareLoading} error={hardwareError} mode={provider.mode} /><div className="workspace-shell"><SideNav items={navigation} active={route} onNavigate={setRoute} /><div className="dream-main"><main className="dream-content" aria-live="polite"><PageHeading title={route === "lab" ? "语义实验室" : current.label} hint={current.hint} /><RoutePage route={route} hardware={hardwareError ? null : hardware} hardwareError={hardwareError} generationPrefill={generationPrefill} identityReplay={identityReplay} onRerun={rerunHistoryItem} onPromoteExperiment={promoteExperiment} /></main></div></div></div>;
+  return <div className="dream-app"><TopBar hardware={hardware} loading={hardwareLoading} error={hardwareError} mode={provider.mode} /><div className="workspace-shell"><SideNav items={navigation} active={route} onNavigate={setRoute} /><div className="dream-main"><main className="dream-content" aria-live="polite"><PageHeading title={route === "lab" ? "语义实验室" : current.label} hint={current.hint} /><RoutePage route={route} hardware={hardware} hardwareError={hardwareError} generationPrefill={generationPrefill} identityReplay={identityReplay} onRerun={rerunHistoryItem} onPromoteExperiment={promoteExperiment} /></main></div></div></div>;
 }
 
 function PageHeading({ title, hint }: { title: string; hint: string }) {
@@ -153,6 +154,6 @@ function RoutePage({ route, hardware, hardwareError, generationPrefill, identity
     {route === "history" && <HistoryPage onRerun={onRerun} />}
     {route === "lab" && <LabPage onPromote={onPromoteExperiment} />}
     {route === "microscope" && <MicroscopePage />}
-    {route === "settings" && <SettingsPage hardware={hardware} />}
+    {route === "settings" && <SettingsPage hardware={hardwareError ? null : hardware} />}
   </>;
 }

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -153,3 +155,95 @@ def test_ram_probe_failure_never_uses_the_persisted_ram_sample(telemetry, monkey
     monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(total=0, available=0))
     with pytest.raises(DreamApiError):
         runtime.hardware()
+
+
+@pytest.mark.parametrize(("error", "category", "cause", "diagnostic"), [
+    (FileNotFoundError(2, "private-path-secret"), "probe_missing", "FileNotFoundError", "errno=2"),
+    (PermissionError(13, "private-path-secret"), "probe_denied", "PermissionError", "errno=13"),
+    (OSError(5, "private-path-secret"), "os_error", "OSError", "errno=5"),
+    (subprocess.TimeoutExpired("private-path-secret", 1.5, stderr="private-path-secret"), "probe_timeout", "TimeoutExpired", "timeout_seconds=1.5"),
+    (subprocess.CalledProcessError(9, "private-path-secret", stderr="private-path-secret"), "probe_exit", "CalledProcessError", "returncode=9"),
+    (subprocess.SubprocessError("private-path-secret"), "subprocess_error", "SubprocessError", ""),
+    (ValueError("private-path-secret" * 1000), "invalid_sample", "ValueError", ""),
+    (psutil.AccessDenied(123, "private-path-secret"), "system_probe_error", "AccessDenied", ""),
+])
+def test_failed_cached_sample_logs_once_with_safe_diagnostics_and_keeps_api_generic(telemetry, caplog, error, category, cause, diagnostic):
+    runtime, state = telemetry
+    state["error"] = error
+    client = TestClient(create_app(config=runtime.config, runtime=runtime))
+    with caplog.at_level(logging.WARNING, logger="hardware_telemetry"):
+        for _ in range(5):
+            response = client.get("/api/hardware")
+            assert response.status_code == 503
+            assert response.json()["code"] == "HARDWARE_TELEMETRY_UNAVAILABLE"
+            assert response.json()["retryable"] is True
+            assert "private-path-secret" not in response.text
+            assert "gpuUtil" not in response.json()
+        records = [record for record in caplog.records if record.name == "hardware_telemetry"]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert f"category={category}" in message and f"cause={cause}" in message
+        assert diagnostic in message
+        assert "private-path-secret" not in message and len(message) < 256
+        assert records[0].exc_info is None
+        assert len(state["calls"]) == 1
+        state["now"] = 13.0
+        assert client.get("/api/hardware").status_code == 503
+        assert len([record for record in caplog.records if record.name == "hardware_telemetry"]) == 2
+        state["now"] = 16.0
+        state["error"] = None
+        assert client.get("/api/hardware").status_code == 200
+        assert len([record for record in caplog.records if record.name == "hardware_telemetry"]) == 2
+
+
+@pytest.mark.parametrize(("row", "returncode", "cause"), [
+    ("bad,row", 0, "invalid_gpu_row"),
+    ("Live GPU, 6141, N/A, 80, 57, 32.5, 595.95", 0, "invalid_gpu_values"),
+    ("Live GPU, 6141, 1506, 80, 57, 32.5, 595.95", 7, "CalledProcessError"),
+])
+def test_invalid_driver_result_logs_a_specific_safe_cause(telemetry, monkeypatch, caplog, row, returncode, cause):
+    runtime, _ = telemetry
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, returncode, row, "private-stderr\n" * 10000))
+    with caplog.at_level(logging.WARNING, logger="hardware_telemetry"), pytest.raises(DreamApiError):
+        runtime.hardware()
+    records = [record for record in caplog.records if record.name == "hardware_telemetry"]
+    assert len(records) == 1
+    assert f"cause={cause}" in records[0].getMessage()
+    assert "private-stderr" not in records[0].getMessage()
+    assert len(records[0].getMessage()) < 256
+
+
+def test_telemetry_failure_does_not_replace_generation_validation_or_operations_guard(telemetry, monkeypatch):
+    runtime, state = telemetry
+    submitted = []
+    monkeypatch.setattr(runtime.job_runner, "submit", lambda request: submitted.append(request) or {"id": "test-job"})
+    state["error"] = FileNotFoundError("missing probe")
+    client = TestClient(create_app(config=runtime.config, runtime=runtime))
+    assert client.get("/api/hardware").status_code == 503
+    monkeypatch.setattr(shutil, "disk_usage", lambda _: SimpleNamespace(free=10 * 1024**3))
+    missing = client.post("/api/generate", json={"prompt": "mountain lake", "modelId": "missing", "seed": 42})
+    assert missing.json()["code"] == "MODEL_NOT_FOUND"
+    monkeypatch.setattr(shutil, "disk_usage", lambda _: SimpleNamespace(free=1024**3))
+    blocked = client.post("/api/generate", json={"prompt": "mountain lake", "modelId": "model", "seed": 42})
+    assert blocked.status_code == 507
+    assert blocked.json()["code"] == "DISK_SPACE_LOW"
+    assert submitted == []
+    monkeypatch.setattr(shutil, "disk_usage", lambda _: SimpleNamespace(free=10 * 1024**3))
+    accepted = client.post("/api/generate", json={"prompt": "mountain lake", "modelId": "model", "seed": 42})
+    assert accepted.status_code == 200 and accepted.json()["id"] == "test-job"
+    assert len(submitted) == 1 and submitted[0].model_id == "model"
+
+
+def test_concurrent_failed_reads_share_one_probe_and_one_warning(telemetry, caplog):
+    runtime, state = telemetry
+    state["error"] = subprocess.TimeoutExpired("nvidia-smi", 1.5)
+
+    def read(_):
+        with pytest.raises(DreamApiError) as failure:
+            runtime.hardware()
+        return failure.value.code
+
+    with caplog.at_level(logging.WARNING, logger="hardware_telemetry"), ThreadPoolExecutor(max_workers=8) as pool:
+        assert list(pool.map(read, range(8))) == ["HARDWARE_TELEMETRY_UNAVAILABLE"] * 8
+    assert len(state["calls"]) == 1
+    assert len([record for record in caplog.records if record.name == "hardware_telemetry"]) == 1

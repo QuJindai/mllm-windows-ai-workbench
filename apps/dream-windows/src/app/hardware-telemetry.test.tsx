@@ -7,6 +7,8 @@ import { MockDreamProvider } from "../providers/MockDreamProvider";
 import { TopBar } from "./components/TopBar";
 import { MicroscopePage } from "./pages/MicroscopePage";
 import type { HardwareSnapshot } from "../domain/hardware";
+import modelsFixture from "../fixtures/models.json";
+import type { GenerationRequest } from "../domain/generation";
 
 const sample = (gpuUtil = 80) => ({
   gpuName: "NVIDIA RTX 1000 Ada Generation Laptop GPU", gpuUtil,
@@ -21,11 +23,17 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 const header = () => within(screen.getByRole("banner"));
 const advance = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 
-function network(read: (init: RequestInit) => Promise<Response>) {
+function network(read: (init: RequestInit) => Promise<Response>, submit?: (request: GenerationRequest) => Response) {
   const requests: RequestInit[] = [];
+  let submittedRequest: GenerationRequest | undefined;
   vi.stubGlobal("fetch", vi.fn((path: string, init: RequestInit) => {
     if (path === "/api/hardware") { requests.push(init); return read(init); }
-    if (path === "/api/models") return Promise.resolve(response([]));
+    if (path === "/api/models") return Promise.resolve(response([modelsFixture[0]]));
+    if (path === "/api/generate" && submit) {
+      submittedRequest = JSON.parse(String(init.body)) as GenerationRequest;
+      return Promise.resolve(submit(submittedRequest));
+    }
+    if (path === "/api/jobs/test-job/cancel") return Promise.resolve(response({ id: "test-job", request: submittedRequest, state: "cancelled", progress: 0, message: "已取消生成" }));
     throw new Error(`Unexpected request: ${path}`);
   }));
   return requests;
@@ -63,11 +71,14 @@ describe("GUI-02 hardware acquisition to shell", () => {
     expect(screen.getByRole("banner").querySelector("time")).toHaveAttribute("datetime", "2026-10-11T08:00:03.000Z");
     expect(requests).toHaveLength(2);
     expect(requests[0].cache).toBe("no-store");
+    expect(screen.getByText("提交后由后端检查生成条件；硬件采样不代表推理已就绪。")).toBeVisible();
   });
 
-  it("clears failed readings and recovers on a later poll without fake zeroes", async () => {
+  it("keeps a failed sample explicitly stale, submits and recovers without fake zeroes", async () => {
     let failed = false;
-    network(async () => failed ? response({ code: "HARDWARE_TELEMETRY_UNAVAILABLE", message: "硬件读取失败" }, 503) : response(sample()));
+    const submitted: GenerationRequest[] = [];
+    network(async () => failed ? response({ code: "HARDWARE_TELEMETRY_UNAVAILABLE", message: "硬件读取失败" }, 503) : response(sample()),
+      request => { submitted.push(request); return response({ id: "test-job" }); });
     await mount();
     failed = true;
     await advance(3000);
@@ -75,22 +86,40 @@ describe("GUI-02 hardware acquisition to shell", () => {
     expect(header().queryByText("0%")).not.toBeInTheDocument();
     expect(header().getByText("硬件不可用")).toBeVisible();
     expect(header().getByRole("meter", { name: "GPU 使用率" })).not.toHaveAttribute("aria-valuenow");
-    expect(screen.getByRole("button", { name: "生成图像" })).toBeDisabled();
+    const warning = screen.getByRole("alert", { name: "硬件监控提示" });
+    expect(warning).toHaveTextContent("当前硬件状态未知");
+    expect(warning).toHaveTextContent("上次采样已过期");
+    expect(warning.querySelector("time")).toHaveAttribute("datetime", "2026-10-11T08:00:00.000Z");
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "生成图像" })); });
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0].modelId).toBe("cyberrealistic-xl-v10-standard");
+    expect(warning).toBeVisible();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "取消生成" })); });
     failed = false;
     await advance(3000);
     expect(header().getByText("80%")).toBeVisible();
+    expect(screen.queryByRole("alert", { name: "硬件监控提示" })).not.toBeInTheDocument();
   });
 
   it("bounds a hanging request, prevents overlap and ignores its late result", async () => {
     let complete!: (value: Response) => void;
-    const requests = network(() => new Promise((resolve) => { complete = resolve; }));
+    let blocked = true;
+    const requests = network(() => blocked ? new Promise((resolve) => { complete = resolve; }) : Promise.resolve(response(sample(35))));
     await mount();
     await advance(12000);
     expect(requests).toHaveLength(1);
     expect(requests[0].signal?.aborted).toBe(true);
     expect(header().getByText("硬件不可用")).toBeVisible();
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
     await act(async () => { complete(response(sample(99))); });
     expect(header().queryByText("99%")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("超时");
+    blocked = false;
+    await advance(3000);
+    expect(requests).toHaveLength(2);
+    expect(header().getByText("35%")).toBeVisible();
+    expect(screen.queryByRole("alert", { name: "硬件监控提示" })).not.toBeInTheDocument();
   });
 
   it("pauses hidden tabs and immediately refreshes on return", async () => {
@@ -101,6 +130,8 @@ describe("GUI-02 hardware acquisition to shell", () => {
     await advance(60000);
     expect(requests).toHaveLength(1);
     expect(header().queryByText("80%")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("暂停");
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     await act(async () => { fireEvent(document, new Event("visibilitychange")); });
     expect(requests).toHaveLength(2);
@@ -122,6 +153,8 @@ describe("GUI-02 hardware acquisition to shell", () => {
     await mount();
     expect(header().queryByText("80%")).not.toBeInTheDocument();
     expect(header().getByText("硬件不可用")).toBeVisible();
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("当前硬件状态未知");
   });
 
   it("keeps a real idle zero and demo data distinguishable", async () => {
@@ -164,6 +197,36 @@ describe("GUI-02 hardware acquisition to shell", () => {
     await advance(10000);
     expect(header().queryByText("80%")).not.toBeInTheDocument();
     expect(header().getByText("硬件不可用")).toBeVisible();
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("上次采样已过期");
+  });
+
+  it("allows submission before the first sample and preserves backend preflight rejection", async () => {
+    const submitted: GenerationRequest[] = [];
+    network(() => new Promise(() => {}), request => {
+      submitted.push(request);
+      return response({ code: "DISK_SPACE_LOW", message: "磁盘空间不足，拒绝生成" }, 507);
+    });
+    await mount();
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "生成图像" })); });
+    expect(submitted).toHaveLength(1);
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("当前硬件状态未知");
+    expect(screen.getByText("DISK_SPACE_LOW: 磁盘空间不足，拒绝生成")).toBeVisible();
+    expect(screen.queryByRole("progressbar", { name: "生成进度" })).not.toBeInTheDocument();
+  });
+
+  it("starts hidden with a paused warning and no probe, then refreshes on return", async () => {
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const requests = network(async () => response(sample()));
+    await mount();
+    expect(requests).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("暂停");
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+    expect(requests).toHaveLength(1);
+    expect(header().getByText("80%")).toBeVisible();
   });
 
   it.each([true, false])("keeps the complete getHardware schema compatible with Microscope (available=%s)", async (available) => {

@@ -2,7 +2,8 @@
 param(
     [switch]$Build,
     [switch]$OpenBrowser,
-    [int]$Port = 8866,
+    [ValidateRange(1, 65535)]
+    [int]$Port = 8766,
     [string]$EngineExe = ''
 )
 

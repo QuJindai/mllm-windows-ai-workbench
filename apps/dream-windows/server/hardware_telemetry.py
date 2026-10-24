@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import math
 import subprocess
 import threading
@@ -14,6 +15,42 @@ import psutil
 from config import DreamServerConfig
 from errors import DreamApiError
 from research_traces import InvalidArtifact, read_bounded_json
+
+
+logger = logging.getLogger(__name__)
+
+
+class _InvalidSample(ValueError):
+    """Only fixed, non-sensitive validation codes are used as messages."""
+
+
+def _log_sample_failure(error: Exception) -> None:
+    # Never format the exception: OS paths, commands and driver stderr can be private.
+    cause = type(error).__name__[:64]
+    if isinstance(error, subprocess.TimeoutExpired):
+        category = "probe_timeout"
+    elif isinstance(error, FileNotFoundError):
+        category = "probe_missing"
+    elif isinstance(error, PermissionError):
+        category = "probe_denied"
+    elif isinstance(error, subprocess.CalledProcessError):
+        category = "probe_exit"
+    elif isinstance(error, subprocess.SubprocessError):
+        category = "subprocess_error"
+    elif isinstance(error, OSError):
+        category = "os_error"
+    elif isinstance(error, psutil.Error):
+        category = "system_probe_error"
+    else:
+        category = "invalid_sample"
+        if isinstance(error, _InvalidSample):
+            cause = str(error)
+    diagnostics = []
+    for attribute, label in (("errno", "errno"), ("returncode", "returncode"), ("timeout", "timeout_seconds")):
+        value = getattr(error, attribute, None)
+        if type(value) in (int, float) and -1e9 < value < 1e9:
+            diagnostics.append(f"{label}={value:g}")
+    logger.warning("Hardware telemetry failed: category=%s cause=%s %s", category, cause, " ".join(diagnostics))
 
 
 def _number(value: str) -> float | None:
@@ -43,8 +80,9 @@ class HardwareTelemetry:
                 self._snapshot = None
                 try:
                     self._snapshot = self._sample()
-                except (OSError, subprocess.SubprocessError, ValueError, psutil.Error):
-                    pass
+                except (OSError, subprocess.SubprocessError, ValueError, psutil.Error) as error:
+                    # Log once for this failed cached sample, not once per API caller.
+                    _log_sample_failure(error)
                 self._expires_at = time.monotonic() + self.CACHE_SECONDS
             if self._snapshot is None:
                 raise DreamApiError(
@@ -64,18 +102,18 @@ class HardwareTelemetry:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
-            raise ValueError("NVIDIA query failed")
+            raise subprocess.CalledProcessError(result.returncode, "nvidia-smi")
         rows = list(csv.reader(result.stdout.strip().splitlines()))
         if len(rows) != 1 or len(rows[0]) != 7:
-            raise ValueError("Invalid NVIDIA telemetry row")
+            raise _InvalidSample("invalid_gpu_row")
         name, total, used, util, temperature, power, driver = (cell.strip() for cell in rows[0])
         total_vram, used_vram, gpu_util = _number(total), _number(used), _number(util)
         if (not name or name in {"N/A", "[N/A]"} or total_vram is None or total_vram <= 0
                 or used_vram is None or used_vram > total_vram or gpu_util is None or gpu_util > 100):
-            raise ValueError("Required GPU telemetry is unavailable")
+            raise _InvalidSample("invalid_gpu_values")
         ram = psutil.virtual_memory()
         if not (0 <= ram.available <= ram.total and ram.total > 0):
-            raise ValueError("Required RAM telemetry is unavailable")
+            raise _InvalidSample("invalid_ram_values")
 
         if self._cpu is None:
             try:

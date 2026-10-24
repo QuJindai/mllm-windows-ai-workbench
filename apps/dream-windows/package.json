@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "web": "powershell -ExecutionPolicy Bypass -File ../../scripts/run_dream_web.ps1",
-    "web:build": "powershell -ExecutionPolicy Bypass -File ../../scripts/run_dream_web.ps1 -Build -OpenBrowser",
+    "web": "pwsh -NoProfile -File ../../scripts/run_dream_web.ps1",
+    "web:build": "pwsh -NoProfile -File ../../scripts/run_dream_web.ps1 -Build -OpenBrowser",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",

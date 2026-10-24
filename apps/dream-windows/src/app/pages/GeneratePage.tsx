@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { GenerationBatchItem, GenerationJob, GenerationPreset, GenerationRequest } from "../../domain/generation";
 import type { HardwareSnapshot } from "../../domain/hardware";
+import { isFreshHardware } from "../../domain/hardware";
 import type { ModelRecord } from "../../domain/models";
 import { useDreamProvider } from "../providers";
 import { DeleteImageButton } from "../components/DeleteImageButton";
@@ -150,8 +151,13 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
   const [error, setError] = useState<string | null>(null);
   const nextRunId = useRef(0);
   const activeRun = useRef<QueueRun | null>(null);
-  const hardwareReady = hardware === undefined || Boolean(hardware?.cudaReady && !hardwareError);
-  const hardwareUnavailable = hardware !== undefined && !hardwareReady;
+  // Monitoring is advisory; only generation preflight can establish inference readiness.
+  const telemetryUnknown = Boolean(hardwareError) || (!hardware && (hardware !== undefined || provider.mode === "backend"))
+    || Boolean(hardware && provider.mode === "backend" && (hardware.truth !== "observed" || !isFreshHardware(hardware)));
+  const telemetryWarning = telemetryUnknown
+    ? `${hardwareError ?? "尚无有效硬件采样"}。当前硬件状态未知；可提交生成，由后端执行安全预检。`
+    : hardware?.cudaReady === false ? "硬件采样报告 CUDA 不可用；可提交生成，由后端执行安全预检。" : null;
+  const staleSample = telemetryUnknown && hardware?.truth === "observed" && Number.isFinite(Date.parse(hardware.sampledAt ?? "")) ? hardware : null;
   const selectedModel = models.find((item) => item.id === request.modelId);
   const recommendedSteps = selectedModel?.generationDefaults?.steps;
   const qualityWarning = generationQualityWarning(
@@ -290,7 +296,7 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!hardwareReady || qualityWarning || !request.prompt.trim() || !request.modelId || activeRun.current || queueState.status === "running" || queueState.status === "stopping") return;
+    if (loadingModels || qualityWarning || !request.prompt.trim() || !request.modelId || activeRun.current || queueState.status === "running" || queueState.status === "stopping") return;
     setError(null);
     const entries: QueueEntry[] = Array.from({ length: Math.max(1, Math.min(8, batchCount)) }, (_, index) => {
       const seed = request.seed === "random" ? "random" : request.seed + index;
@@ -373,15 +379,15 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
             {(request.traceLevel === "h6" || request.traceLevel === "h7") && <p className="muted-copy">研究采集增加额外前向计算和文件写入，耗时、内存开销高于基础生成。H6 采集条件影响与潜空间；H7 还采集自注意力和交叉注意力。研究采集的宽、高各不超过 1024 像素，对应最多 128 × 128 潜空间网格。需要升级后的研究引擎；结果以实际产物为准。</p>}
             <label className="field-label">批量数量<input aria-label="批量数量" type="number" min="1" max="8" value={batchCount} onChange={(event) => setBatchCount(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></label>
           </div>
-          <div className="form-footer"><div className="request-meta"><span>{selectedModel?.architecture ?? "—"}</span><span>{selectedModel?.format ?? "—"}</span><span className={selectedModel?.verified ? "text-success" : "text-muted"}>{selectedModel?.verified ? "已验证" : "不可用"}</span><span>{batchCount > 1 ? `串行队列 ${batchCount} 张` : "单张生成"}</span></div><div className="generate-action-group"><button className="primary-button generate-submit" type="submit" disabled={loadingModels || hardwareUnavailable || Boolean(qualityWarning) || !request.prompt.trim() || !request.modelId || busy}>{stopping ? "正在停止…" : running ? "生成中…" : "生成图像"}</button>{running && <button className="danger-button" type="button" aria-label="取消生成" onClick={() => void cancelActive()}>取消生成</button>}</div></div>
+          <div className="form-footer"><div className="request-meta"><span>{selectedModel?.architecture ?? "—"}</span><span>{selectedModel?.format ?? "—"}</span><span className={selectedModel?.verified ? "text-success" : "text-muted"}>{selectedModel?.verified ? "已验证" : "不可用"}</span><span>{batchCount > 1 ? `串行队列 ${batchCount} 张` : "单张生成"}</span></div><div className="generate-action-group"><button className="primary-button generate-submit" type="submit" disabled={loadingModels || Boolean(qualityWarning) || !request.prompt.trim() || !request.modelId || busy}>{stopping ? "正在停止…" : running ? "生成中…" : "生成图像"}</button>{running && <button className="danger-button" type="button" aria-label="取消生成" onClick={() => void cancelActive()}>取消生成</button>}</div></div>
           {qualityWarning && <div role="alert" className="quality-warning">{qualityWarning}</div>}
-          {hardwareUnavailable && <div role="alert" className="error-panel">{hardwareError ?? (hardware ? "CUDA 不可用" : "硬件状态不可用")}</div>}
+          {telemetryWarning && <div role="alert" aria-label="硬件监控提示" className="quality-warning">{telemetryWarning}{staleSample && <div>上次采样已过期（非当前状态）：<time dateTime={staleSample.sampledAt}>{new Date(staleSample.sampledAt!).toLocaleTimeString("zh-CN", { hour12: false })}</time> · GPU {staleSample.gpuUtil}% · 显存 {staleSample.vramUsedMiB} / {staleSample.vramTotalMiB} MiB</div>}</div>}
           {error && <div role="alert" className="error-panel">{error}</div>}
         </form>
         {queue.length > 0 && <BatchQueue entries={queue} stopped={stopping || queueState.status === "stopped"} />}
       </div>
       <GenerationPreview job={visibleJob} results={results} providerMode={provider.mode} onDelete={id => provider.deleteHistory(id)} />
-      <GenerationInspector job={visibleJob} hardwareReady={hardwareReady} hardwareError={hardwareError ?? null} providerMode={provider.mode} queue={queue} />
+      <GenerationInspector job={visibleJob} providerMode={provider.mode} queue={queue} />
     </section>
   );
 }
@@ -420,7 +426,7 @@ function GenerationPreview({ job, results, providerMode, onDelete }: { job: Gene
   </section>;
 }
 
-function GenerationInspector({ job, hardwareReady, hardwareError, providerMode, queue }: { job: GenerationJob | null; hardwareReady: boolean; hardwareError: string | null; providerMode: "mock" | "backend"; queue: QueueEntry[] }) {
-  if (!job) return <aside className="surface-card generation-inspector"><div className="section-title">运行时检查器 <span className="truth-label truth-unavailable">等待中</span></div><div className="empty-state"><span className="empty-icon">◌</span><span>生成状态会显示在这里。</span></div><div className="inspector-note"><span className={`truth-label ${hardwareReady ? (providerMode === "mock" ? "truth-demo" : "truth-observed") : "truth-unavailable"}`}>{hardwareReady ? (providerMode === "mock" ? "演示" : "就绪") : "硬件"}</span><span>{hardwareReady ? (providerMode === "mock" ? "模拟生命周期仅用于测试。" : "原生 CUDA 生成队列已就绪。") : hardwareError ?? "CUDA 不可用"}</span></div></aside>;
+function GenerationInspector({ job, providerMode, queue }: { job: GenerationJob | null; providerMode: "mock" | "backend"; queue: QueueEntry[] }) {
+  if (!job) return <aside className="surface-card generation-inspector"><div className="section-title">运行时检查器 <span className="truth-label truth-unavailable">等待中</span></div><div className="empty-state"><span className="empty-icon">◌</span><span>生成状态会显示在这里。</span></div><div className="inspector-note"><span className={`truth-label ${providerMode === "mock" ? "truth-demo" : "truth-unavailable"}`}>{providerMode === "mock" ? "演示" : "待预检"}</span><span>{providerMode === "mock" ? "模拟生命周期仅用于测试。" : "提交后由后端检查生成条件；硬件采样不代表推理已就绪。"}</span></div></aside>;
   return <aside className="surface-card generation-inspector"><div className="section-title">运行时检查器 <span className={`truth-label ${job.state === "complete" ? "truth-observed" : job.state === "failed" ? "truth-unavailable" : "truth-derived"}`}>{generationStatusLabel(job.state)}</span></div><div className="job-state" role={job.state === "failed" ? "alert" : undefined}><strong>{generationStatusLabel(job.state)}</strong><span>{job.error ?? job.message}</span></div><div className="progress-track" role="progressbar" aria-label="生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job.progress}><span style={{ width: `${job.progress}%` }} /></div><div className="progress-reading"><span>当前任务</span><strong>{job.progress}%</strong></div><div className="inspector-grid"><span>后端</span><strong>{String(job.result?.metadata?.backend ?? "CUDA / stable-diffusion.cpp")}</strong><span>步数</span><strong>{job.request.steps}</strong><span>CFG</span><strong>{job.request.cfg}</strong><span>队列</span><strong>{queue.length ? `${queue.filter((entry) => entry.state === "complete").length}/${queue.length}` : "1/1"}</strong></div>{job.result ? <div className="result-wrap"><img src={job.result.imageUrl} alt={providerMode === "mock" ? "模拟生成结果详情" : "生成结果详情"} /><div className="result-caption"><span>结果已就绪</span><span className={`truth-label ${providerMode === "mock" ? "truth-demo" : "truth-observed"}`}>{providerMode === "mock" ? "演示数据" : "实时文件"}</span></div></div> : <div className="inspector-note"><span className="truth-label truth-derived">本地队列</span><span>正在轮询类型化提供方接口。</span></div>}</aside>;
 }

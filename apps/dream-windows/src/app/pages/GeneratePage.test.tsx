@@ -277,12 +277,50 @@ describe("Generate page", () => {
     expect(screen.getByRole("button", { name: "生成图像" })).toBeDisabled();
   });
 
-  it("disables generation and explains when CUDA is unavailable", async () => {
+  it("warns when CUDA is unavailable but leaves the readiness decision to generation preflight", async () => {
     const hardware: HardwareSnapshot = { ...(hardwareFixture as HardwareSnapshot), cudaReady: false, truth: "unavailable" };
-    render(<DreamProviderContext.Provider value={new MockDreamProvider()}><GeneratePage hardware={hardware} /></DreamProviderContext.Provider>);
+    const provider = new MockDreamProvider();
+    const generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage hardware={hardware} /></DreamProviderContext.Provider>);
 
-    expect(await screen.findByRole("button", { name: "生成图像" })).toBeDisabled();
+    const submit = await screen.findByRole("button", { name: "生成图像" });
+    await waitFor(() => expect(submit).toBeEnabled());
     expect(screen.getByRole("alert")).toHaveTextContent("CUDA 不可用");
+    fireEvent.click(submit);
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("alert")).toHaveTextContent("CUDA 不可用");
+  });
+
+  it("keeps request validation active while monitoring is unavailable, including direct form submit", async () => {
+    const provider = new MockDreamProvider();
+    const generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage hardware={null} hardwareError="采样超时" /></DreamProviderContext.Provider>);
+    const submit = await screen.findByRole("button", { name: "生成图像" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("Steps"), { target: { value: "2" } });
+    expect(submit).toBeDisabled();
+    fireEvent.submit(submit.closest("form")!);
+    expect(generate).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Steps"), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText("正向提示词"), { target: { value: "   " } });
+    expect(submit).toBeDisabled();
+    fireEvent.submit(submit.closest("form")!);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("does not submit before models load or when the model list is empty despite missing monitoring", async () => {
+    let resolveModels!: (models: ModelRecord[]) => void;
+    const provider = new MockDreamProvider();
+    vi.spyOn(provider, "listModels").mockImplementation(() => new Promise(resolve => { resolveModels = resolve; }));
+    const generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage hardware={null} /></DreamProviderContext.Provider>);
+    const submit = screen.getByRole("button", { name: "生成图像" });
+    fireEvent.submit(submit.closest("form")!);
+    expect(generate).not.toHaveBeenCalled();
+    await act(async () => { resolveModels([]); });
+    expect(submit).toBeDisabled();
+    fireEvent.submit(submit.closest("form")!);
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it("renders a provider error when a generation job fails", async () => {

@@ -21,6 +21,7 @@ VISUAL_DEFAULTS = {
     "modelId": VISUAL_MODEL_ID, "width": 768, "height": 768,
     "steps": 30, "cfg": 5.0, "identityStrength": .8, "structureStrength": 0,
     "faceLoraStrength": 0, "facePolish": False, "animeProfileId": None, "loraId": "",
+    "visualPolishMode": "redraw", "visualAnchorStrength": .95, "visualPolishPasses": 1,
 }
 
 
@@ -101,6 +102,9 @@ class IdentityProfiles:
                         # Preserve the legacy public defaults (e.g. facePolish)
                         # while retaining old feature keys and on-disk records.
                         record["defaults"] = {key: value for key, value in defaults.model_dump().items() if key not in {"referenceId", "faceIndex"}}
+                    else:
+                        for key in ('visualPolishMode', 'visualAnchorStrength', 'visualPolishPasses'):
+                            record['defaults'].setdefault(key, getattr(defaults, key))
                 if record["state"] == "preparing":
                     record.update(state="failed", error="建档被服务重启中断，请重新创建档案")
                     self._save(record)

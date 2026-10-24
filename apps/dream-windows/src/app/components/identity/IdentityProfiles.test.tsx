@@ -481,7 +481,8 @@ describe("named profiles and serial batches through HTTP", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成人物图像" }));
     await screen.findByRole("button", { name: "取消批次" });
     expect(posts("/api/identity/batches")).toHaveLength(1);
-    expect(posts("/api/identity/batches")[0].body).toEqual({ profileId: "person-a", request: { ...request, modelId: "realistic-vision-v5.1-faceid", seed: "random", facePolish: false, faceRestoreStrength: 1 }, count: 2, stepValues: [20, 28], previewEvery: 5 });
+    expect(posts("/api/identity/batches")[0].body).toEqual({ profileId: "person-a", request: { ...request, modelId: "realistic-vision-v5.1-faceid", seed: "random", facePolish: false, faceRestoreStrength: 1,
+      visualPolishMode: "redraw", visualAnchorStrength: .95, visualPolishPasses: 1 }, count: 2, stepValues: [20, 28], previewEvery: 5 });
     expect(posts("/api/identity/generate")).toHaveLength(0);
     expect(screen.getByLabelText("选择人物档案")).toBeDisabled();
     expect(screen.getByLabelText("生成张数")).toBeDisabled();

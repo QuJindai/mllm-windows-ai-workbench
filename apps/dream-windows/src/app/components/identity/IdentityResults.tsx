@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { identityJobSeed, identityModelName, identityReferenceKind, identityStateLabels, isIdentityJobActive } from "../../../domain/identity";
-import type { IdentityBatch, IdentityJob, IdentityProfile, IdentityReference } from "../../../domain/identity";
+import type { IdentityBatch, IdentityJob, IdentityProfile, IdentityReference, VisualPolishSnapshot } from "../../../domain/identity";
 import { identityApi } from "../../../providers/identity-api";
 import { DeleteImageButton } from "../DeleteImageButton";
 import { useDeletedImageIds } from "../../image-deletion";
@@ -14,8 +14,10 @@ export function ResultPreview({ imageUrl, label = "生成结果" }: { imageUrl: 
   </figure>;
 }
 
+const polishStageLabels = { anchor: "对齐预览", harmonize: "第一轮融合", detail: "第二轮细化" } as const;
+
 function FacePolishPreview({ job }: { job: IdentityJob & { result: NonNullable<IdentityJob["result"]> } }) {
-  const [showOriginal, setShowOriginal] = useState(false);
+  const [selection, setSelection] = useState<"original" | "final" | VisualPolishSnapshot["kind"]>("final");
   const polish = job.result.metadata.facePolish;
   const visual = identityReferenceKind(job.request.modelId) === "visual";
   const operation = visual ? "局部重绘" : "修脸";
@@ -33,16 +35,30 @@ function FacePolishPreview({ job }: { job: IdentityJob & { result: NonNullable<I
   // revision avoids that cache entry without busting the cache on every poll/render.
   const [path, fragment] = job.result.imageUrl.split("#", 2);
   const finalUrl = `${path}${path.includes("?") ? "&" : "?"}identityResult=${encodeURIComponent(`${job.id}:${polish?.status}`)}${fragment ? `#${fragment}` : ""}`;
-  const imageUrl = failed || showOriginal ? originalUrl : finalUrl;
-  const label = failed ? "保留的原图" : showOriginal ? "生成原图" : resultLabel;
+  const staged = visual && completed && polish?.detailerVersion === "staged-face-v2";
+  const snapshots = staged ? polish.snapshots ?? [] : [];
+  const snapshot = snapshots.find(stage => stage.kind === selection);
+  const showOriginal = selection === "original";
+  const imageUrl = failed || showOriginal ? originalUrl : snapshot?.imageUrl ?? finalUrl;
+  const label = failed ? "保留的原图" : showOriginal ? "生成原图" : snapshot ? polishStageLabels[snapshot.kind] : resultLabel;
   return <section className="identity-polish-result" aria-label={`原图与${resultLabel} ${job.id}`}>
     {failed ? <div className="identity-error identity-polish-failure" role="alert">
       <strong>{operation}失败，已保留原图</strong><p>{polish?.message || "服务未返回具体失败原因。"}</p>
     </div> : <p className="identity-polish-complete">{operation}完成{visual ? " · 当前视觉参考" : polish?.method === "anime-reference-local-redraw" ? ` · ${polish.profileName} · 动漫局部重绘` : ""}</p>}
     {visual && completed && <p className="identity-note">重绘强度 {polish?.denoiseStrength} · {polish?.outsideMaskUnchanged ? "掩膜外像素未改动" : "掩膜外像素有变化"}（服务记录）</p>}
+    {staged && <>
+      <p className="identity-note">模式：{polish.polishMode === "reference-anchor" ? "参考脸对齐" : "局部重绘"} · 已完成 {polish.passes?.length} 轮</p>
+      {polish.polishMode === "reference-anchor" && <p className="identity-note">参考脸融合强度 {polish.anchorStrength} · 几何对齐误差 {polish.alignmentError}（按眼距归一化，仅衡量位置拟合）</p>}
+      <table aria-label="修脸分轮实测记录"><thead><tr><th>轮次</th><th>去噪强度</th><th>实测步数</th><th>实测耗时</th></tr></thead>
+        <tbody>{polish.passes?.map(pass => <tr key={pass.kind}><td>{polishStageLabels[pass.kind]}</td><td>{pass.denoiseStrength}</td><td>{pass.steps}</td><td>{(pass.durationMs / 1000).toFixed(2)} 秒</td></tr>)}</tbody>
+      </table>
+      <p className="identity-note">请对照原图与可用阶段图选择；第二轮不一定更好。</p>
+    </>}
     {completed && <div className="identity-actions" role="group" aria-label="选择结果图像">
-      <button type="button" className="secondary-button" aria-pressed={showOriginal} onClick={() => setShowOriginal(true)}>查看生成原图</button>
-      <button type="button" className="secondary-button" aria-pressed={!showOriginal} onClick={() => setShowOriginal(false)}>查看{resultLabel}</button>
+      <button type="button" className="secondary-button" aria-pressed={showOriginal} onClick={() => setSelection("original")}>查看生成原图</button>
+      {snapshots.map(stage => <button key={stage.kind} type="button" className="secondary-button" aria-pressed={selection === stage.kind}
+        onClick={() => setSelection(stage.kind)}>{polishStageLabels[stage.kind]}</button>)}
+      <button type="button" className="secondary-button" aria-pressed={!showOriginal && !snapshot} onClick={() => setSelection("final")}>查看{resultLabel}</button>
     </div>}
     <ResultPreview key={`${label}:${imageUrl}`} imageUrl={imageUrl} label={label} />
     <div className="identity-actions">

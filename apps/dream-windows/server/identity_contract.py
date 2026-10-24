@@ -25,6 +25,9 @@ class IdentityGenerateRequest(BaseModel):
     facePolish: bool = False
     animeProfileId: str | None = Field(default=None, pattern=r'^anime-[a-f0-9]{24}$')
     animeDenoiseStrength: float = Field(default=.35, ge=.15, le=.65)
+    visualPolishMode: Literal['redraw', 'reference-anchor'] = 'redraw'
+    visualAnchorStrength: float = Field(default=.95, ge=.3, le=1)
+    visualPolishPasses: int = Field(default=1, ge=1, le=2)
     visualPolishPrompt: str = Field(default='', max_length=2000)
     visualPolishNegativePrompt: str = Field(default='', max_length=2000)
     faceRestoreStrength: float = Field(default=1.0, ge=0, le=1)
@@ -37,6 +40,8 @@ class IdentityGenerateRequest(BaseModel):
             raise ValueError('参考采样区间起点必须小于终点')
         if not is_visual_model_id(self.modelId) and (self.referenceStart, self.referenceEnd) != (0., 1.):
             raise ValueError('参考采样区间仅支持视觉参考模型')
+        if not is_visual_model_id(self.modelId) and (self.visualPolishMode != 'redraw' or self.visualPolishPasses != 1):
+            raise ValueError('参考脸对齐与多轮修脸仅支持视觉参考模型')
         if is_visual_model_id(self.modelId):
             if self.animeProfileId:
                 raise ValueError('动漫视觉参考修脸使用当前参考图，请清除混合动漫修脸档案')

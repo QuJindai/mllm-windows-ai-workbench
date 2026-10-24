@@ -30,6 +30,7 @@ from identity_contract import IdentityGenerateRequest
 from identity_models import (is_visual_model_id, visual_restore_model,
                              ILLUSTRIOUS_VISUAL_MODEL_ID, require_identity_model_enabled)
 from identity_persistent_worker import PersistentWorkerClient, PersistentWorkerCancelled
+from identity_stage_artifacts import cleanup_visual_stages, validate_visual_stage, visual_stage_url
 from job_runner import JobRunner
 
 
@@ -76,6 +77,20 @@ class AnimeBinding(BaseModel):
     featureKey: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
+class VisualPolishPass(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    kind: Literal['harmonize', 'detail']
+    denoiseStrength: float = Field(ge=.15, le=.65)
+    steps: int = Field(ge=1)
+    durationMs: int = Field(ge=0)
+
+
+class VisualPolishSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal['anchor', 'harmonize', 'detail']
+    imageUrl: str
+
+
 class FacePolishMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
     enabled: bool
@@ -100,7 +115,13 @@ class FacePolishMetadata(BaseModel):
     cropBox: list[int] | None = Field(default=None,min_length=4,max_length=4)
     denoiseStrength: float | None = Field(default=None,ge=.15,le=.65)
     outsideMaskUnchanged: bool | None = None
-    detailerVersion: Literal['masked-face-v1'] | None = None
+    detailerVersion: Literal['masked-face-v1', 'staged-face-v2'] | None = None
+    polishMode: Literal['redraw', 'reference-anchor'] | None = None
+    passes: list[VisualPolishPass] | None = Field(default=None, min_length=1, max_length=2)
+    anchorStrength: float | None = Field(default=None, ge=.3, le=1)
+    # Geometric fit normalized by eye distance, never identity similarity.
+    alignmentError: float | None = Field(default=None, ge=0, le=.18)
+    snapshots: list[VisualPolishSnapshot] | None = Field(default=None, min_length=1, max_length=3)
     processingSize: list[Annotated[int, Field(ge=128, le=768, multiple_of=8)]] | None = Field(default=None, min_length=2, max_length=2)
     detailPrompt: str | None = Field(default=None, max_length=2000)
     detailNegativePrompt: str | None = Field(default=None, max_length=2000)
@@ -696,6 +717,9 @@ class IdentityService:
         original_error = self._remove_original(job_id)
         if original_error:
             errors.append(original_error)
+        stage_error = self._remove_stages(job_id)
+        if stage_error:
+            errors.append(stage_error)
         for path in paths:
             if path is None:
                 continue
@@ -707,6 +731,15 @@ class IdentityService:
                 errors.append("未完成输出清理失败，文件可能仍存在，请检查文件占用、路径或权限")
         return "；".join(dict.fromkeys(errors)) or None
 
+    def _remove_stages(self, job_id: str) -> str | None:
+        try:
+            cleanup_visual_stages({'dreamRoot': str(self.config.dream_root), 'jobId': job_id})
+        except (OSError, ValueError):
+            import logging
+            logging.getLogger(__name__).exception("人物任务 %s 阶段图片清理失败", job_id)
+            return "阶段图片清理失败，请检查存储路径、占用或权限"
+        return None
+
     def _validate_original(self, job_id: str, request: dict[str, Any]) -> Path:
         path = self._original_path(job_id)
         if path.stat().st_size > 16 * 1024 * 1024:
@@ -717,7 +750,13 @@ class IdentityService:
             image.verify()
         return path
 
-    def _validate_face_polish(self, job_id: str, request: dict[str, Any], metadata: dict[str, Any]) -> None:
+    def _validate_face_polish(self, job_id: str, request: dict[str, Any], metadata: dict[str, Any],
+                              *, validate_artifacts: bool = True) -> None:
+        """Always bind the receipt to its request; publication also checks every file.
+
+        Read endpoints validate their requested file separately, so loss of an
+        unrelated stage cannot hide an intact original or another saved stage.
+        """
         value = metadata.get("facePolish")
         if value is None and not request.get("facePolish", False):
             # Old workers/results did not have postprocessing metadata.
@@ -728,15 +767,27 @@ class IdentityService:
             raise ValueError("人物修复状态与请求不一致")
         if polish.status == "failed" and not (polish.message and polish.message.strip()):
             raise ValueError("人物修复失败缺少原因")
+        if polish.status != 'completed' and (polish.passes is not None or polish.snapshots is not None):
+            raise ValueError('未完成修脸不能宣称部分阶段成功')
         if polish.originalImageUrl is not None:
             if not polish.enabled or polish.originalImageUrl != f"/api/identity/jobs/{job_id}/original":
                 raise ValueError("人物原图地址与任务不一致")
-        if polish.enabled:
+        if polish.enabled and validate_artifacts:
             # A completed repair needs its base original. A failed optional
             # repair may fail before saving one, and must still keep the base.
             if polish.status == "completed" or polish.originalImageUrl is not None:
                 self._validate_original(job_id, request)
         if is_visual_model_id(request.get('modelId')) and polish.enabled:
+            mode = request.get('visualPolishMode', 'redraw')
+            pass_count = request.get('visualPolishPasses', 1)
+            staged = mode == 'reference-anchor' or pass_count == 2
+            staged_fields = {'polishMode', 'passes', 'anchorStrength', 'alignmentError'}
+            if polish.polishMode is not None and polish.polishMode != mode:
+                raise ValueError('修脸模式与请求不一致')
+            if mode != 'reference-anchor' and {'anchorStrength', 'alignmentError'}.intersection(polish.model_fields_set):
+                raise ValueError('局部重绘不能返回参考脸对齐证据')
+            if polish.anchorStrength is not None and polish.anchorStrength != request.get('visualAnchorStrength', .95):
+                raise ValueError('参考脸对齐强度与请求不一致')
             if (polish.method not in (None, 'visual-reference-local-redraw')
                 or any(value is not None for value in (polish.profileId, polish.profileName, polish.swapModel, polish.swapDevice))
                 or (polish.restoreModel is not None and polish.restoreModel != visual_restore_model(request['modelId']))
@@ -766,13 +817,37 @@ class IdentityService:
                 if not (crop[0] <= face[0] and crop[1] <= face[1] and crop[2] >= face[2] and crop[3] >= face[3]):
                     raise ValueError('视觉重绘裁剪区域未包含人脸')
                 detail_fields = {'detailerVersion', 'processingSize', 'detailPrompt', 'detailNegativePrompt'}
-                if detail_fields.intersection(polish.model_fields_set):
+                if staged or detail_fields.intersection(polish.model_fields_set):
                     from identity_visual_polish import detail_prompts, detail_size
-                    if (polish.detailerVersion != 'masked-face-v1'
+                    if (polish.detailerVersion != ('staged-face-v2' if staged else 'masked-face-v1')
                         or polish.processingSize != list(detail_size(crop, face))
                         or (polish.detailPrompt, polish.detailNegativePrompt) != detail_prompts(request)):
                         raise ValueError('蒙版细化参数与请求不一致')
-        elif polish.method == 'visual-reference-local-redraw' or polish.referenceId is not None or polish.faceIndex is not None:
+                if staged:
+                    if polish.polishMode != mode or polish.passes is None or len(polish.passes) != pass_count:
+                        raise ValueError('分阶段修脸缺少完整轮次证据')
+                    expected = [('harmonize', request.get('animeDenoiseStrength', .35)), ('detail', .15)][:pass_count]
+                    for actual, (kind, strength) in zip(polish.passes, expected):
+                        if (actual.kind, actual.denoiseStrength, actual.steps) != (kind, strength, int(30 * strength)):
+                            raise ValueError('分阶段修脸轮次参数与请求不一致')
+                    if mode == 'reference-anchor' and (polish.anchorStrength != request.get('visualAnchorStrength', .95)
+                                                      or polish.alignmentError is None):
+                        raise ValueError('参考脸对齐缺少几何拟合证据')
+                elif staged_fields.intersection(polish.model_fields_set):
+                    raise ValueError('旧单轮重绘不能返回分阶段凭据')
+                if staged or polish.snapshots is not None:
+                    expected_kinds = (['anchor'] if mode == 'reference-anchor' else []) + ['harmonize'] + (['detail'] if pass_count == 2 else [])
+                    if polish.snapshots is None or [snapshot.kind for snapshot in polish.snapshots] != expected_kinds:
+                        raise ValueError('分阶段修脸缺少按顺序保存的图片')
+                    item = {**request, 'jobId': job_id, 'dreamRoot': str(self.config.dream_root)}
+                    for snapshot in polish.snapshots:
+                        if snapshot.imageUrl != visual_stage_url(job_id, snapshot.kind):
+                            raise ValueError('人物阶段图片地址与任务不一致')
+                        if validate_artifacts:
+                            validate_visual_stage(item, snapshot.kind)
+        elif (polish.method == 'visual-reference-local-redraw' or polish.referenceId is not None or polish.faceIndex is not None
+              or polish.detailerVersion == 'staged-face-v2' or any(value is not None for value in
+                  (polish.polishMode, polish.passes, polish.anchorStrength, polish.alignmentError, polish.snapshots))):
             raise ValueError('未请求视觉修脸却返回视觉修脸结果')
         elif polish.status == 'completed' and request.get('animeProfileId'):
             binding = AnimeBinding.model_validate(self._jobs.get(job_id,{}).get('animeBinding'))
@@ -817,7 +892,7 @@ class IdentityService:
                     record.update(state="failed", progress=0, message="任务被服务重启中断", error=error, result=None)
                     atomic_json(path, record)
                 elif record["state"] in {"failed", "cancelled"}:
-                    cleanup_error = self._remove_original(path.stem)
+                    cleanup_error = self._cleanup_incomplete(path.stem)
                     if cleanup_error and cleanup_error not in (record.get("error") or ""):
                         record["error"] = "；".join(filter(None, (record.get("error"), cleanup_error)))
                         atomic_json(path, record)
@@ -1139,6 +1214,33 @@ class IdentityService:
             return copy.deepcopy(list(reversed(self._jobs.values())))
 
     @owned_operation
+    def stage_image(self, job_id: str, kind: str) -> Path:
+        try:
+            visual_stage_url(job_id, kind)
+            record = self.get(job_id)
+            from history_transactions import committed_history_deletions
+            if job_id in committed_history_deletions(self.config.dream_root):
+                raise ValueError('人物结果已删除')
+            with self._lock:
+                durable = read_json(self._job_path(job_id))
+                if (record['state'] != 'complete' or durable.get('id') != job_id or durable.get('state') != 'complete'
+                        or durable.get('result') != record.get('result')):
+                    raise ValueError('人物阶段结果尚未持久保存')
+                request = IdentityGenerateRequest.model_validate(record['request']).model_dump()
+                if IdentityGenerateRequest.model_validate(durable['request']).model_dump() != request:
+                    raise ValueError('人物阶段请求与记录不一致')
+                metadata = copy.deepcopy(record['result']['metadata'])
+                if metadata.get('id') != job_id:
+                    raise ValueError('人物阶段结果编号无效')
+                self._validate_face_polish(job_id, request, metadata, validate_artifacts=False)
+                polish = metadata['facePolish']
+                if polish['status'] != 'completed' or kind not in [snapshot['kind'] for snapshot in polish.get('snapshots', [])]:
+                    raise ValueError('人物阶段图片未登记')
+                return validate_visual_stage({**request, 'jobId': job_id, 'dreamRoot': str(self.config.dream_root)}, kind)
+        except (OSError, ValueError, TypeError, KeyError, DreamApiError) as exc:
+            raise DreamApiError('IDENTITY_STAGE_NOT_FOUND', '人物阶段图片不存在或尚未完成', status_code=404) from exc
+
+    @owned_operation
     def original_image(self, job_id: str) -> Path:
         record = self.get(job_id)
         try:
@@ -1151,7 +1253,7 @@ class IdentityService:
                 metadata = copy.deepcopy(record["result"]["metadata"])
                 if not isinstance(metadata, dict) or metadata.get("id") != job_id:
                     raise ValueError("人物结果元数据无效")
-                self._validate_face_polish(job_id, request, metadata)
+                self._validate_face_polish(job_id, request, metadata, validate_artifacts=False)
                 if metadata["facePolish"]["enabled"] is not True:
                     raise ValueError("人物任务未启用修复")
                 return self._validate_original(job_id, request)

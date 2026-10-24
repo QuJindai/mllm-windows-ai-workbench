@@ -58,6 +58,26 @@ def test_key_allows_only_per_render_changes_and_hashes_reference_bytes(fixture):
     assert module.build_compatibility_key(config, payload()) != original
 
 
+def test_staged_defaults_normalize_to_same_persistent_fingerprint(fixture):
+    config, payload = fixture
+    module = transport()
+    assert module.build_compatibility_key(config, payload()) == module.build_compatibility_key(config,
+        payload(visualPolishMode="redraw", visualAnchorStrength=.95, visualPolishPasses=1))
+
+
+@pytest.mark.parametrize("change", [{"visualPolishMode": "reference-anchor"},
+                                    {"visualAnchorStrength": .8}, {"visualPolishPasses": 2}])
+def test_staged_configuration_changes_invalidate_reuse_and_reject_mixed_batches(fixture, change):
+    config, payload = fixture
+    module = transport()
+    visual = dict(modelId="cyberrealistic-xl-plus-face", structureStrength=0., faceLoraStrength=0.)
+    first, second = payload(**visual), payload(1, **visual, **change)
+    assert module.build_compatibility_key(config, first) != module.build_compatibility_key(config, second)
+    first["items"].extend(second["items"])
+    with pytest.raises(ValueError):
+        module.build_compatibility_key(config, first)
+
+
 @pytest.mark.parametrize("change", [
     {"identityStrength": .3}, {"structureStrength": .3}, {"faceLoraStrength": .2},
     {"loraStrength": .2}, {"faceIndex": 1}, {"width": 768}, {"cfg": 4.},

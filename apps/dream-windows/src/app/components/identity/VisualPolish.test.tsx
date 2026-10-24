@@ -85,7 +85,179 @@ it("offers visual polish OFF by default and submits the current reference with d
   expect(screen.getByText(/重绘参考：当前参考.png/)).toBeVisible();
   expect(screen.getByRole("option", { name: /H6/ })).toBeEnabled();
   expect(screen.getByRole("option", { name: /H7/ })).toBeEnabled();
-  expect(await submit()).toMatchObject({ modelId: visualId, referenceId: "ref-a", faceIndex: 0, facePolish: true, animeProfileId: null, animeDenoiseStrength: .35 });
+  expect(await submit()).toMatchObject({ modelId: visualId, referenceId: "ref-a", faceIndex: 0, facePolish: true, animeProfileId: null, animeDenoiseStrength: .35,
+    visualPolishMode: "redraw", visualAnchorStrength: .95, visualPolishPasses: 1 });
+});
+
+const anchored = { visualPolishMode: "reference-anchor" as const, visualAnchorStrength: .8, visualPolishPasses: 2 as const };
+const stagedRequest = { ...request, ...anchored, animeDenoiseStrength: .25, visualPolishPrompt: "clean eyes", visualPolishNegativePrompt: "blur" };
+const stagedSnapshots = ["anchor", "harmonize", "detail"].map(kind => ({ kind, imageUrl: `/api/identity/jobs/${jobId}/stages/${kind}` }));
+const stagedReceipt = { ...detailReceipt, detailerVersion: "staged-face-v2", polishMode: "reference-anchor", anchorStrength: .8,
+  alignmentError: .04, denoiseStrength: .25, passes: [
+    { kind: "harmonize", denoiseStrength: .25, steps: 7, durationMs: 1234 },
+    { kind: "detail", denoiseStrength: .15, steps: 4, durationMs: 678 },
+  ], snapshots: stagedSnapshots };
+
+it("chooses conservative denoise on anchor opt-in and submits user-adjusted staged settings", async () => {
+  await open(); prepare(); fireEvent.click(checkbox());
+  expect(screen.getByLabelText("修脸模式")).toHaveValue("redraw");
+  expect(screen.getByLabelText("修脸轮次")).toHaveValue("1");
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  expect(screen.getByLabelText("重绘强度")).toHaveValue(.25);
+  expect(screen.getByLabelText("参考脸融合强度")).toHaveValue(.95);
+  fireEvent.change(screen.getByLabelText("参考脸融合强度"), { target: { value: ".8" } });
+  fireEvent.change(screen.getByLabelText("重绘强度"), { target: { value: ".4" } });
+  fireEvent.change(screen.getByLabelText("修脸轮次"), { target: { value: "2" } });
+  expect(await submit()).toMatchObject({ ...anchored, animeDenoiseStrength: .4 });
+});
+
+it.each(["", ".29", "1.01"])("blocks invalid anchor strength %j before POST", async strength => {
+  await open(); prepare(); fireEvent.click(checkbox());
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  fireEvent.change(screen.getByLabelText("参考脸融合强度"), { target: { value: strength } });
+  expect(generate()).toBeDisabled(); expect(posts).toHaveLength(0);
+});
+
+it.each([.3, 1])("accepts anchor strength boundary %s", async strength => {
+  await open(); prepare(); fireEvent.click(checkbox());
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  fireEvent.change(screen.getByLabelText("参考脸融合强度"), { target: { value: String(strength) } });
+  expect(await submit()).toMatchObject({ visualAnchorStrength: strength, visualPolishPasses: 1 });
+});
+
+it("allows opting out after clearing anchor strength and sends valid defaults", async () => {
+  await open(); prepare(); fireEvent.click(checkbox());
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  fireEvent.change(screen.getByLabelText("参考脸融合强度"), { target: { value: "" } });
+  expect(generate()).toBeDisabled();
+  fireEvent.click(checkbox());
+  expect(generate()).toBeEnabled();
+  expect(await submit()).toMatchObject({ facePolish: false, visualAnchorStrength: .95 });
+});
+
+it.each([false, true])("preserves staged draft settings through reload (profile=%s)", async bound => {
+  const view = await open();
+  if (bound) {
+    fireEvent.change(screen.getByLabelText("选择人物档案"), { target: { value: "person-a" } });
+    await waitFor(() => expect(screen.getByLabelText("人物底图模型")).toHaveValue(visualId));
+  } else prepare();
+  fireEvent.click(checkbox());
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  fireEvent.change(screen.getByLabelText("参考脸融合强度"), { target: { value: ".8" } });
+  fireEvent.change(screen.getByLabelText("重绘强度"), { target: { value: ".4" } });
+  fireEvent.change(screen.getByLabelText("修脸轮次"), { target: { value: "2" } });
+  view.unmount(); await open();
+  await waitFor(() => expect(checkbox()).toBeChecked());
+  expect(screen.getByLabelText("修脸模式")).toHaveValue("reference-anchor");
+  expect(screen.getByLabelText("参考脸融合强度")).toHaveValue(.8);
+  expect(screen.getByLabelText("重绘强度")).toHaveValue(.4);
+  expect(screen.getByLabelText("修脸轮次")).toHaveValue("2");
+});
+
+it("restores staged profile, history and saved preset without reapplying the mode-switch denoise", async () => {
+  profile.defaults = { ...stagedRequest, animeDenoiseStrength: .4 };
+  jobs = [makeJob(stagedRequest, stagedReceipt)]; const view = await open();
+  fireEvent.change(screen.getByLabelText("选择人物档案"), { target: { value: "person-a" } });
+  await waitFor(() => expect(screen.getByLabelText("重绘强度")).toHaveValue(.4));
+  expect(screen.getByLabelText("修脸模式")).toHaveValue("reference-anchor");
+  expect(screen.getByLabelText("参考脸融合强度")).toHaveValue(.8);
+  expect(screen.getByLabelText("修脸轮次")).toHaveValue("2");
+  view.rerender(<IdentityPage replay={{ id: jobId, revision: 1 }} />);
+  await waitFor(() => expect(screen.getByLabelText("重绘强度")).toHaveValue(.25));
+  fireEvent.click(screen.getByRole("button", { name: `将 ${jobId} 存为人物预设` }));
+  await waitFor(() => expect(posts.some(p => p.url.endsWith("/preset"))).toBe(true));
+  fireEvent.change(screen.getByLabelText("选择人物档案"), { target: { value: "person-a" } });
+  await waitFor(() => expect(screen.getByLabelText("重绘强度")).toHaveValue(.25));
+  expect(await submit()).toMatchObject(anchored);
+});
+
+it("resets staged settings when crossing model families and never leaks them into FaceID submission", async () => {
+  await open(); prepare(); fireEvent.click(checkbox());
+  fireEvent.change(screen.getByLabelText("修脸模式"), { target: { value: "reference-anchor" } });
+  fireEvent.change(screen.getByLabelText("参考脸融合强度"), { target: { value: ".8" } });
+  fireEvent.change(screen.getByLabelText("修脸轮次"), { target: { value: "2" } });
+  fireEvent.change(screen.getByLabelText("人物底图模型"), { target: { value: realId } });
+  fireEvent.change(screen.getByLabelText("选择参考照"), { target: { value: "ref-real" } });
+  expect(await submit()).toMatchObject({ visualPolishMode: "redraw", visualAnchorStrength: .95, visualPolishPasses: 1 });
+  fireEvent.change(screen.getByLabelText("人物底图模型"), { target: { value: visualId } });
+  fireEvent.click(checkbox());
+  expect(screen.getByLabelText("修脸模式")).toHaveValue("redraw");
+  expect(screen.getByLabelText("修脸轮次")).toHaveValue("1");
+  expect(screen.getByLabelText("重绘强度")).toHaveValue(.35);
+});
+
+it("renders actual staged measurements and switches only among available canonical snapshots", async () => {
+  const snapshots = ["anchor", "harmonize", "detail"].map(kind => ({ kind, imageUrl: `/api/identity/jobs/${jobId}/stages/${kind}` }));
+  jobs = [makeJob(stagedRequest, { ...stagedReceipt, snapshots })];
+  await open({ id: jobId, revision: 1 });
+  const result = within(screen.getByRole("region", { name: `原图与重绘结果 ${jobId}` }));
+  expect(result.getByText(/模式：参考脸对齐/)).toBeVisible();
+  expect(result.getByText(/几何对齐误差.*0.04/)).toBeVisible();
+  expect(result.queryByText(/相似度/)).not.toBeInTheDocument();
+  const table = within(result.getByRole("table", { name: "修脸分轮实测记录" }));
+  expect(table.getByRole("row", { name: /第一轮融合.*0.25.*7.*1.23 秒/ })).toBeVisible();
+  expect(table.getByRole("row", { name: /第二轮细化.*0.15.*4.*0.68 秒/ })).toBeVisible();
+  expect(result.getByAltText("重绘结果")).toBeVisible();
+  for (const [kind, label] of [["anchor", "对齐预览"], ["harmonize", "第一轮融合"], ["detail", "第二轮细化"]]) {
+    fireEvent.click(result.getByRole("button", { name: label }));
+    expect(result.getByAltText(label)).toHaveAttribute("src", `/api/identity/jobs/${jobId}/stages/${kind}`);
+    expect(result.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "true");
+  }
+  fireEvent.click(result.getByRole("button", { name: "查看生成原图" }));
+  expect(result.getByAltText("生成原图")).toHaveAttribute("src", originalUrl);
+  fireEvent.click(result.getByRole("button", { name: "查看重绘结果" }));
+  expect(result.getByAltText("重绘结果")).toHaveAttribute("src", expect.stringContaining("/final.png?identityResult="));
+});
+
+it("shows the exact single-pass stages and preserves images without claiming completion when snapshots are missing", async () => {
+  const onePass = { ...stagedReceipt, passes: stagedReceipt.passes.slice(0, 1), snapshots: stagedSnapshots.slice(0, 2) };
+  jobs = [makeJob({ ...stagedRequest, visualPolishPasses: 1 }, onePass)];
+  const view = await open({ id: jobId, revision: 1 });
+  expect(screen.getByRole("button", { name: "第一轮融合" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "对齐预览" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "第二轮细化" })).not.toBeInTheDocument();
+  view.unmount();
+  const { snapshots: _snapshots, ...missing } = stagedReceipt;
+  jobs = [makeJob(stagedRequest, missing)]; await open({ id: jobId, revision: 2 });
+  expect(screen.queryByRole("button", { name: "第一轮融合" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "查看生成原图" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("table", { name: "修脸分轮实测记录" })).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(/视觉重绘记录无效/);
+  expect(screen.getByAltText("生成结果")).toHaveAttribute("src", "/final.png");
+});
+
+it.each([
+  ["missing snapshots", { ...stagedReceipt, snapshots: undefined }],
+  ["empty snapshots", { ...stagedReceipt, snapshots: [] }],
+  ["partial snapshots", { ...stagedReceipt, snapshots: stagedSnapshots.slice(0, 2) }],
+  ["reversed snapshots", { ...stagedReceipt, snapshots: [...stagedSnapshots].reverse() }],
+  ["excessive alignment error", { ...stagedReceipt, alignmentError: .5 }],
+  ["wrong first-pass steps", { ...stagedReceipt, passes: [{ ...stagedReceipt.passes[0], steps: 8 }, stagedReceipt.passes[1]] }],
+  ["wrong second-pass steps", { ...stagedReceipt, passes: [stagedReceipt.passes[0], { ...stagedReceipt.passes[1], steps: 5 }] }],
+  ["missing receipt", undefined], ["null receipt", null],
+])("revalidates recovered completed jobs and batch items safely: %s", async (_label, polish) => {
+  const source = makeJob(stagedRequest, polish);
+  source.result!.metadata.facePolish = polish as any;
+  jobs = [source];
+  batches = [{ id: "batch-a", request: { request: stagedRequest, count: 1, previewEvery: 0 }, state: "complete", items: [source],
+    currentItem: 1, totalItems: 1, completedItems: 1, step: 30, totalSteps: 30, progress: 100, stage: "完成",
+    elapsedMs: 1912, etaMs: null, previewUrl: null, error: null, createdAt: "2026-10-24", updatedAt: "2026-10-24" }];
+  const sourceCopy = structuredClone(source);
+  const decoded = [await identityApi.job(jobId), ...(await identityApi.jobs()),
+    ...(await identityApi.batch("batch-a")).items, ...(await identityApi.batches())[0].items];
+  for (const job of decoded) {
+    expect(job).toMatchObject({ state: "complete", request: stagedRequest, result: { imageUrl: "/final.png" } });
+    expect(job.result?.metadata.facePolish).toBeUndefined();
+    expect(job.result?.metadata.facePolishValidationError).toMatch(/无效/);
+  }
+  expect(source).toEqual(sourceCopy);
+  localStorage.setItem("dream.identity.last-job.v1", jobId);
+  await open();
+  expect(screen.getByRole("alert")).toHaveTextContent(/视觉重绘记录无效/);
+  expect(screen.queryByText(/局部重绘完成/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "对齐预览" })).not.toBeInTheDocument();
+  expect(screen.getByAltText("生成结果")).toHaveAttribute("src", "/final.png");
+  expect(posts).toHaveLength(0);
 });
 
 it("retains Illustrious visual model and scheduled reference in profile, draft and submission", async () => {

@@ -206,4 +206,8 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
     def original_image(job_id: str) -> FileResponse:
         return FileResponse(service.original_image(job_id), media_type="image/png")
 
+    @router.get("/jobs/{job_id}/stages/{kind}")
+    def stage_image(job_id: str, kind: str) -> FileResponse:
+        return FileResponse(service.stage_image(job_id, kind), media_type="image/png")
+
     return router

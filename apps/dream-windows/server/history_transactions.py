@@ -24,7 +24,7 @@ from errors import DreamApiError
 MAX_TRASH_BYTES = 2 * 1024**3
 MAX_TRANSACTIONS = 1024
 MAX_JOURNAL_BYTES = 16 * 1024
-MAX_FILES = 3
+MAX_FILES = 6  # output, metadata, original, and at most three visual stages
 _LOCK = threading.RLock()
 _TX_ID = re.compile(r'[a-f0-9]{32}')
 _IDENTITY_ID = re.compile(r'identity-[a-f0-9]{24}')
@@ -81,7 +81,9 @@ def _source(root: Path, item_id: str, value: Path) -> Path:
     relative = path.relative_to(root)
     history_file = len(relative.parts) >= 2 and relative.parts[0] in {'outputs', 'history', 'exports'}
     original = bool(_IDENTITY_ID.fullmatch(item_id)) and relative == Path('data/identity/originals') / f'{item_id}.png'
-    if not history_file and not original:
+    stage = bool(_IDENTITY_ID.fullmatch(item_id)) and relative in {
+        Path('data/identity/stages') / item_id / f'{kind}.png' for kind in ('anchor', 'harmonize', 'detail')}
+    if not history_file and not original and not stage:
         raise ValueError('Not a history file')
     if path.exists() and not path.is_file():
         raise ValueError('Not a regular file')
@@ -145,7 +147,7 @@ def _directories(root: Path, store: Path) -> list[Path]:
 
 def _transaction_files(root: Path, folder: Path) -> list[Path]:
     allowed = {'journal.json', 'journal.json.tmp', 'committed.json', 'committed.json.tmp',
-               '0.bin', '1.bin', '2.bin'}
+               *(f'{index}.bin' for index in range(MAX_FILES))}
     result = []
     with os.scandir(folder) as entries:
         for entry in entries:
@@ -330,7 +332,7 @@ def history_mutation_lock(root: Path):
 
 
 def delete_history_files(root: Path, item_id: str, paths: Iterable[Path]) -> None:
-    """Stage up to three associated files, then publish a recoverable receipt."""
+    """Stage associated outputs and visual snapshots in one recoverable transaction."""
     try:
         root = _root(root)
         if not _valid_id(item_id):
@@ -343,6 +345,13 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path]) -> Non
             sources.append(source)
         if not sources:
             raise ValueError('No history files')
+        if _IDENTITY_ID.fullmatch(item_id):
+            for kind in ('anchor', 'harmonize', 'detail'):
+                stage = _source(root, item_id, root / 'data/identity/stages' / item_id / f'{kind}.png')
+                if stage not in sources:
+                    sources.append(stage)
+        if len(sources) > MAX_FILES:
+            raise ValueError('Excessive history files')
         store = _plain(root, root / 'data' / 'history-trash')
     except (OSError, RuntimeError, ValueError) as exc:
         raise _path_error() from exc

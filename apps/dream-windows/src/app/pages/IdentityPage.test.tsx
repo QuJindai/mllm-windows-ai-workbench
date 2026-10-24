@@ -171,7 +171,7 @@ describe("人物创作 HTTP workspace", () => {
     twoModels(false);
     const { ui } = await openWorkspace();
     await prepare(ui, "ref-single");
-    fireEvent.change(ui.getByLabelText("人物底图模型"), { target: { value: "illustrious-xl-v2.0-faceid" } });
+    await act(async () => { fireEvent.change(ui.getByLabelText("人物底图模型"), { target: { value: "illustrious-xl-v2.0-faceid" } }); });
     expect(ui.getByRole("button", { name: "生成人物图像" })).toBeDisabled();
     expect(ui.getByText("缺少配套文件")).toBeVisible();
   });
@@ -288,6 +288,7 @@ describe("人物创作 HTTP workspace", () => {
       identityStrength: 0.85, structureStrength: 1.1, faceLoraStrength: 0.65,
       loraId: "style-sd15", loraStrength: 0.4,
       facePolish: false, faceRestoreStrength: 1,
+      visualPolishMode: "redraw", visualAnchorStrength: .95, visualPolishPasses: 1,
     });
     expect(ui.getByLabelText("场景提示词")).toBeDisabled();
   });
@@ -403,6 +404,7 @@ describe("人物创作 HTTP workspace", () => {
     await prepare(first.ui);
     fireEvent.click(first.ui.getByRole("button", { name: "生成人物图像" }));
     await first.ui.findByRole("img", { name: "生成结果" });
+    await waitFor(() => expect(first.ui.getByLabelText("步数")).toBeEnabled());
     for (const [label, value] of [["步数", "24"], ["生成张数", "3"], ["中间预览频率", "5"], ["CFG", "7"], ["种子", "12345"], ["宽度", "640"], ["身份强度", "1.1"], ["可选 LoRA", "style-sd15"], ["人物显微镜采集", "basic"]]) {
       fireEvent.change(first.ui.getByLabelText(label), { target: { value } });
     }
@@ -410,6 +412,7 @@ describe("人物创作 HTTP workspace", () => {
     first.unmount();
     const restored = await openWorkspace();
     await restored.ui.findByRole("img", { name: "生成结果" });
+    await waitFor(() => expect(restored.ui.getByLabelText("步数")).toBeEnabled());
     for (const [label, value] of [["步数", 24], ["生成张数", 3], ["CFG", 7], ["宽度", 640], ["身份强度", 1.1]] as const) {
       expect(restored.ui.getByLabelText(label), label).toHaveValue(value);
     }

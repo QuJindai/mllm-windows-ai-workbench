@@ -1,5 +1,6 @@
 """Optional Plus Face local redraw, using the selected visual reference only."""
 from pathlib import Path
+import time
 
 from identity_anime import AnimeDetector, one_face, crop_box, face_mask, blend_face, restore_offload_state
 from identity_models import is_visual_model_id, visual_restore_model
@@ -33,7 +34,7 @@ def detail_size(crop, box):
 def visual_polish_status(config):
     ready = Path(config.get('animeFaceDetector', '')).is_file()
     return {'ready': ready, 'message': (
-        '脸部目标尺寸细化 + 采样蒙版 + 独立提示词；复用当前视觉参考，不使用真人换脸或 GFPGAN'
+        '支持局部重绘与分阶段细化；参考脸对齐会融合当前参考图的脸部像素，保留原图与阶段结果'
         if ready else '动漫脸检测模型未配置，关闭修脸仍可生成')}
 
 
@@ -53,51 +54,74 @@ class VisualReferencePolisher:
         from diffusers import StableDiffusionXLInpaintPipeline, EulerDiscreteScheduler
         from PIL import Image, ImageStat
 
-        stage('定位动漫脸')
-        box = one_face(self.detector.detect(image))
-        crop = crop_box(image.size, box)
-        source = image.crop(crop)
-        width, height = detail_size(crop, box)
-        source = source.resize((width, height), Image.Resampling.LANCZOS)
-        # A binary mask constrains denoising, while the existing soft mask is
-        # retained separately for pixel-exact preservation outside the blend.
-        mask = face_mask(image.size, box).point(lambda value: 255 if value >= 128 else 0)
-        mask = mask.crop(crop).resize((width, height), Image.Resampling.NEAREST)
+        pipe = self.session.pipe
+        vae_dtype = pipe.vae.dtype
+        mode = item.get('visualPolishMode', 'redraw')
+        pass_count = item.get('visualPolishPasses', 1)
+        staged = mode == 'reference-anchor' or pass_count > 1
+        snapshots, passes, anchor_info = [], [], {}
+        if staged:
+            from identity_stage_artifacts import save_visual_stage, cleanup_visual_stages
         prompt, negative = detail_prompts(item)
         denoise = item.get('animeDenoiseStrength', .35)
-        steps = 30
-        total = max(1, int(steps * denoise))
-        stage(f'脸部蒙版细化 {width}×{height}')
-        def progress(_pipe, index, _timestep, values):
-            stage(f'动漫修脸重绘 {index + 1} / {total} 步')
-            advance(index + 1)
-            return values
-
-        pipe = self.session.pipe
-        # Share the already offloaded modules and native Plus projection; only
-        # the scheduler is independent. No second checkpoint lives in VRAM.
-        vae_dtype = pipe.vae.dtype
         try:
-            redraw = StableDiffusionXLInpaintPipeline(**{**pipe.components,
-                'scheduler': EulerDiscreteScheduler.from_config(pipe.scheduler.config)}, add_watermarker=False)
+            stage('定位动漫脸')
+            current = image
+            if mode == 'reference-anchor':
+                from identity_reference_anchor import ReferenceAnchor
+                stage('参考脸对齐初始化')
+                binding = (item['imagePath'], item['faceIndex'])
+                if getattr(self, '_anchor_binding', None) != binding:
+                    self._anchor = ReferenceAnchor(self.session.config, *binding)
+                    self._anchor_binding = binding
+                current, box, anchor_info = self._anchor.apply(image, item.get('visualAnchorStrength', .95))
+                snapshots.append({'kind': 'anchor', 'imageUrl': save_visual_stage(current, item, 'anchor')})
+            else:
+                box = one_face(self.detector.detect(image))
+            crop = crop_box(image.size, box)
+            width, height = detail_size(crop, box)
+            mask = face_mask(image.size, box).point(lambda value: 255 if value >= 128 else 0)
+            mask = mask.crop(crop).resize((width, height), Image.Resampling.NEAREST)
             from identity_pipeline import visual_reference_schedule
-            with visual_reference_schedule(pipe, item, total) as advance, torch.inference_mode():
-                patch = redraw(prompt=prompt, negative_prompt=negative,
-                    image=source, mask_image=mask, width=width, height=height,
-                    strength=denoise, num_inference_steps=steps, guidance_scale=item['cfg'],
-                    generator=torch.Generator(device='cpu').manual_seed(item['seed']),
-                    ip_adapter_image_embeds=[self.session.projected], callback_on_step_end=progress,
-                    callback_on_step_end_tensor_inputs=['latents']).images[0]
+            for index in range(pass_count):
+                kind = 'harmonize' if index == 0 else 'detail'
+                label = '第一轮融合' if index == 0 else '第二轮细化'
+                strength_now = denoise if index == 0 else .15
+                total = max(1, int(30 * strength_now))
+                started = time.perf_counter()
+                stage(f'{label} · 脸部蒙版细化 {width}×{height}')
+                source = current.crop(crop).resize((width, height), Image.Resampling.LANCZOS)
+                # Share offloaded modules. Each pass starts a fresh scheduler,
+                # and refines the preceding image rather than rerunning the scene.
+                redraw = StableDiffusionXLInpaintPipeline(**{**pipe.components,
+                    'scheduler': EulerDiscreteScheduler.from_config(pipe.scheduler.config)}, add_watermarker=False)
+                def progress(_pipe, step, _timestep, values):
+                    stage(f'{label} · 动漫修脸重绘 {step + 1} / {total} 步')
+                    advance(step + 1)
+                    return values
+                with visual_reference_schedule(pipe, item, total) as advance, torch.inference_mode():
+                    patch = redraw(prompt=prompt, negative_prompt=negative,
+                        image=source, mask_image=mask, width=width, height=height,
+                        strength=strength_now, num_inference_steps=30, guidance_scale=item['cfg'],
+                        generator=torch.Generator(device='cpu').manual_seed(item['seed']),
+                        ip_adapter_image_embeds=[self.session.projected], callback_on_step_end=progress,
+                        callback_on_step_end_tensor_inputs=['latents']).images[0]
+                if max(ImageStat.Stat(patch.convert('RGB')).stddev) < 2:
+                    raise ValueError('动漫局部重绘结果异常，保留原图')
+                current = blend_face(image, patch, box, crop)
+                if staged:
+                    snapshots.append({'kind': kind, 'imageUrl': save_visual_stage(current, item, kind)})
+                    passes.append({'kind': kind, 'denoiseStrength': strength_now, 'steps': total,
+                                   'durationMs': round((time.perf_counter()-started)*1000)})
         except Exception:
             restore_offload_state(pipe)
+            if staged:
+                cleanup_visual_stages(item)
             raise
         finally:
             if pipe.vae.dtype != vae_dtype:
                 pipe.vae.to(dtype=vae_dtype)
-        if max(ImageStat.Stat(patch.convert('RGB')).stddev) < 2:
-            raise ValueError('动漫局部重绘结果异常，保留原图')
-        result = blend_face(image, patch, box, crop)
-        return result, {'method': 'visual-reference-local-redraw',
+        details = {'method': 'visual-reference-local-redraw',
             'referenceId': item['referenceId'], 'faceIndex': item['faceIndex'],
             'featureKey': self.session.feature_info['featureKey'],
             'restoreModel': visual_restore_model(item['modelId']),
@@ -105,3 +129,7 @@ class VisualReferencePolisher:
             'denoiseStrength': denoise, 'outsideMaskUnchanged': True,
             'detailerVersion': 'masked-face-v1', 'processingSize': [width, height],
             'detailPrompt': prompt, 'detailNegativePrompt': negative}
+        if staged:
+            details.update(detailerVersion='staged-face-v2', polishMode=mode,
+                           passes=passes, snapshots=snapshots, **anchor_info)
+        return current, details

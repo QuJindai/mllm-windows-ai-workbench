@@ -492,7 +492,8 @@ def validate_batch_items(items):
     from identity_contract import IdentityGenerateRequest
     if not isinstance(items, list) or not 1 <= len(items) <= 16:
         raise ValueError('人物批次数量必须在 1 到 16 之间')
-    fixed = ('modelId', 'referenceId', 'faceIndex', 'width', 'height', 'cfg', 'identityStrength', 'referenceStart', 'referenceEnd', 'structureStrength', 'faceLoraStrength', 'loraId', 'loraStrength', 'facePolish', 'animeProfileId')
+    fixed = ('modelId', 'referenceId', 'faceIndex', 'width', 'height', 'cfg', 'identityStrength', 'referenceStart', 'referenceEnd', 'structureStrength', 'faceLoraStrength', 'loraId', 'loraStrength', 'facePolish', 'animeProfileId',
+             'visualPolishMode', 'visualAnchorStrength', 'visualPolishPasses')
     signatures, paths = [], set()
     for item in items:
         params = IdentityGenerateRequest.model_validate({k: v for k, v in item.items() if k in IdentityGenerateRequest.model_fields})

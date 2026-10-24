@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, SetStateAction } from "react";
-import { IDENTITY_MODEL_ID, ILLUSTRIOUS_IDENTITY_MODEL_ID, identityFacePolishOptions, identityModelDefaults, identityReferenceKind, identityStateLabels, isIdentityModelId, normalizeIdentityOptions, validAnimeStrength, validFaceRestoreStrength } from "../../domain/identity";
-import type { IdentityRequest } from "../../domain/identity";
+import { IDENTITY_MODEL_ID, ILLUSTRIOUS_IDENTITY_MODEL_ID, identityFacePolishOptions, identityModelDefaults, identityReferenceKind, identityStateLabels, isIdentityModelId, normalizeIdentityOptions, validAnimeStrength, validFaceRestoreStrength, validVisualAnchorStrength, validVisualPolishMode, validVisualPolishPasses, visualPolishDefaults } from "../../domain/identity";
+import type { IdentityFacePolishOptions, IdentityRequest } from "../../domain/identity";
 import { BatchControls, defaultBatchSettings, validBatchSettings } from "../components/identity/BatchControls";
 import type { BatchSettings } from "../components/identity/BatchControls";
 import { FacePicker } from "../components/identity/FacePicker";
@@ -29,7 +29,7 @@ function researchFitsBudget(value: Omit<IdentityRequest, "referenceId" | "faceIn
   return samples*area*(tokens+9)*26 + maps*1400 + steps*grids[0]*8 + 8*1024*1024 <= 512*1024*1024;
 }
 type FormValues = Omit<IdentityRequest, "referenceId" | "faceIndex" | "seed"> & { seed: string };
-type TextDraft = { prompt: string; negativePrompt: string; modelId?: string; polishContext?: string; parameters?: Partial<FormValues>; batchSettings?: BatchSettings } & Pick<IdentityRequest, "facePolish" | "faceRestoreStrength" | "animeProfileId" | "animeDenoiseStrength" | "visualPolishPrompt" | "visualPolishNegativePrompt">;
+type TextDraft = { prompt: string; negativePrompt: string; modelId?: string; polishContext?: string; parameters?: Partial<FormValues>; batchSettings?: BatchSettings } & IdentityFacePolishOptions;
 // Only allow form fields into browser storage, never reference pixels or features.
 function readParameters(value: unknown): Partial<FormValues> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -130,7 +130,9 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
   const validReferenceInterval = !isVisual || Number.isFinite(form.referenceStart ?? 0) && Number.isFinite(form.referenceEnd ?? 1)
     && (form.referenceStart ?? 0) >= 0 && (form.referenceEnd ?? 1) <= 1 && (form.referenceStart ?? 0) < (form.referenceEnd ?? 1);
   const validProfile = !profileId || selectedProfile?.state === "ready" && selectedProfile.referenceId === referenceId && selectedProfile.faceIndex === faceIndex && (selectedProfile.referenceKind ?? "faceid") === referenceKind;
-  const validPolish = !form.facePolish || (isVisual ? status?.visualPolish?.ready === true && !form.animeProfileId && validAnimeStrength(form.animeDenoiseStrength ?? .35)
+  const validStagedOptions = !isVisual || validVisualPolishMode(form.visualPolishMode ?? "redraw")
+    && validVisualAnchorStrength(form.visualAnchorStrength ?? .95) && validVisualPolishPasses(form.visualPolishPasses ?? 1);
+  const validPolish = !form.facePolish || validStagedOptions && (isVisual ? status?.visualPolish?.ready === true && !form.animeProfileId && validAnimeStrength(form.animeDenoiseStrength ?? .35)
     && (form.visualPolishPrompt ?? "").length <= 2000 && (form.visualPolishNegativePrompt ?? "").length <= 2000
     : form.animeProfileId ? isXL && !anime.error && status?.animePolish?.ready === true
     && matchingAnime.some(p=>p.id===form.animeProfileId && p.state==='ready') && validAnimeStrength(form.animeDenoiseStrength ?? .35)
@@ -162,7 +164,7 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
     }
     const defaults = identityModelDefaults(next);
     editForm(value => normalizeIdentityOptions({ ...value, modelId: next, loraId: "", researchCoverage: "representative",
-      ...(identityReferenceKind(next) !== referenceKind ? { facePolish: false, animeDenoiseStrength: .35, visualPolishPrompt: "", visualPolishNegativePrompt: "" } : {}),
+      ...(identityReferenceKind(next) !== referenceKind ? { ...visualPolishDefaults, facePolish: false, animeDenoiseStrength: .35, visualPolishPrompt: "", visualPolishNegativePrompt: "" } : {}),
       ...(isVisual ? { identityStrength: defaults.identityStrength, structureStrength: defaults.structureStrength, faceLoraStrength: defaults.faceLoraStrength } : {}),
       ...(identityReferenceKind(next) === "visual" ? { identityStrength: .8, referenceStart: 0, referenceEnd: 1 } : { referenceStart: undefined, referenceEnd: undefined }),
       ...(next !== ILLUSTRIOUS_IDENTITY_MODEL_ID && value.animeProfileId ? { animeProfileId: undefined, facePolish: false } : {}),

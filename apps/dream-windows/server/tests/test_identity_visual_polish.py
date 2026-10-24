@@ -181,3 +181,73 @@ def test_detail_parameters_are_validated_and_survive_request_roundtrip():
     for invalid in ('x'*2001, 123, None):
         with pytest.raises(ValueError):
             IdentityGenerateRequest.model_validate({**values, 'visualPolishPrompt': invalid})
+
+
+@pytest.fixture
+def staged_artifacts(monkeypatch):
+    saved, cleaned = [], []
+    def save(image, item, kind):
+        saved.append((kind,image.copy()))
+        return f"/api/identity/jobs/{item['jobId']}/stages/{kind}"
+    monkeypatch.setitem(sys.modules,'identity_stage_artifacts',SimpleNamespace(
+        save_visual_stage=save,cleanup_visual_stages=lambda item:cleaned.append(item['jobId'])))
+    return saved,cleaned
+
+
+def test_anchor_initializes_before_redraw_and_records_each_stage(redraw_case,staged_artifacts,monkeypatch):
+    import identity_reference_anchor
+    processor,item,image,calls,_,_,_=redraw_case
+    item.update(visualPolishMode='reference-anchor',visualAnchorStrength=.95,visualPolishPasses=1,
+                jobId='identity-'+'e'*24,imagePath='local-reference.png')
+    anchor=Image.linear_gradient('L').resize(image.size).convert('RGB')
+    monkeypatch.setattr(identity_reference_anchor,'ReferenceAnchor',lambda *a:SimpleNamespace(
+        apply=lambda image,strength:(anchor,[35.,30.,85.,95.],{'anchorStrength':strength,'alignmentError':.05})))
+    output,info=processor.apply(image,item,1.,lambda s:None)
+    assert calls[0]['image'].getextrema() != image.getextrema()
+    assert [kind for kind,_ in staged_artifacts[0]] == ['anchor','harmonize']
+    assert info['detailerVersion']=='staged-face-v2' and info['polishMode']=='reference-anchor'
+    assert info['alignmentError']==.05 and info['anchorStrength']==.95
+    assert len(info['passes'])==1 and info['passes'][0]['steps']==10
+    assert info['passes'][0]['durationMs']>=0
+    assert [s['kind'] for s in info['snapshots']]==['anchor','harmonize']
+
+
+def test_two_pass_redraw_reuses_first_result_instead_of_regenerating_scene(redraw_case,staged_artifacts):
+    processor,item,image,calls,_,_,_=redraw_case
+    item.update(visualPolishPasses=2,jobId='identity-'+'e'*24)
+    stages=[]
+    output,info=processor.apply(image,item,1.,stages.append)
+    assert len(calls)==2 and calls[1]['strength']==.15
+    assert calls[1]['image'].tobytes()!=calls[0]['image'].tobytes()
+    assert [r['kind'] for r in info['passes']]==['harmonize','detail']
+    assert [r['steps'] for r in info['passes']]==[10,4]
+    assert [kind for kind,_ in staged_artifacts[0]]==['harmonize','detail']
+    assert info['polishMode']=='redraw'
+    from identity_anime import face_mask
+    mask=np.asarray(face_mask(image.size,[35.,30.,85.,95.]))
+    assert np.array_equal(np.asarray(output)[mask==0],np.asarray(image)[mask==0])
+
+
+def test_second_pass_failure_retains_original_and_removes_partial_snapshots(redraw_case,staged_artifacts,tmp_path):
+    from identity_face_polish import optional_face_polish
+    processor,item,image,calls,control,_,_=redraw_case
+    item.update(visualPolishPasses=2,jobId='identity-'+'e'*24,dreamRoot=str(tmp_path))
+    def stage(message):
+        if '第二轮' in message: control['fail']=True
+    output,info=optional_face_polish(image,SimpleNamespace(facePolish=True,faceRestoreStrength=1.),
+                                    item,lambda:processor,stage)
+    assert len(calls)==2 and info['status']=='failed'
+    assert output is image and staged_artifacts[1]==[item['jobId']]
+    assert 'snapshots' not in info
+
+
+@pytest.mark.parametrize('change',[{'visualPolishMode':'reference-anchor'},{'visualAnchorStrength':.7},{'visualPolishPasses':2}])
+def test_batch_cannot_mix_staged_polish_controls(tmp_path,change):
+    from identity_contract import IdentityGenerateRequest
+    from identity_pipeline import validate_batch_items
+    request=IdentityGenerateRequest(modelId=VISUAL,referenceId=REFERENCE,faceIndex=0,prompt='portrait',seed=42,
+                                    structureStrength=0.,faceLoraStrength=0.).model_dump()
+    base={**request,'imagePath':str(tmp_path/'reference.png'),'dreamRoot':str(tmp_path),
+          'outputPath':str(tmp_path/'one.png'),'metadataPath':str(tmp_path/'one.json')}
+    second={**base,**change,'outputPath':str(tmp_path/'two.png'),'metadataPath':str(tmp_path/'two.json')}
+    with pytest.raises(ValueError,match='同一批次'): validate_batch_items([base,second])

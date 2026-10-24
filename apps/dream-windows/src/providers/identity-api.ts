@@ -13,7 +13,10 @@ function decodeStatus(status: IdentityStatus): IdentityStatus {
 function decodeVisualJob(job: IdentityJob): IdentityJob {
   if (!job.result || identityReferenceKind(job.request.modelId) !== "visual") return job;
   const polish: unknown = job.result.metadata.facePolish;
-  if (polish == null || validVisualPolishResult(polish, job.request, job.id)) return job;
+  // Recovered generation completion does not prove that the requested polish ran.
+  // Keep the result and frozen request, but never promote absent evidence to success.
+  if ((polish == null && (job.state !== "complete" || job.request.facePolish !== true))
+    || validVisualPolishResult(polish, job.request, job.id)) return job;
   return { ...job, result: { ...job.result, metadata: { ...job.result.metadata, facePolish: undefined,
     unverifiedFacePolish: polish, facePolishValidationError: "视觉重绘记录无效，未确认重绘完成；生成图像仍可查看。" } } };
 }

@@ -103,6 +103,10 @@ export const identityApi = {
     const response = await request<{ deleted: string }>(`/${encodeURIComponent(id)}`, { method: "DELETE" }, "/api/history");
     if (response.deleted !== id) throw new Error("删除未得到确认，请刷新后重试");
   },
+  deleteJob: async (id: string): Promise<void> => {
+    const response = await request<{ deleted: string }>(`/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (response.deleted !== id) throw new Error("删除未得到确认，请刷新后重试");
+  },
   status: (signal?: AbortSignal) => request<IdentityStatus>("/status", { signal }).then(decodeStatus),
   references: (signal?: AbortSignal) => request<IdentityReference[]>("/references", { signal }),
   uploadReference: (name: string, imageBase64: string, referenceKind?: ReferenceKind) => request<IdentityReference>("/references", {

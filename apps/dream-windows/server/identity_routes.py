@@ -20,7 +20,7 @@ from job_runner import JobRunner
 from identity_profiles import ProfileCreate, ProfileName, ProfilePreset
 from identity_batches import BatchRequest, BatchRetryRequest
 from identity_anime_profiles import AnimeProfileCreate, AnimeProfileImport
-from history_transactions import committed_history_deletions
+from history_transactions import history_deletion_flags
 
 
 def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> APIRouter:
@@ -29,8 +29,11 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
     def result_availability(record, deleted):
         # Decorate a detached public copy only. Frozen jobs and profile presets
         # keep their metadata so deleting an output cannot damage identity data.
-        if record.get("state") == "complete" and record["id"] in deleted:
-            record = {**record, "resultDeleted": True}
+        if record["id"] in deleted:
+            flags = deleted[record["id"]]
+            record = {**record, "historyDeleted": True}
+            if record.get("state") == "complete" and flags.get("resultDeleted"):
+                record["resultDeleted"] = True
         return record
 
     def batch_availability(record, deleted):
@@ -41,7 +44,7 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
             original = super().get_route_handler()
 
             async def guarded(request: Request):
-                if request.method == "POST":
+                if request.method in {"POST", "DELETE"}:
                     # Check actual Host too: reflecting a forged Host into Origin
                     # comparison alone would permit DNS rebinding attacks.
                     allowed_hosts = {"localhost", "127.0.0.1", "::1", config.host} - {"0.0.0.0", "::"}
@@ -113,20 +116,20 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
 
     @router.get("/batches")
     def batches():
-        deleted = committed_history_deletions(config.dream_root)
+        deleted = history_deletion_flags(config.dream_root)
         return [batch_availability(record, deleted) for record in service.batch_operation("list")]
 
     @router.get("/batches/{batch_id}")
     def batch(batch_id: str):
-        return batch_availability(service.batch_operation("get", batch_id), committed_history_deletions(config.dream_root))
+        return batch_availability(service.batch_operation("get", batch_id), history_deletion_flags(config.dream_root))
 
     @router.post("/batches/{batch_id}/cancel")
     def cancel_batch(batch_id: str):
-        return service.batch_operation("cancel", batch_id)
+        return batch_availability(service.batch_operation("cancel", batch_id), history_deletion_flags(config.dream_root))
 
     @router.post("/batches/{batch_id}/retry")
     def retry_batch(batch_id: str, payload: BatchRetryRequest):
-        return batch_availability(service.batch_operation("retry", batch_id, payload), committed_history_deletions(config.dream_root))
+        return batch_availability(service.batch_operation("retry", batch_id, payload), history_deletion_flags(config.dream_root))
 
     @router.get("/batches/{batch_id}/previews/{filename}")
     def preview(batch_id: str, filename: str):
@@ -191,16 +194,20 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
 
     @router.get("/jobs")
     def jobs() -> list[dict[str, Any]]:
-        deleted = committed_history_deletions(config.dream_root)
+        deleted = history_deletion_flags(config.dream_root)
         return [result_availability(record, deleted) for record in service.jobs()]
 
     @router.get("/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
-        return result_availability(service.get(job_id), committed_history_deletions(config.dream_root))
+        return result_availability(service.get(job_id), history_deletion_flags(config.dream_root))
+
+    @router.delete("/jobs/{job_id}")
+    def delete_job(job_id: str) -> dict[str, Any]:
+        return service.delete_history(job_id)
 
     @router.post("/jobs/{job_id}/cancel")
     def cancel_job(job_id: str) -> dict[str, Any]:
-        return service.cancel(job_id)
+        return result_availability(service.cancel(job_id), history_deletion_flags(config.dream_root))
 
     @router.get("/jobs/{job_id}/original")
     def original_image(job_id: str) -> FileResponse:

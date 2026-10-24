@@ -1,19 +1,30 @@
-import { useEffect, useState } from "react";
+import { useContext, useSyncExternalStore } from "react";
+import { DreamProviderContext } from "./providers";
+import { imageDeletionStore } from "./image-deletion-state";
 
-const IMAGE_DELETED = "dream:image-deleted";
-export function announceImageDeleted(id: string) {
-  window.dispatchEvent(new CustomEvent(IMAGE_DELETED, { detail: id }));
+/** Call only after the provider has confirmed deletion of this exact ID. */
+export function announceImageDeleted(id: string, scope?: object) {
+  imageDeletionStore(scope).confirm(id);
 }
-export function onImageDeleted(listener: (id: string) => void) {
-  const receive = (event: Event) => {
-    const id: unknown = (event as CustomEvent).detail;
-    if (typeof id === "string" && id) listener(id);
-  };
-  window.addEventListener(IMAGE_DELETED, receive);
-  return () => window.removeEventListener(IMAGE_DELETED, receive);
+
+export function readDeletedImageIds(scope?: object): ReadonlySet<string> {
+  return imageDeletionStore(scope).readDeleted();
 }
-export function useDeletedImageIds() {
-  const [ids, setIds] = useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => onImageDeleted(id => setIds(previous => new Set([...previous, id]))), []);
-  return ids;
+
+/** Future confirmations; use readDeletedImageIds for already confirmed deletions. */
+export function onImageDeleted(listener: (id: string) => void, scope?: object) {
+  const store = imageDeletionStore(scope);
+  let previous = store.readDeleted();
+  return store.subscribe(() => {
+    const next = store.readDeleted();
+    const added = [...next].filter(id => !previous.has(id));
+    previous = next;
+    added.forEach(id => listener(id));
+  });
+}
+
+export function useDeletedImageIds(scope?: object) {
+  const provider = useContext(DreamProviderContext);
+  const store = imageDeletionStore(scope ?? provider ?? undefined);
+  return useSyncExternalStore(store.subscribe, store.readDeleted, store.readDeleted);
 }

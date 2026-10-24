@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { identityJobSeed, identityProfileRequest, identityReferenceKind, isIdentityJobActive } from "../../../domain/identity";
 import type { IdentityBatch, IdentityBatchRequest, IdentityJob, IdentityProfile, IdentityReference, IdentityRequest, IdentityStatus, ReferenceKind } from "../../../domain/identity";
 import { identityApi, readBatchRetryOperation, readReferenceFile } from "../../../providers/identity-api";
+import { useDeletedImageIds } from "../../image-deletion";
 
 const PROFILE_KEY = "dream.identity.selected-profile.v1";
 const BATCH_KEY = "dream.identity.last-batch.v1";
@@ -28,6 +29,17 @@ function upsert<T extends { id: string }>(items: T[], value: T): T[] {
 }
 
 export function useIdentityWorkspace(replay: IdentityReplay | null | undefined, onRestore: (value: RestoredIdentity) => void) {
+  const deletedImages = useDeletedImageIds();
+  const removedHistory = useRef(new Set<string>());
+  for (const id of deletedImages) removedHistory.current.add(id);
+  // A successful delete is irreversible in this view. Older requests must not
+  // resurrect it; server tombstones also survive later cached job responses.
+  const availableJob = useCallback((value: IdentityJob): IdentityJob => {
+    if (value.resultDeleted || value.historyDeleted) removedHistory.current.add(value.id);
+    return removedHistory.current.has(value.id)
+      ? { ...value, historyDeleted: true } : value;
+  }, []);
+  const availableBatch = useCallback((value: IdentityBatch): IdentityBatch => ({ ...value, items: value.items.map(availableJob) }), [availableJob]);
   const [status, setStatus] = useState<IdentityStatus | null>(null);
   const [references, setReferences] = useState<IdentityReference[]>([]);
   const [profiles, setProfiles] = useState<IdentityProfile[]>([]);
@@ -145,12 +157,28 @@ export function useIdentityWorkspace(replay: IdentityReplay | null | undefined, 
     const [runtime, assets, history, library, runs] = results;
     setStatus(runtime.status === "fulfilled" ? runtime.value : null);
     if (assets.status === "fulfilled") setReferences(assets.value);
-    if (history.status === "fulfilled") setJobs(currentJob.current ? upsert(history.value, currentJob.current) : history.value);
+    if (history.status === "fulfilled") {
+      const fresh = history.value.map(availableJob);
+      const selected = currentJob.current;
+      if (selected) {
+        const updated = fresh.find(item => item.id === selected.id) ?? availableJob(selected);
+        currentJob.current = updated; setJob(updated);
+        setJobs(fresh.some(item => item.id === selected.id) ? fresh : upsert(fresh, updated));
+      } else setJobs(fresh);
+    }
     if (library.status === "fulfilled") setProfiles(library.value);
-    if (runs.status === "fulfilled") setBatches(currentBatch.current ? upsert(runs.value, currentBatch.current) : runs.value);
+    if (runs.status === "fulfilled") {
+      const fresh = runs.value.map(availableBatch);
+      const selected = currentBatch.current;
+      if (selected) {
+        const updated = fresh.find(item => item.id === selected.id) ?? availableBatch(selected);
+        currentBatch.current = updated; setBatch(updated);
+        setBatches(fresh.some(item => item.id === selected.id) ? fresh : upsert(fresh, updated));
+      } else setBatches(fresh);
+    }
     const errors = results.flatMap((result) => result.status === "rejected" ? [failure(result.reason)] : []);
     setLoadError(errors.length ? errors.join("；") : null); setInitializing(false); setRefreshing(false);
-  }, []);
+  }, [availableJob, availableBatch]);
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; selection.current += 1; }; }, []);
   useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => controller.abort(); }, [refresh]);
@@ -285,6 +313,13 @@ export function useIdentityWorkspace(replay: IdentityReplay | null | undefined, 
     });
   }
 
-  return { status, references, profiles, profileId, draftContext, selectedProfile, jobs, job, batches, batch, initializing, refreshing, opening, pending, active, locked,
+  // Decorate all views, including a selected item that is no longer in a list.
+  for (const item of [...jobs, ...batches.flatMap(value => value.items), ...(job ? [job] : []), ...(batch?.items ?? [])]) {
+    if (item.resultDeleted || item.historyDeleted) removedHistory.current.add(item.id);
+  }
+  const visibleJobs = jobs.map(availableJob), visibleBatches = batches.map(availableBatch);
+  return { status, references, profiles, profileId, draftContext, selectedProfile,
+    jobs: visibleJobs, job: job ? availableJob(job) : null, batches: visibleBatches, batch: batch ? availableBatch(batch) : null,
+    initializing, refreshing, opening, pending, active, locked,
     error, loadError, pollError, notice, storageNotice, persist, refresh, openJob, openBatch, selectProfile, clearProfile, upload, createProfile, renameProfile, archiveProfile, submit, cancel, retryBatch, savePreset };
 }

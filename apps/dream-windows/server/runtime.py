@@ -15,7 +15,8 @@ from typing import Any, Callable
 from config import DreamServerConfig
 from errors import DreamApiError
 from hardware_telemetry import HardwareTelemetry
-from history_transactions import delete_history_files, history_mutation_lock, recover_history_transactions
+from history_transactions import (delete_history_files, history_mutation_lock, recover_history_transactions,
+                                  committed_history_deletions)
 from identity_models import is_visual_model_id
 from job_runner import JobRunner
 from models import ExperimentRequest, GenerateRequest
@@ -227,7 +228,9 @@ class DreamRuntime:
             "observedSha256": observed,
         }
 
-    def _scan_history(self) -> list[dict[str, Any]]:
+    def _scan_history(self, *, deleted: set[str] | None = None) -> list[dict[str, Any]]:
+        if deleted is None:
+            deleted = committed_history_deletions(self.config.dream_root)
         roots = [self.config.dream_root / "outputs", self.config.dream_root / "history", self.config.dream_root / "exports"]
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -267,6 +270,8 @@ class DreamRuntime:
                 tags = list(metadata.get("tags") or [])
                 favorite = bool(metadata.get("favorite", False))
                 item_id = str(metadata.get("id") or output.stem)
+                if item_id in deleted:
+                    continue
                 stored_model_id = str(metadata.get("model_id") or "")
                 model_id = canonical_model_ids.get(stored_model_id, stored_model_id)
                 entries.append({
@@ -321,8 +326,8 @@ class DreamRuntime:
         start = (page - 1) * page_size
         return {"items": [self._public_history_item(item) for item in entries[start : start + page_size]], "total": len(entries), "page": page, "pageSize": page_size}
 
-    def _find_history_item(self, item_id: str) -> dict[str, Any]:
-        item = next((entry for entry in self._scan_history() if entry["id"] == item_id), None)
+    def _find_history_item(self, item_id: str, *, deleted: set[str] | None = None) -> dict[str, Any]:
+        item = next((entry for entry in self._scan_history(deleted=deleted) if entry["id"] == item_id), None)
         if item is None:
             raise DreamApiError("HISTORY_NOT_FOUND", f"History item was not found: {item_id}", status_code=404)
         return item
@@ -338,20 +343,21 @@ class DreamRuntime:
         return path
 
     def delete_history(self, item_id: str) -> dict[str, Any]:
-        recover_history_transactions(self.config.dream_root)
-        item = self._find_history_item(item_id)
-        output = Path(item["filePath"])
-        metadata = Path(item["metadataPath"])
-        paths = [output, metadata]
-        if re.fullmatch(r"identity-[a-f0-9]{24}", item_id):
-            original = self.config.dream_root / "data" / "identity" / "originals" / f"{item_id}.png"
-            paths.insert(0, original)
-        delete_history_files(self.config.dream_root, item_id, paths)
+        def paths():
+            # Already under the deletion OS lock, after its receipt lookup.
+            # Never reacquire that lock through the normal history read path.
+            item = self._find_history_item(item_id, deleted=set())
+            files = [Path(item["filePath"]), Path(item["metadataPath"])]
+            if re.fullmatch(r"identity-[a-f0-9]{24}", item_id):
+                files.insert(0, self.config.dream_root / "data/identity/originals" / f"{item_id}.png")
+            return files
+
+        delete_history_files(self.config.dream_root, item_id, paths, idempotent=True)
         return {"deleted": item_id, "truth": "observed"}
 
     def favorite_history(self, item_id: str, value: bool) -> dict[str, Any]:
-        with history_mutation_lock(self.config.dream_root):
-            item = self._find_history_item(item_id)
+        with history_mutation_lock(self.config.dream_root) as deleted:
+            item = self._find_history_item(item_id, deleted=deleted)
             metadata_path = Path(item["metadataPath"])
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
@@ -359,7 +365,7 @@ class DreamRuntime:
                 metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             except (OSError, json.JSONDecodeError) as exc:
                 raise DreamApiError("HISTORY_METADATA_WRITE_FAILED", str(exc), detail={"path": str(metadata_path)}) from exc
-            return self.history_item(item_id)
+            return self._public_history_item(self._find_history_item(item_id, deleted=deleted))
 
     def _experiment_path(self, experiment_id: str) -> Path:
         return self.config.dream_root / "data" / "experiments" / f"{experiment_id}.json"

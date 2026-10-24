@@ -41,7 +41,12 @@
 .identity-workspace th, .identity-workspace td { padding: 8px; border-bottom: 1px solid var(--border); }
 .identity-workspace pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--bg-0); padding: 12px; border-radius: var(--radius-sm); }
 .identity-workspace .identity-history ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; max-height: 360px; overflow: auto; }
-.identity-workspace .identity-history button { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; text-align: left; width: 100%; }
+.identity-workspace .identity-history button[aria-pressed] { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; text-align: left; width: 100%; }
+.identity-workspace .identity-history-row { display: flex; align-items: start; gap: 10px; }
+.identity-workspace .identity-history-open { flex: 1; min-width: 0; }
+.identity-workspace .identity-history-row > .image-delete-control { flex: 0 1 320px; width: auto; max-width: 100%; }
+.identity-workspace .identity-history-row > .image-delete-control:not(:has(.image-delete-confirm)) { flex-basis: auto; }
+@media (max-width: 640px) { .identity-workspace .identity-history-row { flex-wrap: wrap; } .identity-workspace .identity-history-open { flex-basis: 100%; } }
 .identity-workspace .identity-history button[aria-pressed="true"] { border-color: var(--primary); }
 .identity-workspace .identity-history span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .identity-workspace .identity-history small { grid-column: 1 / -1; color: var(--text-3); overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, SetStateAction } from "react";
-import { IDENTITY_MODEL_ID, ILLUSTRIOUS_IDENTITY_MODEL_ID, identityFacePolishOptions, identityModelDefaults, identityReferenceKind, identityStateLabels, isIdentityModelId, normalizeIdentityOptions, validAnimeStrength, validFaceRestoreStrength, validVisualAnchorStrength, validVisualPolishMode, validVisualPolishPasses, visualPolishDefaults } from "../../domain/identity";
+import { IDENTITY_MODEL_ID, ILLUSTRIOUS_IDENTITY_MODEL_ID, identityFacePolishOptions, identityModelDefaults, identityReferenceKind, identityStateLabels, isIdentityJobActive, isIdentityModelId, normalizeIdentityOptions, validAnimeStrength, validFaceRestoreStrength, validVisualAnchorStrength, validVisualPolishMode, validVisualPolishPasses, visualPolishDefaults } from "../../domain/identity";
 import type { IdentityFacePolishOptions, IdentityRequest } from "../../domain/identity";
 import { BatchControls, defaultBatchSettings, validBatchSettings } from "../components/identity/BatchControls";
 import type { BatchSettings } from "../components/identity/BatchControls";
@@ -11,6 +11,8 @@ import { AnimeProfileLibrary } from "../components/identity/AnimeProfileLibrary"
 import { useAnimeProfiles } from "../components/identity/useAnimeProfiles";
 import { IdentityResults } from "../components/identity/IdentityResults";
 import { BatchRetryActions } from "../components/BatchRetryActions";
+import { DeleteImageButton } from "../components/DeleteImageButton";
+import { identityApi } from "../../providers/identity-api";
 import { ProfileLibrary } from "../components/identity/ProfileLibrary";
 import { useIdentityWorkspace } from "../components/identity/useIdentityWorkspace";
 import type { IdentityReplay, RestoredIdentity } from "../components/identity/useIdentityWorkspace";
@@ -98,6 +100,7 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
     setSettings(restoreFullDraft && savedDraft.batchSettings ? savedDraft.batchSettings : batch ? { count: batch.count, previewEvery: batch.previewEvery, ...(batch.stepValues?.length ? { stepValues: batch.stepValues } : {}) } : defaultBatchSettings);
   }, [savedDraft]);
   const workspace = useIdentityWorkspace(replay, restore);
+  const historyJobs = workspace.jobs.filter(item => !item.resultDeleted && !item.historyDeleted);
   const { status, references, selectedProfile, profileId, locked, pending, initializing, persist } = workspace;
   const models = status?.models ?? (status ? [{ id: IDENTITY_MODEL_ID, name: status.modelName, architecture: "SD1.5", ready: status.ready, message: status.message, loras: status.loras }] : []);
   const modelId = form.modelId ?? IDENTITY_MODEL_ID;
@@ -285,14 +288,15 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
       <h2>人物批次历史</h2>
       {workspace.batch && <BatchRetryActions batch={workspace.batch} disabled={locked} onRetry={workspace.retryBatch} />}
       {workspace.batches.length ? <ul>{workspace.batches.map((item) => <li key={item.id}><button type="button" className="secondary-button" disabled={!!pending} aria-pressed={item.id === workspace.batch?.id} aria-label={"打开人物批次 " + item.id} onClick={() => void workspace.openBatch(item.id)}>
-        <strong>{identityStateLabels[item.state]}</strong><span>{item.request.request.prompt} · {item.completedItems} / {item.totalItems} 张</span><small>{item.id}</small>
+        <strong>{identityStateLabels[item.state]}</strong><span>{item.request.request.prompt} · {item.completedItems} / {item.totalItems} 张</span>
+        <small>{item.id}{item.items.some(job => job.resultDeleted || job.historyDeleted) && <> · 可用 {item.items.filter(job => job.state === "complete" && job.result && !job.resultDeleted && !job.historyDeleted).length} 张 · 已删除 {item.items.filter(job => job.resultDeleted || job.historyDeleted).length} 张</>}</small>
       </button></li>)}</ul> : <p className="identity-note">暂无人物批次。</p>}
     </section>
     <section className="surface-card identity-history" aria-label="人物任务历史">
       <h2>人物任务历史</h2>
-      {workspace.jobs.length ? <ul>{workspace.jobs.map((item) => <li key={item.id}><button type="button" className="secondary-button" disabled={!!pending} aria-pressed={item.id === workspace.job?.id} aria-label={"打开人物任务 " + item.id} onClick={() => void workspace.openJob(item.id)}>
+      {historyJobs.length ? <ul>{historyJobs.map((item) => <li className="identity-history-row" key={item.id}><button type="button" className="secondary-button identity-history-open" disabled={!!pending} aria-pressed={item.id === workspace.job?.id} aria-label={"打开人物任务 " + item.id} onClick={() => void workspace.openJob(item.id)}>
         <strong>{identityStateLabels[item.state]}</strong><span>{item.request.prompt}</span><small>{item.id}</small>
-      </button></li>)}</ul> : <p className="identity-note">暂无人物任务。历史任务可打开、查看结果并重新使用参数。</p>}
+      </button>{!isIdentityJobActive(item) && <DeleteImageButton id={item.id} onDelete={identityApi.deleteJob} recordOnly={!item.result} disabled={!!pending} />}</li>)}</ul> : <p className="identity-note">暂无人物任务。历史任务可打开、查看结果并重新使用参数。</p>}
     </section>
   </section>;
 }

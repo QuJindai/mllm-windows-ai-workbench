@@ -8,9 +8,10 @@ import "../shell.css";
 import { announceImageDeleted } from "../image-deletion";
 
 it("removes a result deleted in another page and does not restore it from a stale refresh", async () => {
-  render(<DreamProviderContext.Provider value={new PagedHistoryProvider()}><HistoryPage /></DreamProviderContext.Provider>);
+  const provider = new PagedHistoryProvider();
+  render(<DreamProviderContext.Provider value={provider}><HistoryPage /></DreamProviderContext.Provider>);
   await screen.findByRole("button", { name: "打开 历史项目 1" });
-  act(() => announceImageDeleted("paged-history-1"));
+  act(() => announceImageDeleted("paged-history-1", provider));
   expect(screen.queryByRole("button", { name: "打开 历史项目 1" })).not.toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "打开 历史项目 2" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "刷新" }));
@@ -48,7 +49,7 @@ it("resets pagination after deletion in another page without skipping the shifte
   render(<DreamProviderContext.Provider value={provider}><HistoryPage /></DreamProviderContext.Provider>);
   await screen.findByRole("button", { name: "打开 历史项目 24" });
   await provider.deleteHistory("paged-history-1");
-  act(() => announceImageDeleted("paged-history-1"));
+  act(() => announceImageDeleted("paged-history-1", provider));
   await screen.findByRole("button", { name: "打开 历史项目 25" });
   fireEvent.click(screen.getByRole("button", { name: "加载更多历史记录" }));
   await screen.findByRole("button", { name: "打开 历史项目 28" });

@@ -100,7 +100,10 @@ export class DreamHttpProvider implements DreamProvider {
   }
 
   async deleteHistory(id: string): Promise<void> {
-    await requestJson(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const receipt = await requestJson<unknown>(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!receipt || typeof receipt !== "object" || !("deleted" in receipt) || receipt.deleted !== id) {
+      throw new Error("删除未得到确认，请刷新后重试");
+    }
   }
 
   async favoriteHistory(id: string, value: boolean): Promise<void> {

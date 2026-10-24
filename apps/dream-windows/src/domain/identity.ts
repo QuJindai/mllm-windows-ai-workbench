@@ -105,6 +105,7 @@ export type IdentityFacePolishResult = {
 export type IdentityJob = {
   id: string;
   resultDeleted?: boolean;
+  historyDeleted?: boolean;
   state: "queued" | "preparing" | "sampling" | "complete" | "failed" | "cancelled";
   progress: number;
   message: string;

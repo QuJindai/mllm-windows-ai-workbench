@@ -17,7 +17,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from errors import DreamApiError
 
@@ -68,6 +68,17 @@ def _root(value: Path) -> Path:
     root = Path(value).absolute()
     _plain(root, root)
     return root
+
+
+def validate_history_path(root: Path, path: Path) -> Path:
+    """Validate an owned record/artifact path without following redirects."""
+    try:
+        path = _plain(_root(root), path)
+        if path.exists() and not path.is_file():
+            raise ValueError('Not a regular file')
+        return path
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise _path_error() from exc
 
 
 def _valid_id(item_id: Any) -> bool:
@@ -180,10 +191,16 @@ def _read_record(root: Path, folder: Path, name: str) -> dict[str, Any]:
     if len(raw) > MAX_JOURNAL_BYTES:
         raise ValueError('Journal is too large')
     value = json.loads(raw)
-    if (not isinstance(value, dict) or value.get('version') != 1
+    if (not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] not in {1, 2}
             or value.get('transaction_id') != folder.name or not _valid_id(value.get('item_id'))):
         raise ValueError('Invalid journal')
     files = value.get('files')
+    if value['version'] == 2:
+        if (set(value) != {'version', 'transaction_id', 'item_id', 'kind', 'files'}
+                or value.get('kind') != 'identity-history-hidden'
+                or not _IDENTITY_ID.fullmatch(value['item_id']) or files != []):
+            raise ValueError('Invalid identity history tombstone')
+        return value
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
         raise ValueError('Invalid journal files')
     sources = set()
@@ -289,7 +306,18 @@ def recover_history_transactions(root: Path) -> None:
         raise _recovery_error() from exc
 
 
-def committed_history_deletions(root: Path) -> set[str]:
+def _committed_flags_locked(root: Path, store: Path) -> dict[str, dict[str, bool]]:
+    flags = {}
+    for folder in _directories(root, store):
+        if (folder / 'committed.json').exists():
+            record = _read_record(root, folder, 'committed.json')
+            entry = flags.setdefault(record['item_id'], {'historyDeleted': True})
+            if record['version'] == 1:
+                entry['resultDeleted'] = True
+    return flags
+
+
+def history_deletion_flags(root: Path) -> dict[str, dict[str, bool]]:
     """Read authoritative receipts, serialized with staging/commit/rollback.
 
     File absence (or an I/O failure) alone never means deletion succeeded.
@@ -299,13 +327,15 @@ def committed_history_deletions(root: Path) -> set[str]:
         root = _root(root)
         store = _plain(root, root / 'data' / 'history-trash')
         if not store.exists():
-            return set()
+            return {}
         with _locked(root, store):
-            return {_read_record(root, folder, 'committed.json')['item_id']
-                    for folder in _directories(root, store)
-                    if (folder / 'committed.json').exists()}
+            return _committed_flags_locked(root, store)
     except (OSError, RuntimeError, ValueError) as exc:
         raise _recovery_error() from exc
+
+
+def committed_history_deletions(root: Path) -> set[str]:
+    return set(history_deletion_flags(root))
 
 
 @contextmanager
@@ -326,32 +356,22 @@ def history_mutation_lock(root: Path):
         _sync_directory(store.parent)
         with _locked(root, store):
             _recover_locked(root, store)
-            yield
+            yield set(_committed_flags_locked(root, store))
     except (OSError, RuntimeError, ValueError) as exc:
         raise _recovery_error() from exc
 
 
-def delete_history_files(root: Path, item_id: str, paths: Iterable[Path]) -> None:
-    """Stage associated outputs and visual snapshots in one recoverable transaction."""
+def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Callable[[], Iterable[Path]],
+                         *, idempotent: bool = False, allow_empty: bool = False) -> None:
+    """Commit files, or an explicit owned identity tombstone, under one lock.
+
+    Lazy path resolution runs after recovery and idempotency lookup. Only the
+    identity service, after validating a durable terminal owner, uses allow_empty.
+    """
     try:
         root = _root(root)
-        if not _valid_id(item_id):
+        if not _valid_id(item_id) or (allow_empty and not _IDENTITY_ID.fullmatch(item_id)):
             raise ValueError('Invalid history ID')
-        sources = []
-        for path in paths:
-            source = _source(root, item_id, Path(path))
-            if source in sources or len(sources) >= MAX_FILES:
-                raise ValueError('Duplicate or excessive history files')
-            sources.append(source)
-        if not sources:
-            raise ValueError('No history files')
-        if _IDENTITY_ID.fullmatch(item_id):
-            for kind in ('anchor', 'harmonize', 'detail'):
-                stage = _source(root, item_id, root / 'data/identity/stages' / item_id / f'{kind}.png')
-                if stage not in sources:
-                    sources.append(stage)
-        if len(sources) > MAX_FILES:
-            raise ValueError('Excessive history files')
         store = _plain(root, root / 'data' / 'history-trash')
     except (OSError, RuntimeError, ValueError) as exc:
         raise _path_error() from exc
@@ -363,6 +383,26 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path]) -> Non
                 _recover_locked(root, store)
             except (OSError, RuntimeError, ValueError) as exc:
                 raise _recovery_error() from exc
+            if idempotent and item_id in _committed_flags_locked(root, store):
+                return
+            try:
+                sources = []
+                for path in paths() if callable(paths) else paths:
+                    source = _source(root, item_id, Path(path))
+                    if source in sources or len(sources) >= MAX_FILES:
+                        raise ValueError('Duplicate or excessive history files')
+                    sources.append(source)
+                if not sources and not allow_empty:
+                    raise ValueError('No history files')
+                if sources and _IDENTITY_ID.fullmatch(item_id):
+                    for kind in ('anchor', 'harmonize', 'detail'):
+                        stage = _source(root, item_id, root / 'data/identity/stages' / item_id / f'{kind}.png')
+                        if stage not in sources:
+                            sources.append(stage)
+                if len(sources) > MAX_FILES:
+                    raise ValueError('Excessive history files')
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise _path_error() from exc
             files = []
             for path in sources:
                 _source(root, item_id, path)
@@ -370,7 +410,7 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path]) -> Non
                     info = path.stat()
                     files.append({'source': path.relative_to(root).as_posix(), 'staged': f'{len(files)}.bin',
                                   'size': info.st_size, 'device': info.st_dev, 'inode': info.st_ino})
-            if not files:
+            if not files and not allow_empty:
                 return
             folders = _directories(root, store)
             used = sum(path.stat().st_size for folder in folders for path in _transaction_files(root, folder))
@@ -380,6 +420,8 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path]) -> Non
             folder.mkdir()
             _sync_directory(store)
             record = {'version': 1, 'transaction_id': folder.name, 'item_id': item_id, 'files': files}
+            if not files:
+                record.update(version=2, kind='identity-history-hidden')
             moving = None
             try:
                 _write_record(root, folder / 'journal.json', record)

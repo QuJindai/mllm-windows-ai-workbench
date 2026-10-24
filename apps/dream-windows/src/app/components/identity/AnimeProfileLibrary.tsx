@@ -29,7 +29,7 @@ export function AnimeProfileLibrary({profiles,profile,jobs,pending,error,onCreat
     finally {if(version===revision.current) setReading(false);}
   };
   const deleted=useDeletedImageIds();
-  const candidates=jobs.filter(j=>j.state==='complete' && !j.resultDeleted && !deleted.has(j.id) && j.result
+  const candidates=jobs.filter(j=>j.state==='complete' && !j.resultDeleted && !j.historyDeleted && !deleted.has(j.id) && j.result
     && j.request.modelId===ILLUSTRIOUS_IDENTITY_MODEL_ID && j.request.referenceId===profile?.referenceId && j.request.faceIndex===profile?.faceIndex);
   const source=candidates.find(j=>j.id===selected) ?? candidates[0];
   return <section className="identity-anime-library" aria-label="动漫形象档案">

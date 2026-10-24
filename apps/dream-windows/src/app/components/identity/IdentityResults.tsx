@@ -131,7 +131,7 @@ function remainingTime(batch: IdentityBatch): string {
 
 export function IdentityResults({ batch, job, reference, profile, opening, cancelling, pending, pollError, onCancel, onSavePreset }: Props) {
   const deletedImages = useDeletedImageIds();
-  const isDeleted = (item: IdentityJob) => item.resultDeleted || deletedImages.has(item.id);
+  const isDeleted = (item: IdentityJob) => item.resultDeleted || item.historyDeleted || deletedImages.has(item.id);
   const observationHeading = useRef<HTMLHeadingElement>(null);
   const lastFocusedBatch = useRef<string | undefined>(undefined);
   const batchId = batch?.id;
@@ -176,7 +176,7 @@ export function IdentityResults({ batch, job, reference, profile, opening, cance
       <div className="identity-images">
         <ReferenceImage reference={reference} faceIndex={batch?.request.request.faceIndex ?? job?.request.faceIndex} />
         {batch ? batch.request.previewEvery !== 0 && batch.previewUrl ? <IntermediatePreview key={`${batch.id}:${batch.previewUrl}`} url={batch.previewUrl} /> : <p className="identity-note">{batch.request.previewEvery === 0 ? "中间预览已关闭" : "等待服务返回中间预览"}</p>
-          : job && isDeleted(job) ? <p role="status">图片已删除，仍可复用生成参数。</p> : job?.result?.imageUrl ? <div><JobResultPreview job={job} />{job.state === "complete" && <DeleteImageButton key={job.id} id={job.id} disabled={pending || opening} onDelete={identityApi.deleteResult} />}</div> : <figure><div className="identity-empty">结果尚未生成</div><figcaption>生成结果</figcaption></figure>}
+          : job && isDeleted(job) ? <p role="status">{job.resultDeleted ? "图片已删除，仍可复用生成参数。" : "历史记录已删除，仍可复用生成参数。"}</p> : job?.result?.imageUrl ? <div><JobResultPreview job={job} />{job.state === "complete" && <DeleteImageButton key={job.id} id={job.id} disabled={pending || opening} onDelete={identityApi.deleteJob} />}</div> : <figure><div className="identity-empty">结果尚未生成</div><figcaption>生成结果</figcaption></figure>}
       </div>
     </section>
     {batch ? <section className="surface-card" aria-label="已完成结果"><h2>已完成结果 · {completed.length} 张</h2>
@@ -184,7 +184,7 @@ export function IdentityResults({ batch, job, reference, profile, opening, cance
         <JobResultPreview job={item} />
         <p>种子 {identityJobSeed(item)} · {item.request.steps} 步</p>
         <p className="identity-note">{item.id}</p>{saveButton(item)}
-        <DeleteImageButton id={item.id} disabled={pending || opening} onDelete={identityApi.deleteResult} />
+        <DeleteImageButton id={item.id} disabled={pending || opening} onDelete={identityApi.deleteJob} />
         <details><summary>查看实测过程</summary><Measurements job={item} /></details>
       </article>)}</div>
       {!completed.length && <p className="identity-note">{batch.items.some(isDeleted) ? "已完成的图片已删除，任务参数仍保留。" : "尚无已完成结果，完成的原图会逐张保留在这里。"}</p>}

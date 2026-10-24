@@ -108,16 +108,16 @@ it.each([false, true])("deletes a person result without removing its reference (
     batchRequest = { request: { ...request, facePolish: false, faceRestoreStrength: 1 }, count: 1, previewEvery: 0 };
     localStorage.setItem("dream.identity.last-batch.v1", "batch-test");
   } else localStorage.setItem("dream.identity.last-job.v1", nextJob.id);
-  fetchOverride = (url, init) => url === `/api/history/${nextJob.id}` && init?.method === "DELETE"
+  fetchOverride = (url, init) => url === `/api/identity/jobs/${nextJob.id}` && init?.method === "DELETE"
     ? Promise.resolve(json({ deleted: nextJob.id })) : undefined;
   render(<IdentityPage />);
   await screen.findByAltText("生成结果");
-  fireEvent.click(screen.getByRole("button", { name: `删除图片 ${nextJob.id}` }));
+  fireEvent.click(screen.getAllByRole("button", { name: `删除图片 ${nextJob.id}` })[0]);
   expect(screen.getByRole("dialog", { name: "删除生成图片" })).toHaveTextContent("不删除人物档案和参考照片");
   fireEvent.click(screen.getByRole("button", { name: "确认删除图片" }));
   await waitFor(() => expect(screen.queryByAltText("生成结果")).not.toBeInTheDocument());
   expect(screen.getByAltText("任务参考照")).toBeInTheDocument();
-  expect(fetchCalls.filter(call => call.method === "DELETE")).toEqual([{ url: `/api/history/${nextJob.id}`, method: "DELETE", body: undefined }]);
+  expect(fetchCalls.filter(call => call.method === "DELETE")).toEqual([{ url: `/api/identity/jobs/${nextJob.id}`, method: "DELETE", body: undefined }]);
 });
 
 it("does not resurrect a deleted person result when reopening a stored task", async () => {

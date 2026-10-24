@@ -5,7 +5,7 @@ import { generationQualityWarning, MIN_GENERATION_STEPS } from "../../domain/gen
 import { useDreamProvider } from "../providers";
 import { TruthBadge } from "../components/TruthBadge";
 import { useUiPreferences } from "../ui-preferences";
-import { onImageDeleted } from "../image-deletion";
+import { onImageDeleted, readDeletedImageIds } from "../image-deletion";
 import { useImageDeletion } from "../image-deletion-state";
 
 type Filter = "all" | "today" | "favorites" | "failed" | "tagged";
@@ -55,7 +55,7 @@ export function HistoryPage({ onRerun }: { onRerun?: (item: HistoryItem) => void
   const itemsRef = useRef<HistoryItem[]>([]);
   const queryVersionRef = useRef(0);
   const nextPageRef = useRef(2);
-  const deletedIdsRef = useRef(new Set<string>());
+  const deletedIdsRef = useRef(new Set(readDeletedImageIds(provider)));
   const [deletionVersion, setDeletionVersion] = useState(0);
   const selectionAfterDeleteRef = useRef<string | null>(null);
 
@@ -77,7 +77,7 @@ export function HistoryPage({ onRerun }: { onRerun?: (item: HistoryItem) => void
     setCompareOpen(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
-  }), []);
+  }, provider), [provider]);
 
   const selected = items[viewerIndex] ?? null;
   const deletion = useImageDeletion(provider, selected?.id ?? "");

@@ -108,7 +108,10 @@ class VisualReferencePolisher:
                         callback_on_step_end_tensor_inputs=['latents']).images[0]
                 if max(ImageStat.Stat(patch.convert('RGB')).stddev) < 2:
                     raise ValueError('动漫局部重绘结果异常，保留原图')
-                current = blend_face(image, patch, box, crop)
+                # Refine the preceding stage. Blending every pass against the
+                # original resurrects its face at feathered boundaries even
+                # when the model returns an unchanged patch.
+                current = blend_face(current, patch, box, crop)
                 if staged:
                     snapshots.append({'kind': kind, 'imageUrl': save_visual_stage(current, item, kind)})
                     passes.append({'kind': kind, 'denoiseStrength': strength_now, 'steps': total,

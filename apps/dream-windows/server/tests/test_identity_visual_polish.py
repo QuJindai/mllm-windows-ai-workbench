@@ -48,6 +48,8 @@ def redraw_case(monkeypatch):
             for step in range(int(kw['num_inference_steps'] * kw['strength'])):
                 assert callback(None, step, None, {'latents': None}) == {'latents': None}
             patch = Image.new('RGB', kw['image'].size, 'black') if control['blank'] else Image.linear_gradient('L').resize(kw['image'].size).convert('RGB')
+            if control.get('unchanged_patch') or (control.get('unchanged_second_patch') and len(observed) > 1):
+                patch = kw['image'].copy()
             return SimpleNamespace(images=[patch])
         return call
     monkeypatch.setitem(sys.modules, 'diffusers', SimpleNamespace(StableDiffusionXLImg2ImgPipeline=factory,
@@ -226,6 +228,37 @@ def test_two_pass_redraw_reuses_first_result_instead_of_regenerating_scene(redra
     from identity_anime import face_mask
     mask=np.asarray(face_mask(image.size,[35.,30.,85.,95.]))
     assert np.array_equal(np.asarray(output)[mask==0],np.asarray(image)[mask==0])
+
+
+@pytest.mark.parametrize('mode', ['redraw', 'reference-anchor'])
+def test_unchanged_refinement_does_not_reintroduce_original_face_at_boundary(redraw_case, staged_artifacts, monkeypatch, mode):
+    import identity_reference_anchor
+    import identity_visual_polish
+    from identity_anime import face_mask, blend_face, crop_box
+    processor, item, image, calls, control, _, _ = redraw_case
+    box = [35., 30., 85., 95.]
+    crop = crop_box(image.size, box)
+    # Isolate compositing from model inference and resizing: a no-op patch must
+    # not erase an already accepted refinement in the feathered boundary.
+    monkeypatch.setattr(identity_visual_polish, 'detail_size', lambda crop, box: (crop[2]-crop[0], crop[3]-crop[1]))
+    item.update(visualPolishMode=mode, visualPolishPasses=2,
+                jobId='identity-'+'e'*24, imagePath='local-reference.png')
+    if mode == 'reference-anchor':
+        patch = Image.linear_gradient('L').resize((crop[2]-crop[0], crop[3]-crop[1])).convert('RGB')
+        anchor = blend_face(image, patch, box, crop)
+        monkeypatch.setattr(identity_reference_anchor, 'ReferenceAnchor', lambda *a: SimpleNamespace(
+            apply=lambda image, strength: (anchor, box, {'anchorStrength':strength, 'alignmentError':.05})))
+        control['unchanged_patch'] = True
+    else:
+        control['unchanged_second_patch'] = True
+    output, _ = processor.apply(image, item, 1., lambda s: None)
+    saved = dict(staged_artifacts[0])
+    expected = saved['anchor'] if mode == 'reference-anchor' else saved['harmonize']
+    mask = np.asarray(face_mask(image.size, box))
+    feather = (mask > 0) & (mask < 255)
+    assert feather.any()
+    assert np.array_equal(np.asarray(output)[feather], np.asarray(expected)[feather])
+    assert np.array_equal(np.asarray(output)[mask == 0], np.asarray(image)[mask == 0])
 
 
 def test_second_pass_failure_retains_original_and_removes_partial_snapshots(redraw_case,staged_artifacts,tmp_path):

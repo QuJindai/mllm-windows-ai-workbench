@@ -63,18 +63,18 @@ jobs:
       - name: Materialize Safe Core source
         shell: powershell
         run: python ci/materialize.py
-      - name: PS5.1 parse all source
+      - name: PS5.1 parse legacy and shared source
         shell: powershell
+        run: .\ci\Test-PowerShellSource.ps1 -RuntimeGroup Legacy51
+      - name: PowerShell 7 parse all source including Dream
+        shell: pwsh
+        run: .\ci\Test-PowerShellSource.ps1 -RuntimeGroup PowerShell7
+      - name: Runtime grouping regression tests
+        shell: pwsh
         run: |
-          $ErrorActionPreference='Stop'
-          $errs = @()
-          Get-ChildItem -Recurse -Include *.ps1,*.psm1 -File | Where-Object { $_.FullName -notmatch '[\\/]dist[\\/]' } | ForEach-Object {
-            $tokens=$null; $parse=$null
-            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tokens,[ref]$parse)
-            foreach($e in @($parse)){ $errs += "$($_.FullName): $($e.Message)" }
-          }
-          if($errs.Count){ throw ($errs -join "`n") }
-          Write-Host 'PS51_PARSE_ALL=PASS'
+          python -m pip install --disable-pip-version-check pytest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install test-only dependencies' }
+          python -m pytest -q tests/ci/test_powershell_runtime_groups.py
       - name: Import Core module
         shell: powershell
         run: Import-Module .\engine\Core.psm1 -Force -ErrorAction Stop; Write-Host 'IMPORT_CORE=PASS'

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 $ErrorActionPreference='Stop'
 $ProjectRoot=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path

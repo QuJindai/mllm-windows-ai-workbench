@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "powershell7": [
+    "scripts/diagnose_dream_web.ps1",
+    "scripts/start_dream_web_background.ps1"
+  ]
+}

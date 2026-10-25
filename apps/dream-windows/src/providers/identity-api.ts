@@ -96,6 +96,15 @@ export function reserveBatchRetryOperation(id: string, mode: BatchRetryPayload["
 }
 
 export const identityApi = {
+  deleteBatch: async (id: string) => {
+    const response = await request<{ deleted: string; deletedJobIds: string[] }>(`/batches/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const ids = response?.deletedJobIds;
+    if (response?.deleted !== id || !Array.isArray(ids) || !ids.length || ids.length > 16
+      || ids.some(value => typeof value !== "string" || !value.trim() || value === id) || new Set(ids).size !== ids.length) {
+      throw new Error("整批删除未得到完整确认，请刷新后重试");
+    }
+    return response;
+  },
   animeProfiles: (signal?: AbortSignal) => request<AnimeProfile[]>("/anime-profiles", {signal}),
   createAnimeProfile: (body: {name: string; profileId: string; jobId: string}) => request<AnimeProfile>("/anime-profiles", {method:"POST",body:JSON.stringify(body)}),
   importAnimeProfile: (body: AnimeProfileImport) => request<AnimeProfile>("/anime-profiles/import", {method:"POST",body:JSON.stringify(body)}),

@@ -1243,66 +1243,96 @@ class IdentityService:
         with self._lock:
             return copy.deepcopy(list(reversed(self._jobs.values())))
 
+    def _history_paths(self, job_id: str):
+        """Validate the durable terminal owner; resolve its artifacts under the trash lock."""
+        record = self.get(job_id)
+        if record['state'] not in TERMINAL:
+            raise DreamApiError('IDENTITY_JOB_ACTIVE', '人物任务仍在运行，请先取消或等待完成', status_code=409)
+        root = self.config.dream_root
+        try:
+            path = validate_history_path(root, self._job_path(job_id))
+            if path.exists():
+                durable = read_json(path)
+            else:
+                # Recovery may have restored a child from its frozen batch.
+                # Validate that durable owner again; never accept an ID alone.
+                owner = self.batches.item_owners.get(job_id)
+                if owner is None:
+                    raise ValueError('Missing durable job owner')
+                batch = read_json(validate_history_path(root, self.batches.path(owner)))
+                if batch['id'] != owner:
+                    raise ValueError('Invalid batch owner')
+                self.batches._validate_lineage(batch, self.batches.records)
+                durable = next(item for item in batch['items'] if item['id'] == job_id)
+            request = IdentityGenerateRequest.model_validate(record['request']).model_dump()
+            if (durable.get('id') != job_id or durable.get('state') != record['state']
+                    or IdentityGenerateRequest.model_validate(durable['request']).model_dump() != request
+                    or durable.get('result') != record.get('result')):
+                raise ValueError('Job state or request is not durably bound')
+        except (OSError, ValueError, TypeError, KeyError, StopIteration) as exc:
+            raise DreamApiError('IDENTITY_HISTORY_RECORD_INVALID', '人物历史归属或终态记录无效，未删除', status_code=409) from exc
+
+        def paths():
+            if record['state'] != 'complete' or record.get('result') is None:
+                return []
+            try:
+                result = record['result']
+                metadata = result['metadata']
+                if result['imageUrl'] != f'/api/history/{job_id}/image' or metadata['id'] != job_id:
+                    raise ValueError('Invalid result binding')
+                output = validate_history_path(root, Path(metadata['output']))
+                # Only the server's canonical identity output can be removed.
+                relative = output.relative_to(root)
+                if (len(relative.parts) != 3 or relative.parts[0] != 'outputs'
+                        or relative.name != f'{job_id}.png'
+                        or date.fromisoformat(relative.parts[1]).isoformat() != relative.parts[1]):
+                    raise ValueError('Invalid identity output path')
+                metadata_path = validate_history_path(root, output.with_suffix('.json'))
+                if metadata.get('identity') is not None and IdentityGenerateRequest.model_validate(metadata['identity']).model_dump() != request:
+                    raise ValueError('Invalid result request')
+                if metadata_path.exists():
+                    saved = read_json(metadata_path)
+                    if (saved.get('id') != job_id or saved.get('output') != metadata['output']
+                            or saved.get('identity') != metadata.get('identity')):
+                        raise ValueError('Invalid output metadata binding')
+                return [root / 'data/identity/originals' / f'{job_id}.png', output, metadata_path]
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                raise DreamApiError('IDENTITY_HISTORY_RESULT_INVALID', '人物成果路径或元数据无效，未删除', status_code=422) from exc
+
+        return paths
+
     @owned_operation
     def delete_history(self, job_id: str) -> dict[str, str]:
         """Hide a terminal owned job without rewriting frozen retry/profile data."""
         with self._lock:
-            record = self.get(job_id)
-            if record['state'] not in TERMINAL:
-                raise DreamApiError('IDENTITY_JOB_ACTIVE', '人物任务仍在运行，请先取消或等待完成', status_code=409)
+            paths = self._history_paths(job_id)
+            delete_history_files(self.config.dream_root, job_id, paths, idempotent=True, allow_empty=True)
+            return {'deleted': job_id}
+
+    @owned_operation
+    def delete_batch_history(self, batch_id: str) -> dict[str, Any]:
+        """Publish one receipt for the batch and every member, or restore them all."""
+        self._ensure_recovered()
+        with self._lock:
+            record = self.batches.get(batch_id, live_elapsed=False)
+            if record['state'] not in TERMINAL or any(item['state'] not in TERMINAL for item in record['items']):
+                raise DreamApiError('IDENTITY_BATCH_ACTIVE', '人物批次仍在运行，请先取消或等待完成', status_code=409)
             root = self.config.dream_root
             try:
-                path = validate_history_path(root, self._job_path(job_id))
-                if path.exists():
-                    durable = read_json(path)
-                else:
-                    # Recovery may have restored a child from its frozen batch.
-                    # Validate that durable owner again; never accept an ID alone.
-                    owner = self.batches.item_owners.get(job_id)
-                    if owner is None:
-                        raise ValueError('Missing durable job owner')
-                    batch = read_json(validate_history_path(root, self.batches.path(owner)))
-                    if batch['id'] != owner:
-                        raise ValueError('Invalid batch owner')
-                    self.batches._validate_lineage(batch, self.batches.records)
-                    durable = next(item for item in batch['items'] if item['id'] == job_id)
-                request = IdentityGenerateRequest.model_validate(record['request']).model_dump()
-                if (durable.get('id') != job_id or durable.get('state') != record['state']
-                        or IdentityGenerateRequest.model_validate(durable['request']).model_dump() != request
-                        or durable.get('result') != record.get('result')):
-                    raise ValueError('Job state or request is not durably bound')
-            except (OSError, ValueError, TypeError, KeyError, StopIteration) as exc:
-                raise DreamApiError('IDENTITY_HISTORY_RECORD_INVALID', '人物历史归属或终态记录无效，未删除', status_code=409) from exc
-
-            def paths():
-                if record['state'] != 'complete' or record.get('result') is None:
-                    return []
-                try:
-                    result = record['result']
-                    metadata = result['metadata']
-                    if result['imageUrl'] != f'/api/history/{job_id}/image' or metadata['id'] != job_id:
-                        raise ValueError('Invalid result binding')
-                    output = validate_history_path(root, Path(metadata['output']))
-                    # Only the server's canonical identity output can be removed.
-                    relative = output.relative_to(root)
-                    if (len(relative.parts) != 3 or relative.parts[0] != 'outputs'
-                            or relative.name != f'{job_id}.png'
-                            or date.fromisoformat(relative.parts[1]).isoformat() != relative.parts[1]):
-                        raise ValueError('Invalid identity output path')
-                    metadata_path = validate_history_path(root, output.with_suffix('.json'))
-                    if metadata.get('identity') is not None and IdentityGenerateRequest.model_validate(metadata['identity']).model_dump() != request:
-                        raise ValueError('Invalid result request')
-                    if metadata_path.exists():
-                        saved = read_json(metadata_path)
-                        if (saved.get('id') != job_id or saved.get('output') != metadata['output']
-                                or saved.get('identity') != metadata.get('identity')):
-                            raise ValueError('Invalid output metadata binding')
-                    return [root / 'data/identity/originals' / f'{job_id}.png', output, metadata_path]
-                except (OSError, ValueError, TypeError, KeyError) as exc:
-                    raise DreamApiError('IDENTITY_HISTORY_RESULT_INVALID', '人物成果路径或元数据无效，未删除', status_code=422) from exc
-
-            delete_history_files(root, job_id, paths, idempotent=True, allow_empty=True)
-            return {'deleted': job_id}
+                durable = read_json(validate_history_path(root, self.batches.path(batch_id)))
+                self.batches._validate_lineage(durable, self.batches.records)
+                if durable != record:
+                    raise ValueError('Batch is not durably bound')
+                for item in record['items']:
+                    job = self.get(item['id'])
+                    if (self.batches.item_owners.get(item['id']) != batch_id
+                            or any(job.get(key) != item.get(key) for key in ('request', 'state', 'result'))):
+                        raise ValueError('Batch member ownership changed')
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                raise DreamApiError('IDENTITY_BATCH_RECORD_INVALID', '人物批次归属或终态记录无效，未删除', status_code=409) from exc
+            members = {item['id']: self._history_paths(item['id']) for item in record['items']}
+            delete_history_files(root, batch_id, [], idempotent=True, allow_empty=True, batch_members=members)
+            return {'deleted': batch_id, 'deletedJobIds': list(members)}
 
     @owned_operation
     def stage_image(self, job_id: str, kind: str) -> Path:

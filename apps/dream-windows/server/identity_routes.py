@@ -37,7 +37,11 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
         return record
 
     def batch_availability(record, deleted):
-        return {**record, "items": [result_availability(item, deleted) for item in record["items"]]}
+        value = {**record, "items": [result_availability(item, deleted) for item in record["items"]]}
+        if record['id'] in deleted or (record['state'] in {'complete', 'failed', 'cancelled'} and value['items']
+                                     and all(item.get('historyDeleted') for item in value['items'])):
+            value.update(historyDeleted=True, previewUrl=None)
+        return value
 
     class IdentityRoute(APIRoute):
         def get_route_handler(self):
@@ -127,12 +131,18 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
     def cancel_batch(batch_id: str):
         return batch_availability(service.batch_operation("cancel", batch_id), history_deletion_flags(config.dream_root))
 
+    @router.delete("/batches/{batch_id}")
+    def delete_batch(batch_id: str):
+        return service.delete_batch_history(batch_id)
+
     @router.post("/batches/{batch_id}/retry")
     def retry_batch(batch_id: str, payload: BatchRetryRequest):
         return batch_availability(service.batch_operation("retry", batch_id, payload), history_deletion_flags(config.dream_root))
 
     @router.get("/batches/{batch_id}/previews/{filename}")
     def preview(batch_id: str, filename: str):
+        if batch_availability(service.batch_operation('get', batch_id), history_deletion_flags(config.dream_root)).get('historyDeleted'):
+            raise DreamApiError('IDENTITY_PREVIEW_NOT_FOUND', '人物批次已删除', status_code=404)
         return FileResponse(service.batch_operation("preview", batch_id, filename), media_type="image/png")
 
     @router.get("/profiles")

@@ -23,6 +23,12 @@ beforeEach(() => {
       deletes.push(url);
       if (failDelete) return json({ message: "测试删除失败" }, 503);
       const id = url.split("/").pop()!;
+      if (url === "/api/identity/batches/history-batch") {
+        const deletedJobIds = batch.items.map(item => item.id);
+        jobs = jobs.map(job => deletedJobIds.includes(job.id) ? { ...job, historyDeleted: true } : job);
+        batch = { ...batch, historyDeleted: true, items: batch.items.map(item => jobs.find(job => job.id === item.id)!) };
+        return json({ deleted: id, deletedJobIds });
+      }
       jobs = jobs.map(job => job.id === id ? { ...job, historyDeleted: true, resultDeleted: job.state === "complete" } : job);
       batch = { ...batch, items: batch.items.map(item => jobs.find(job => job.id === item.id)!) };
       return json({ deleted: id });
@@ -100,4 +106,40 @@ it("receives a deletion from another view and honors it even when mounted afterw
   render(<DreamProviderContext.Provider value={scope}><IdentityPage /></DreamProviderContext.Provider>);
   await screen.findByRole("button", { name: "打开人物任务 history-sibling" });
   expect(screen.queryByRole("button", { name: "打开人物任务 history-first" })).not.toBeInTheDocument();
+});
+
+it("deletes the entire batch and all its views, preserving unrelated jobs after remount", async () => {
+  const view = await open();
+  fireEvent.click(screen.getByRole("button", { name: "打开人物批次 history-batch" }));
+  await screen.findByRole("article", { name: "已完成结果 history-first" });
+  fireEvent.click(screen.getByRole("button", { name: "删除批次 history-batch" }));
+  expect(screen.getByRole("dialog", { name: "删除人物批次" })).toHaveTextContent("2 项");
+  fireEvent.click(screen.getByRole("button", { name: "确认删除批次" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "打开人物批次 history-batch" })).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "打开人物任务 history-first" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "打开人物任务 history-sibling" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("article", { name: "已完成结果 history-first" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "打开人物任务 history-failed" })).toBeInTheDocument();
+  expect(screen.getByText(/批次已删除/)).toBeInTheDocument();
+  view.unmount();
+  render(<DreamProviderContext.Provider value={scope}><IdentityPage /></DreamProviderContext.Provider>);
+  await screen.findByRole("button", { name: "打开人物任务 history-failed" });
+  expect(screen.queryByRole("button", { name: "打开人物批次 history-batch" })).not.toBeInTheDocument();
+});
+
+it("keeps the batch and every child visible when batch deletion fails", async () => {
+  await open(); failDelete = true;
+  fireEvent.click(screen.getByRole("button", { name: "删除批次 history-batch" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除批次" }));
+  await screen.findByText("测试删除失败");
+  expect(screen.getByRole("button", { name: "打开人物批次 history-batch" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "打开人物任务 history-first" })).toBeInTheDocument();
+});
+
+it("removes an empty batch when its final individual record is deleted", async () => {
+  await open();
+  await remove("history-first");
+  expect(screen.getByRole("button", { name: "打开人物批次 history-batch" })).toBeInTheDocument();
+  await remove("history-sibling");
+  expect(screen.queryByRole("button", { name: "打开人物批次 history-batch" })).not.toBeInTheDocument();
 });

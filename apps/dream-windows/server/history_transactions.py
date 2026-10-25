@@ -23,11 +23,14 @@ from errors import DreamApiError
 
 MAX_TRASH_BYTES = 2 * 1024**3
 MAX_TRANSACTIONS = 1024
-MAX_JOURNAL_BYTES = 16 * 1024
+MAX_JOURNAL_BYTES = 64 * 1024
 MAX_FILES = 6  # output, metadata, original, and at most three visual stages
+MAX_BATCH_ITEMS = 16
+MAX_BATCH_FILES = MAX_FILES * MAX_BATCH_ITEMS
 _LOCK = threading.RLock()
 _TX_ID = re.compile(r'[a-f0-9]{32}')
 _IDENTITY_ID = re.compile(r'identity-[a-f0-9]{24}')
+_BATCH_ID = re.compile(r'batch-[a-f0-9]{24}')
 
 
 def _path_error() -> DreamApiError:
@@ -158,7 +161,7 @@ def _directories(root: Path, store: Path) -> list[Path]:
 
 def _transaction_files(root: Path, folder: Path) -> list[Path]:
     allowed = {'journal.json', 'journal.json.tmp', 'committed.json', 'committed.json.tmp',
-               *(f'{index}.bin' for index in range(MAX_FILES))}
+               *(f'{index}.bin' for index in range(MAX_BATCH_FILES))}
     result = []
     with os.scandir(folder) as entries:
         for entry in entries:
@@ -191,7 +194,7 @@ def _read_record(root: Path, folder: Path, name: str) -> dict[str, Any]:
     if len(raw) > MAX_JOURNAL_BYTES:
         raise ValueError('Journal is too large')
     value = json.loads(raw)
-    if (not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] not in {1, 2}
+    if (not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] not in {1, 2, 3}
             or value.get('transaction_id') != folder.name or not _valid_id(value.get('item_id'))):
         raise ValueError('Invalid journal')
     files = value.get('files')
@@ -201,7 +204,16 @@ def _read_record(root: Path, folder: Path, name: str) -> dict[str, Any]:
                 or not _IDENTITY_ID.fullmatch(value['item_id']) or files != []):
             raise ValueError('Invalid identity history tombstone')
         return value
-    if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
+    batch = value['version'] == 3
+    if batch:
+        members = value.get('member_ids')
+        if (set(value) != {'version', 'transaction_id', 'item_id', 'kind', 'member_ids', 'files'}
+                or value.get('kind') != 'identity-batch-deleted' or not _BATCH_ID.fullmatch(value['item_id'])
+                or not isinstance(members, list) or not 1 <= len(members) <= MAX_BATCH_ITEMS
+                or any(not isinstance(member, str) or not _IDENTITY_ID.fullmatch(member) for member in members)
+                or len(set(members)) != len(members)):
+            raise ValueError('Invalid batch tombstone')
+    if not isinstance(files, list) or not (0 if batch else 1) <= len(files) <= (MAX_BATCH_FILES if batch else MAX_FILES):
         raise ValueError('Invalid journal files')
     sources = set()
     for index, entry in enumerate(files):
@@ -210,7 +222,7 @@ def _read_record(root: Path, folder: Path, name: str) -> dict[str, Any]:
         relative = Path(entry['source'])
         if relative.is_absolute() or relative.as_posix() != entry['source']:
             raise ValueError('Invalid source path')
-        source = _source(root, value['item_id'], relative)
+        source = _record_source(root, value, entry)
         if source in sources or entry.get('staged') != f'{index}.bin':
             raise ValueError('Duplicate or redirected journal path')
         sources.add(source)
@@ -219,6 +231,19 @@ def _read_record(root: Path, folder: Path, name: str) -> dict[str, Any]:
                 raise ValueError('Invalid file identity')
         _plain(root, folder / entry['staged'])
     return value
+
+
+def _record_source(root: Path, record: dict, entry: dict) -> Path:
+    if record['version'] != 3:
+        return _source(root, record['item_id'], Path(entry['source']))
+    owner = entry.get('owner')
+    if owner not in record['member_ids']:
+        raise ValueError('Invalid batch file owner')
+    path = _source(root, owner, Path(entry['source']))
+    relative = path.relative_to(root)
+    if relative.parts[0] in {'outputs', 'history', 'exports'} and path.name not in {f'{owner}.png', f'{owner}.json'}:
+        raise ValueError('Batch file belongs to another job')
+    return path
 
 
 def _matches(path: Path, entry: dict[str, Any]) -> bool:
@@ -249,7 +274,7 @@ def _cleanup_committed(root: Path, folder: Path) -> None:
 def _rollback(root: Path, folder: Path, record: dict[str, Any]) -> None:
     pairs = []
     for entry in record['files']:
-        source = _source(root, record['item_id'], Path(entry['source']))
+        source = _record_source(root, record, entry)
         staged = _plain(root, folder / entry['staged'])
         if staged.exists():
             if source.exists() or not _matches(staged, entry):
@@ -314,6 +339,12 @@ def _committed_flags_locked(root: Path, store: Path) -> dict[str, dict[str, bool
             entry = flags.setdefault(record['item_id'], {'historyDeleted': True})
             if record['version'] == 1:
                 entry['resultDeleted'] = True
+            elif record['version'] == 3:
+                result_owners = {file['owner'] for file in record['files']}
+                for member in record['member_ids']:
+                    child = flags.setdefault(member, {'historyDeleted': True})
+                    if member in result_owners:
+                        child['resultDeleted'] = True
     return flags
 
 
@@ -362,7 +393,8 @@ def history_mutation_lock(root: Path):
 
 
 def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Callable[[], Iterable[Path]],
-                         *, idempotent: bool = False, allow_empty: bool = False) -> None:
+                         *, idempotent: bool = False, allow_empty: bool = False,
+                         batch_members: dict[str, Callable[[], Iterable[Path]]] | None = None) -> None:
     """Commit files, or an explicit owned identity tombstone, under one lock.
 
     Lazy path resolution runs after recovery and idempotency lookup. Only the
@@ -370,7 +402,11 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Calla
     """
     try:
         root = _root(root)
-        if not _valid_id(item_id) or (allow_empty and not _IDENTITY_ID.fullmatch(item_id)):
+        batch = batch_members is not None
+        if batch and (not _BATCH_ID.fullmatch(item_id) or not 1 <= len(batch_members) <= MAX_BATCH_ITEMS
+                      or any(not _IDENTITY_ID.fullmatch(member) for member in batch_members)):
+            raise ValueError('Invalid batch members')
+        if not _valid_id(item_id) or (allow_empty and not batch and not _IDENTITY_ID.fullmatch(item_id)):
             raise ValueError('Invalid history ID')
         store = _plain(root, root / 'data' / 'history-trash')
     except (OSError, RuntimeError, ValueError) as exc:
@@ -383,33 +419,44 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Calla
                 _recover_locked(root, store)
             except (OSError, RuntimeError, ValueError) as exc:
                 raise _recovery_error() from exc
-            if idempotent and item_id in _committed_flags_locked(root, store):
+            flags = _committed_flags_locked(root, store)
+            if idempotent and item_id in flags:
                 return
             try:
                 sources = []
-                for path in paths() if callable(paths) else paths:
-                    source = _source(root, item_id, Path(path))
-                    if source in sources or len(sources) >= MAX_FILES:
-                        raise ValueError('Duplicate or excessive history files')
-                    sources.append(source)
+                owners = batch_members if batch else {item_id: paths}
+                for owner, resolver in owners.items():
+                    if batch and owner in flags:
+                        continue
+                    owned = []
+                    for path in resolver() if callable(resolver) else resolver:
+                        source = _source(root, owner, Path(path))
+                        if source in owned or len(owned) >= MAX_FILES:
+                            raise ValueError('Duplicate or excessive history files')
+                        owned.append(source)
+                    if owned and _IDENTITY_ID.fullmatch(owner):
+                        for kind in ('anchor', 'harmonize', 'detail'):
+                            stage = _source(root, owner, root / 'data/identity/stages' / owner / f'{kind}.png')
+                            if stage not in owned:
+                                owned.append(stage)
+                    if len(owned) > MAX_FILES:
+                        raise ValueError('Excessive history files')
+                    sources.extend((owner, path) for path in owned)
                 if not sources and not allow_empty:
                     raise ValueError('No history files')
-                if sources and _IDENTITY_ID.fullmatch(item_id):
-                    for kind in ('anchor', 'harmonize', 'detail'):
-                        stage = _source(root, item_id, root / 'data/identity/stages' / item_id / f'{kind}.png')
-                        if stage not in sources:
-                            sources.append(stage)
-                if len(sources) > MAX_FILES:
-                    raise ValueError('Excessive history files')
+                if len({path for _, path in sources}) != len(sources):
+                    raise ValueError('Duplicate batch files')
             except (OSError, RuntimeError, ValueError) as exc:
                 raise _path_error() from exc
             files = []
-            for path in sources:
-                _source(root, item_id, path)
+            for owner, path in sources:
+                _source(root, owner, path)
                 if path.exists():
                     info = path.stat()
                     files.append({'source': path.relative_to(root).as_posix(), 'staged': f'{len(files)}.bin',
                                   'size': info.st_size, 'device': info.st_dev, 'inode': info.st_ino})
+                    if batch:
+                        files[-1]['owner'] = owner
             if not files and not allow_empty:
                 return
             folders = _directories(root, store)
@@ -420,7 +467,12 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Calla
             folder.mkdir()
             _sync_directory(store)
             record = {'version': 1, 'transaction_id': folder.name, 'item_id': item_id, 'files': files}
-            if not files:
+            if batch:
+                record.update(version=3, kind='identity-batch-deleted', member_ids=list(batch_members))
+                # Validate owner-bound paths before any file is moved.
+                for entry in files:
+                    _record_source(root, record, entry)
+            elif not files:
                 record.update(version=2, kind='identity-history-hidden')
             moving = None
             try:

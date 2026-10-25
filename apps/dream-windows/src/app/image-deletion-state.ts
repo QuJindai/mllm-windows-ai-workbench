@@ -62,6 +62,15 @@ function createStore(persistent: boolean) {
     // A synchronous reader may already have merged the new snapshot before this event arrives.
     emit();
   };
+  const confirmMany = (ids: string[]) => {
+    const accepted = ids.filter(validId);
+    accepted.forEach(id => states.delete(id));
+    const previous = readDeleted();
+    if (accepted.every(id => previous.has(id))) return;
+    merge(accepted);
+    persist();
+    emit();
+  };
   return {
     readDeleted,
     get: (id: string) => readDeleted().has(id) ? removed : states.get(id) ?? idle,
@@ -69,14 +78,8 @@ function createStore(persistent: boolean) {
       if (state.busy || state.error) states.set(id, state); else states.delete(id);
       emit();
     },
-    confirm(id: string) {
-      if (!validId(id)) return;
-      states.delete(id);
-      if (readDeleted().has(id)) return;
-      merge([id]);
-      persist();
-      emit();
-    },
+    confirm: (id: string) => confirmMany([id]),
+    confirmMany,
     subscribe(listener: () => void) {
       if (persistent && listeners.size === 0) window.addEventListener("storage", receive);
       listeners.add(listener);

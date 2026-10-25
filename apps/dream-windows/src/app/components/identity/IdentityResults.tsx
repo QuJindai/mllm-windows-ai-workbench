@@ -145,6 +145,9 @@ export function IdentityResults({ batch, job, reference, profile, opening, cance
     heading.focus({ preventScroll: true });
     heading.scrollIntoView?.({ block: "start", behavior: "auto" });
   }, [batchId]);
+  if (batch && (batch.historyDeleted || deletedImages.has(batch.id))) {
+    return <section className="surface-card identity-results" aria-label="人物任务详情"><h2>批次观察</h2><p role="status">批次已删除，人物档案与参考照片保留。</p><ReferenceImage reference={reference} faceIndex={batch.request.request.faceIndex} /></section>;
+  }
   const completed = batch?.items.filter((item) => item.state === "complete" && item.result && !isDeleted(item)) ?? [];
   const saveButton = (item: IdentityJob) => <button type="button" className="secondary-button" aria-label={`将 ${item.id} 存为人物预设`}
     disabled={pending || opening || profile?.state !== "ready" || profile.referenceId !== item.request.referenceId || profile.faceIndex !== item.request.faceIndex}

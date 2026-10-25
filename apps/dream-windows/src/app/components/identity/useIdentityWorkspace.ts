@@ -39,7 +39,13 @@ export function useIdentityWorkspace(replay: IdentityReplay | null | undefined, 
     return removedHistory.current.has(value.id)
       ? { ...value, historyDeleted: true } : value;
   }, []);
-  const availableBatch = useCallback((value: IdentityBatch): IdentityBatch => ({ ...value, items: value.items.map(availableJob) }), [availableJob]);
+  const availableBatch = useCallback((value: IdentityBatch): IdentityBatch => {
+    const items = value.items.map(availableJob);
+    if (value.historyDeleted || (!isIdentityJobActive(value) && items.length > 0 && items.every(item => item.historyDeleted))) removedHistory.current.add(value.id);
+    const deleted = removedHistory.current.has(value.id);
+    if (deleted) value.items.forEach(item => removedHistory.current.add(item.id));
+    return { ...value, ...(deleted ? { historyDeleted: true, previewUrl: null } : {}), items: value.items.map(availableJob) };
+  }, [availableJob]);
   const [status, setStatus] = useState<IdentityStatus | null>(null);
   const [references, setReferences] = useState<IdentityReference[]>([]);
   const [profiles, setProfiles] = useState<IdentityProfile[]>([]);
@@ -314,12 +320,19 @@ export function useIdentityWorkspace(replay: IdentityReplay | null | undefined, 
   }
 
   // Decorate all views, including a selected item that is no longer in a list.
+  for (const value of [...batches, ...(batch ? [batch] : [])]) {
+    if (value.historyDeleted || removedHistory.current.has(value.id)) {
+      removedHistory.current.add(value.id);
+      value.items.forEach(item => removedHistory.current.add(item.id));
+    }
+  }
   for (const item of [...jobs, ...batches.flatMap(value => value.items), ...(job ? [job] : []), ...(batch?.items ?? [])]) {
     if (item.resultDeleted || item.historyDeleted) removedHistory.current.add(item.id);
   }
-  const visibleJobs = jobs.map(availableJob), visibleBatches = batches.map(availableBatch);
+  const selectedBatch = batch ? availableBatch(batch) : null;
+  const visibleBatches = batches.map(availableBatch), visibleJobs = jobs.map(availableJob);
   return { status, references, profiles, profileId, draftContext, selectedProfile,
-    jobs: visibleJobs, job: job ? availableJob(job) : null, batches: visibleBatches, batch: batch ? availableBatch(batch) : null,
+    jobs: visibleJobs, job: job ? availableJob(job) : null, batches: visibleBatches, batch: selectedBatch,
     initializing, refreshing, opening, pending, active, locked,
     error, loadError, pollError, notice, storageNotice, persist, refresh, openJob, openBatch, selectProfile, clearProfile, upload, createProfile, renameProfile, archiveProfile, submit, cancel, retryBatch, savePreset };
 }

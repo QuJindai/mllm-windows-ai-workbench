@@ -158,6 +158,7 @@ export type IdentityBatchRequest = {
 
 export type IdentityBatch = {
   id: string;
+  historyDeleted?: boolean;
   parentBatchId?: string;
   originalItemIndices?: number[];
   state: IdentityJob["state"];

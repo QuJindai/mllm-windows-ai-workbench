@@ -12,6 +12,7 @@ import { useAnimeProfiles } from "../components/identity/useAnimeProfiles";
 import { IdentityResults } from "../components/identity/IdentityResults";
 import { BatchRetryActions } from "../components/BatchRetryActions";
 import { DeleteImageButton } from "../components/DeleteImageButton";
+import { DeleteIdentityBatchButton } from "../components/identity/DeleteIdentityBatchButton";
 import { identityApi } from "../../providers/identity-api";
 import { ProfileLibrary } from "../components/identity/ProfileLibrary";
 import { useIdentityWorkspace } from "../components/identity/useIdentityWorkspace";
@@ -101,6 +102,7 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
   }, [savedDraft]);
   const workspace = useIdentityWorkspace(replay, restore);
   const historyJobs = workspace.jobs.filter(item => !item.resultDeleted && !item.historyDeleted);
+  const historyBatches = workspace.batches.filter(item => !item.historyDeleted);
   const { status, references, selectedProfile, profileId, locked, pending, initializing, persist } = workspace;
   const models = status?.models ?? (status ? [{ id: IDENTITY_MODEL_ID, name: status.modelName, architecture: "SD1.5", ready: status.ready, message: status.message, loras: status.loras }] : []);
   const modelId = form.modelId ?? IDENTITY_MODEL_ID;
@@ -286,11 +288,11 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
     </div>
     <section className="surface-card identity-history" aria-label="人物批次历史">
       <h2>人物批次历史</h2>
-      {workspace.batch && <BatchRetryActions batch={workspace.batch} disabled={locked} onRetry={workspace.retryBatch} />}
-      {workspace.batches.length ? <ul>{workspace.batches.map((item) => <li key={item.id}><button type="button" className="secondary-button" disabled={!!pending} aria-pressed={item.id === workspace.batch?.id} aria-label={"打开人物批次 " + item.id} onClick={() => void workspace.openBatch(item.id)}>
+      {workspace.batch && !workspace.batch.historyDeleted && <BatchRetryActions batch={workspace.batch} disabled={locked} onRetry={workspace.retryBatch} />}
+      {historyBatches.length ? <ul>{historyBatches.map((item) => <li className="identity-history-row" key={item.id}><button type="button" className="secondary-button identity-history-open" disabled={!!pending} aria-pressed={item.id === workspace.batch?.id} aria-label={"打开人物批次 " + item.id} onClick={() => void workspace.openBatch(item.id)}>
         <strong>{identityStateLabels[item.state]}</strong><span>{item.request.request.prompt} · {item.completedItems} / {item.totalItems} 张</span>
         <small>{item.id}{item.items.some(job => job.resultDeleted || job.historyDeleted) && <> · 可用 {item.items.filter(job => job.state === "complete" && job.result && !job.resultDeleted && !job.historyDeleted).length} 张 · 已删除 {item.items.filter(job => job.resultDeleted || job.historyDeleted).length} 张</>}</small>
-      </button></li>)}</ul> : <p className="identity-note">暂无人物批次。</p>}
+      </button>{!isIdentityJobActive(item) && <DeleteIdentityBatchButton id={item.id} count={item.totalItems} disabled={!!pending} />}</li>)}</ul> : <p className="identity-note">暂无人物批次。</p>}
     </section>
     <section className="surface-card identity-history" aria-label="人物任务历史">
       <h2>人物任务历史</h2>

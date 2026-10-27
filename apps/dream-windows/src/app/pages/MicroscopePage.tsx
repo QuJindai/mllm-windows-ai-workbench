@@ -247,7 +247,7 @@ function SemanticPanel({ trace, attentionIndex, attentionMessage }: { trace: Run
 function MechanismPanel({ trace }: { trace: RuntimeTrace | null }) {
   const telemetry = (trace?.latentTelemetry ?? []).filter((sample) => sample.truth === "observed");
   const events = (trace?.events ?? []).filter((event) => event.truth === "observed");
-  return <div className="microscope-layout microscope-evidence-layout"><div className="microscope-main"><div className="surface-card mechanism-panel"><div className="section-title">可验证的计算关系 <span className="truth-label truth-derived">实测优先 · 派生次之</span></div><div className="mechanism-grid"><article><h3>Δz</h3><p>当前 latent − 上一步 latent</p><strong>{telemetry.length ? "已观测" : "未导出"}</strong></article><article><h3>L2 / 平均 |Δz|</h3><p>由真实 latent tensor 逐步计算</p><strong>{telemetry.length ? "可计算" : "未导出"}</strong></article><article><h3>余弦相似度</h3><p>衡量相邻 latent 的方向一致性</p><strong>{telemetry.length ? "可计算" : "未导出"}</strong></article><article><h3>阶段时间</h3><p>来自 wrapper 日志，不用比例估算</p><strong>{events.length ? "已观测" : "未导出"}</strong></article></div><div className="evidence-rule"><strong>观察值优先</strong><span>原生 metadata / wrapper log → 直接测量；由它们计算的指标 → 派生；缺少输入 → 不可用。</span></div></div></div><aside className="surface-card measured-card"><div className="section-title">解读提示</div><p>显微镜不会把总耗时按经验拆成 UNet、VAE 或 attention，也不会把 RGB 投影当作四通道 latent。</p><p>当前记录：{trace ? "已接收" : "等待中"}。</p></aside></div>;
+  return <div className="microscope-layout microscope-evidence-layout"><div className="microscope-main"><div className="surface-card mechanism-panel"><div className="section-title">可验证的计算关系 <span className="truth-label truth-derived">实测优先 · 派生次之</span></div><div className="mechanism-grid"><article><h3>Δz</h3><p>当前 latent − 上一步 latent</p><strong>{telemetry.length ? "已观测" : "未导出"}</strong></article><article><h3>L2 / 平均 |Δz|</h3><p>由真实 latent tensor 逐步计算</p><strong>{telemetry.length ? "可计算" : "未导出"}</strong></article><article><h3>余弦相似度</h3><p>衡量相邻 latent 的方向一致性</p><strong>{telemetry.length ? "可计算" : "未导出"}</strong></article><article><h3>阶段时间</h3><p>来自本次引擎的阶段记录，不用比例估算</p><strong>{events.length ? "已观测" : "未导出"}</strong></article></div><div className="evidence-rule"><strong>观察值优先</strong><span>引擎元数据 / 阶段记录 → 直接测量；由它们计算的指标 → 派生；缺少输入 → 不可用。</span></div></div></div><aside className="surface-card measured-card"><div className="section-title">解读提示</div><p>显微镜不会把总耗时按经验拆成 UNet、VAE 或 attention，也不会把 RGB 投影当作四通道 latent。</p><p>当前记录：{trace ? "已接收" : "等待中"}。</p></aside></div>;
 }
 
 function ExpertPanel({ trace, traceMessage, attentionIndex, attentionMessage }: { trace: RuntimeTrace | null; traceMessage: string; attentionIndex: RuntimeAttentionIndex | null; attentionMessage: string }) {
@@ -348,7 +348,7 @@ function MeasuredTimeline({ events, totalTimeMs, onSelect }: {
     <div className="surface-card trace-timeline">
       <div className="section-title">
         原生阶段时间线
-        <small>{events.length ? "stable-diffusion.cpp wrapper 日志" : "本次记录没有阶段日志"}</small>
+        <small>{events.length ? "本次引擎实测阶段记录" : "本次记录没有阶段日志"}</small>
       </div>
       {events.length ? (
         <div className="trace-event-list">
@@ -406,7 +406,7 @@ function RuntimeInspector({ trace, node, traceMessage }: {
       <div className="inspector-block">
         <span>证据</span>
         <p>{trace
-          ? (trace.events?.length ? "数据来自 stable-diffusion.cpp wrapper 日志。" : "数据来自原生生成元数据；阶段耗时日志不可用。")
+          ? (trace.events?.length ? "数据来自本次引擎的实测阶段记录。" : "数据来自原生生成元数据；阶段耗时日志不可用。")
           : traceMessage}</p>
         {trace && <div className="inspector-grid">
           <span>模型</span><strong>{evidence?.modelId ?? "—"}</strong>
@@ -509,7 +509,7 @@ function LatentPanel({ trace }: { trace: RuntimeTrace | null }) {
       <aside className="surface-card measured-card">
         <div className="section-title">这里测量什么 <span className="collapse-mark">⌃</span></div>
         <h3>直接测量</h3>
-        <p>只显示原生元数据、wrapper 日志和真实回调输出的数值。</p>
+        <p>只显示引擎元数据、阶段记录和真实回调输出的数值。</p>
         <ul><li>原生总生成耗时</li><li>条件编码耗时</li><li>UNet 采样耗时</li><li>VAE 解码耗时</li><li>每步 Latent 投影</li>{telemetry.length > 0 && <><li>每步 Latent Δz 指标</li><li>四通道统计与直方图</li></>}</ul>
         <h3>独立研究采集</h3>
         <p>H7 注意力页读取独立研究产物；是否采集成功以所选记录的有效 Self/Cross 张量为准。</p>

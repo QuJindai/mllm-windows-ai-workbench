@@ -16,11 +16,11 @@ function historyQualityWarning(item: HistoryItem): string | null {
   const recommendedSteps = item.generationDefaults?.steps;
   return generationQualityWarning(
     item,
-    recommendedSteps !== undefined && recommendedSteps < MIN_GENERATION_STEPS
+    recommendedSteps !== undefined && Number.isFinite(recommendedSteps) && recommendedSteps > 0
       ? {
-          minimumSteps: recommendedSteps,
+          minimumSteps: Math.min(MIN_GENERATION_STEPS, recommendedSteps),
           recommendedSteps,
-          profileLabel: "当前模型按低步数蒸馏配置采样",
+          profileLabel: "按当前模型登记的推荐配置",
         }
       : undefined,
   );

@@ -175,7 +175,26 @@ describe("Microscope page", () => {
     fireEvent.click(screen.getByRole("button", { name: "检查 UNet sampling" }));
     await waitFor(() => expect(screen.getByText("预期调用 · 派生")).toBeVisible());
     expect(screen.getByText("20")).toBeVisible();
-    expect(screen.getByText("数据来自 stable-diffusion.cpp wrapper 日志。")).toBeVisible();
+    expect(screen.getByText("数据来自本次引擎的实测阶段记录。")).toBeVisible();
+  });
+
+  it("does not attribute diffusers research phases to the native wrapper", async () => {
+    class IdentityTraceProvider extends MockDreamProvider {
+      override async getRuntimeTrace(): Promise<RuntimeTrace> {
+        return {
+          available: true, runId: "identity-research", totalTimeMs: 16000, truth: "observed",
+          nodes: [{ id: "identity_influence", name: "身份条件干预", backend: "diffusers-unet", durationMs: 1180, status: "executed", truth: "observed" }],
+          events: [{ phase: "identity_influence", label: "身份条件干预前向", durationMs: 1180, truth: "observed" }],
+          evidence: { backend: "diffusers-unet", backendTruth: "observed" },
+        };
+      }
+    }
+    render(<DreamProviderContext.Provider value={new IdentityTraceProvider()}><MicroscopePage /></DreamProviderContext.Provider>);
+    await screen.findByRole("button", { name: "检查 身份条件干预" });
+    expect(screen.getByText("数据来自本次引擎的实测阶段记录。")).toBeVisible();
+    expect(screen.queryByText(/stable-diffusion.cpp wrapper/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "机制" }));
+    expect(screen.queryByText(/来自 wrapper 日志/)).not.toBeInTheDocument();
   });
 
   it("separates current observed hardware from per-run peak evidence", async () => {

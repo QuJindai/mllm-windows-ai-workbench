@@ -41,7 +41,7 @@ export function ModelsPage() {
     const matchesSearch = !needle || [model.displayName, model.architecture, model.format, model.path, ...model.tags].join(" ").toLowerCase().includes(needle);
     return matchesFilter && matchesSearch;
   }), [filter, models, search]);
-  const selected = models.find((model) => model.id === selectedId) ?? visibleModels[0] ?? models[0];
+  const selected = visibleModels.find((model) => model.id === selectedId) ?? visibleModels[0];
 
   const verify = async () => {
     if (!selected) return;

@@ -468,6 +468,22 @@ describe("History page", () => {
     expect(screen.queryByText("质量风险")).not.toBeInTheDocument();
   });
 
+  it("uses the registered eight-step profile in warnings instead of recommending twenty steps", async () => {
+    class LightningHistoryProvider extends MockDreamProvider {
+      override async listHistory(query: Parameters<MockDreamProvider["listHistory"]>[0]) {
+        const page = await super.listHistory(query);
+        return { ...page, total: 1, items: page.items.slice(0, 1).map(item => ({ ...item,
+          width: 768, height: 768, steps: 6,
+          generationDefaults: { width: 768, height: 768, steps: 8, cfg: 2, samplingMethod: "dpm++2m_sde" as const, scheduler: "karras" as const },
+        })) };
+      }
+    }
+    render(<DreamProviderContext.Provider value={new LightningHistoryProvider()}><HistoryPage /></DreamProviderContext.Provider>);
+    const warning = await screen.findByText("质量风险");
+    expect(warning.getAttribute("title")).toContain("、8 步");
+    expect(warning.getAttribute("title")).not.toContain("标准 SDXL");
+  });
+
   it("lazy loads history thumbnails to reduce renderer image pressure", async () => {
     render(<DreamProviderContext.Provider value={new MockDreamProvider()}><HistoryPage /></DreamProviderContext.Provider>);
     await screen.findByRole("heading", { name: "a serene mountain lake at sunrise" });

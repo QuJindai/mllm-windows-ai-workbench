@@ -148,6 +148,21 @@ async function prepare(ui: ReturnType<typeof within>, id = "ref-test") {
 function posts(path: string) { return fetchCalls.filter((call) => call.method === "POST" && call.url === path); }
 
 describe("人物创作 HTTP workspace", () => {
+  it("applies a scene while preserving the reference face, identity settings and batch parameters", async () => {
+    render(<IdentityPage />);
+    await screen.findByRole("option", { name: "单人参考.png" });
+    fireEvent.change(screen.getByLabelText("选择参考照"), { target: { value: "ref-single" } });
+    fireEvent.change(screen.getByLabelText("身份强度"), { target: { value: "0.77" } });
+    fireEvent.change(screen.getByLabelText("生成张数"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用科幻场景" }));
+    expect(screen.getByLabelText<HTMLTextAreaElement>("场景提示词").value).toContain("starship bridge");
+    fireEvent.click(screen.getByRole("button", { name: "生成人物图像" }));
+    await waitFor(() => expect(batchRequest).toEqual(expect.objectContaining({
+      count: 2, request: expect.objectContaining({ referenceId: "ref-single", faceIndex: 0,
+        identityStrength: .77, prompt: expect.stringContaining("starship bridge"), steps: 28, width: 512, height: 768 }),
+    })));
+    expect(screen.getByRole("button", { name: "应用科幻场景" })).toBeDisabled();
+  });
   function twoModels(ready = true) {
     runtime.models = [
       { id: "realistic-vision-v5.1-faceid", name: "Realistic Vision V5.1 + FaceID Plus V2", architecture: "SD1.5", ready: true, message: "就绪", loras: runtime.loras },

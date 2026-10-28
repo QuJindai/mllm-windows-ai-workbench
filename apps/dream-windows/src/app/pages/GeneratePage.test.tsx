@@ -9,6 +9,18 @@ import type { GenerationJob, GenerationRequest } from "../../domain/generation";
 import type { ModelRecord } from "../../domain/models";
 
 describe("Generate page", () => {
+  it("submits a scene preset while preserving the chosen generation parameters", async () => {
+    const provider = new MockDreamProvider();
+    const generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage initialRequest={{ steps: 24, seed: 123, width: 640, height: 768 }} /></DreamProviderContext.Provider>);
+    await screen.findByRole("button", { name: "应用古风场景" });
+    fireEvent.click(screen.getByRole("button", { name: "应用古风场景" }));
+    expect(screen.getByLabelText<HTMLTextAreaElement>("正向提示词").value).toContain("hanfu");
+    fireEvent.click(screen.getByRole("button", { name: "生成图像" }));
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("hanfu"), modelId: "cyberrealistic-xl-v10-standard", steps: 24, seed: 123, width: 640, height: 768,
+    })));
+  });
   it("applies the pure anime baseline only explicitly and submits the registered profile", async () => {
     const saved = JSON.stringify([{ id: "old-anime", name: "旧动漫配置", request: {
       modelId: "illustrious-xl-v2.0", prompt: "my saved portrait", negativePrompt: "blur",

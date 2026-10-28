@@ -6,6 +6,7 @@ import { isFreshHardware } from "../../domain/hardware";
 import type { ModelRecord } from "../../domain/models";
 import { useDreamProvider } from "../providers";
 import { DeleteImageButton } from "../components/DeleteImageButton";
+import { ScenePresetPicker } from "../components/ScenePresetPicker";
 import { useDeletedImageIds } from "../image-deletion";
 import { generationStatusLabel, isGenerationTerminal } from "../generate-state";
 import { generationQualityWarning, MIN_GENERATION_DIMENSION, MIN_GENERATION_STEPS } from "../../domain/generation-quality";
@@ -346,6 +347,8 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
             {(["prompt", "presets", "advanced"] as GenerateTab[]).map((value) => <button key={value} type="button" role="tab" aria-selected={tab === value} className={tab === value ? "is-active" : ""} onClick={() => setTab(value)}>{value === "prompt" ? "提示词" : value === "presets" ? "预设" : "高级"}</button>)}
           </div>
           {tab === "prompt" && <>
+            <ScenePresetPicker modelId={request.modelId} prompt={request.prompt} negativePrompt={request.negativePrompt} disabled={busy || loadingModels}
+              onApply={value => setRequest(current => ({ ...current, ...value }))} />
             <label className="field-label" htmlFor="prompt">正向提示词</label>
             <textarea id="prompt" value={request.prompt} onChange={(event) => update("prompt", event.target.value)} rows={4} placeholder="描述你想创建的图像" />
             <label className="field-label" htmlFor="negative-prompt">负向提示词</label>

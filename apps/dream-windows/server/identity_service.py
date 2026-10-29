@@ -469,6 +469,8 @@ class IdentityService:
         self.anime_profiles = AnimeProfiles(self)
         from identity_batches import IdentityBatches
         self.batches = IdentityBatches(self)
+        from identity_refinements import IdentityRefinements
+        self.refinements = IdentityRefinements(self)
         self._event_callbacks = {}
         self._persistent_lock = threading.RLock()
         self._persistent_worker = None
@@ -489,10 +491,13 @@ class IdentityService:
                 self._persistent_log.close()
                 self._persistent_log = None
 
-    def _persistent_batch(self, settings, payload, cancelled, consume_events):
+    def _persistent_batch(self, settings, payload, cancelled, consume_events, *, operation='batch'):
+        """One owned slot for either batch generation or plain restore, never both."""
+        if operation not in ('batch', 'refine'):
+            raise ValueError('Unsupported persistent identity operation')
         if not self._has_native_barrier:
             raise RuntimeError("Persistent identity requires a native release barrier")
-        signature = json.dumps(settings, sort_keys=True, allow_nan=False)
+        signature = json.dumps({'settings': settings, 'operation': operation}, sort_keys=True, allow_nan=False)
         with self._persistent_lock:
             self._require_open()
             if self._persistent_worker is not None and signature != self._persistent_settings:
@@ -507,8 +512,11 @@ class IdentityService:
                 env = os.environ.copy()
                 env.update(DREAM_IDENTITY_CONFIG=str(self.config_path), PYTHONIOENCODING="utf-8", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HOME=str(hub), TEMP=str(temporary), TMP=str(temporary))
                 self._persistent_log = (logs / f"persistent-{secrets.token_hex(8)}.err.log").open("ab")
+                command = ([python, str(Path(__file__).with_name("identity_warm_refine.py")), "--ownership-handshake"]
+                           if operation == 'refine' else
+                           [python, str(Path(__file__).with_name("identity_worker.py")), "--ownership-handshake", "--persistent"])
                 self._persistent_worker = PersistentWorkerClient(
-                    [python, str(Path(__file__).with_name("identity_worker.py")), "--ownership-handshake", "--persistent"],
+                    command,
                     # Leave this job empty until the actual interpreter's hello.
                     # A venv launcher may already own a nested job for its child;
                     # an empty job can join that hierarchy without a bind race.
@@ -519,6 +527,8 @@ class IdentityService:
                 )
                 self._persistent_settings = signature
             worker = self._persistent_worker
+        if operation == 'refine':
+            return worker.run_operation('refine', payload, cancelled=cancelled, timeout=900, on_poll=consume_events)
         return worker.run_batch(payload, cancelled=cancelled, timeout=900 * len(payload["items"]), on_poll=consume_events)
 
     def _submit_background(self, task_id, execute, cancel_queued):
@@ -554,6 +564,11 @@ class IdentityService:
         if profile is not None:
             binding = AnimeBinding.model_validate({k:profile[k] for k in AnimeBinding.model_fields}).model_dump()
             self._update(job_id,animeBinding=binding)
+
+    @owned_operation
+    def refinement_operation(self, method, *args):
+        self._ensure_recovered()
+        return getattr(self.refinements, method)(*args)
 
     @owned_operation
     def batch_operation(self, method, *args):
@@ -1005,6 +1020,13 @@ class IdentityService:
                     return value
                 finally:
                     consume_events(drain=True)
+            if operation == 'refine' and settings.get('persistentWorker') is True:
+                from identity_warm_refine import is_restore_only
+                if is_restore_only(payload):
+                    try:
+                        return self._persistent_batch(settings, payload, cancelled, consume_events, operation='refine')
+                    finally:
+                        consume_events(drain=True)
             if operation != "status":
                 self.release_warm_worker()
             work = self._safe(self.root / "work")
@@ -1034,7 +1056,7 @@ class IdentityService:
                     try:
                         process = subprocess.Popen(command, cwd=str(self.config.dream_root), env=env, stdout=subprocess.DEVNULL, stderr=error_log, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                         lifetime = WorkerLifetime(process)
-                        deadline = time.monotonic() + (900 * len(payload["items"]) if operation == "batch" else 900 if operation == "generate" else 120)
+                        deadline = time.monotonic() + (900 * len(payload["items"]) if operation == "batch" else 900 if operation in {"generate", "refine", "fusion"} else 120)
                         while True:
                             consume_events()
                             if cancelled is not None and cancelled.is_set():
@@ -1295,7 +1317,7 @@ class IdentityService:
                     if (saved.get('id') != job_id or saved.get('output') != metadata['output']
                             or saved.get('identity') != metadata.get('identity')):
                         raise ValueError('Invalid output metadata binding')
-                return [root / 'data/identity/originals' / f'{job_id}.png', output, metadata_path]
+                return [root / 'data/identity/originals' / f'{job_id}.png', output, metadata_path, *self.refinements.artifact_paths(job_id)]
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 raise DreamApiError('IDENTITY_HISTORY_RESULT_INVALID', '人物成果路径或元数据无效，未删除', status_code=422) from exc
 

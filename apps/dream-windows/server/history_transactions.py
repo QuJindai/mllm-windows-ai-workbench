@@ -23,10 +23,12 @@ from errors import DreamApiError
 
 MAX_TRASH_BYTES = 2 * 1024**3
 MAX_TRANSACTIONS = 1024
-MAX_JOURNAL_BYTES = 64 * 1024
+MAX_JOURNAL_BYTES = 4 * 1024 * 1024
 MAX_FILES = 6  # output, metadata, original, and at most three visual stages
+MAX_REFINEMENTS = 128
+MAX_IDENTITY_FILES = MAX_FILES + 3 * MAX_REFINEMENTS + 1
 MAX_BATCH_ITEMS = 16
-MAX_BATCH_FILES = MAX_FILES * MAX_BATCH_ITEMS
+MAX_BATCH_FILES = MAX_IDENTITY_FILES * MAX_BATCH_ITEMS
 _LOCK = threading.RLock()
 _TX_ID = re.compile(r'[a-f0-9]{32}')
 _IDENTITY_ID = re.compile(r'identity-[a-f0-9]{24}')
@@ -97,7 +99,11 @@ def _source(root: Path, item_id: str, value: Path) -> Path:
     original = bool(_IDENTITY_ID.fullmatch(item_id)) and relative == Path('data/identity/originals') / f'{item_id}.png'
     stage = bool(_IDENTITY_ID.fullmatch(item_id)) and relative in {
         Path('data/identity/stages') / item_id / f'{kind}.png' for kind in ('anchor', 'harmonize', 'detail')}
-    if not history_file and not original and not stage:
+    refinement = (bool(_IDENTITY_ID.fullmatch(item_id))
+                  and relative.parent == Path('data/identity/refinements') / item_id
+                  and (relative.name == 'selection.json' or re.fullmatch(
+                      rf'refine-{item_id[9:]}-[a-f0-9]{{24}}\.(json|png|pending\.png)', relative.name)))
+    if not history_file and not original and not stage and not refinement:
         raise ValueError('Not a history file')
     if path.exists() and not path.is_file():
         raise ValueError('Not a regular file')
@@ -213,7 +219,8 @@ def _read_record(root: Path, folder: Path, name: str) -> dict[str, Any]:
                 or any(not isinstance(member, str) or not _IDENTITY_ID.fullmatch(member) for member in members)
                 or len(set(members)) != len(members)):
             raise ValueError('Invalid batch tombstone')
-    if not isinstance(files, list) or not (0 if batch else 1) <= len(files) <= (MAX_BATCH_FILES if batch else MAX_FILES):
+    file_limit = MAX_BATCH_FILES if batch else (MAX_IDENTITY_FILES if _IDENTITY_ID.fullmatch(value['item_id']) else MAX_FILES)
+    if not isinstance(files, list) or not (0 if batch else 1) <= len(files) <= file_limit:
         raise ValueError('Invalid journal files')
     sources = set()
     for index, entry in enumerate(files):
@@ -429,9 +436,10 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Calla
                     if batch and owner in flags:
                         continue
                     owned = []
+                    owner_limit = MAX_IDENTITY_FILES if _IDENTITY_ID.fullmatch(owner) else MAX_FILES
                     for path in resolver() if callable(resolver) else resolver:
                         source = _source(root, owner, Path(path))
-                        if source in owned or len(owned) >= MAX_FILES:
+                        if source in owned or len(owned) >= owner_limit:
                             raise ValueError('Duplicate or excessive history files')
                         owned.append(source)
                     if owned and _IDENTITY_ID.fullmatch(owner):
@@ -439,7 +447,7 @@ def delete_history_files(root: Path, item_id: str, paths: Iterable[Path] | Calla
                             stage = _source(root, owner, root / 'data/identity/stages' / owner / f'{kind}.png')
                             if stage not in owned:
                                 owned.append(stage)
-                    if len(owned) > MAX_FILES:
+                    if len(owned) > owner_limit:
                         raise ValueError('Excessive history files')
                     sources.extend((owner, path) for path in owned)
                 if not sources and not allow_empty:

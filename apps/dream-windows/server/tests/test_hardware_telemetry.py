@@ -73,7 +73,7 @@ def test_hardware_api_uses_live_readings_and_preserves_the_full_client_contract(
     command, options = state["calls"][0]
     assert "--id=0" in command
     assert any("utilization.gpu" in arg and "memory.used" in arg and "power.draw" in arg for arg in command)
-    assert 0 < options["timeout"] <= 2
+    assert options["timeout"] == 3
     assert not options.get("shell", False)
 
 
@@ -190,7 +190,7 @@ def test_failed_cached_sample_logs_once_with_safe_diagnostics_and_keeps_api_gene
         state["now"] = 13.0
         assert client.get("/api/hardware").status_code == 503
         assert len([record for record in caplog.records if record.name == "hardware_telemetry"]) == 2
-        state["now"] = 16.0
+        state["now"] = 19.0
         state["error"] = None
         assert client.get("/api/hardware").status_code == 200
         assert len([record for record in caplog.records if record.name == "hardware_telemetry"]) == 2
@@ -247,3 +247,46 @@ def test_concurrent_failed_reads_share_one_probe_and_one_warning(telemetry, capl
         assert list(pool.map(read, range(8))) == ["HARDWARE_TELEMETRY_UNAVAILABLE"] * 8
     assert len(state["calls"]) == 1
     assert len([record for record in caplog.records if record.name == "hardware_telemetry"]) == 1
+
+
+def test_failed_probes_back_off_across_callers_cap_at_30_seconds_and_reset_on_success(telemetry):
+    runtime, state = telemetry
+    assert runtime.hardware()["gpuUtil"] == 80
+    state["now"] = 12.0
+    state["error"] = subprocess.TimeoutExpired("nvidia-smi", 3)
+
+    def unavailable(_=None):
+        with pytest.raises(DreamApiError) as failure:
+            runtime.hardware()
+        return failure.value.code
+
+    assert unavailable() == "HARDWARE_TELEMETRY_UNAVAILABLE"
+    probes = 2
+    for delay in (3, 6, 12, 30, 30):
+        deadline = state["now"] + delay
+        state["now"] = deadline - .001
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            assert list(pool.map(unavailable, range(8))) == ["HARDWARE_TELEMETRY_UNAVAILABLE"] * 8
+        assert len(state["calls"]) == probes
+        state["now"] = deadline
+        unavailable()
+        probes += 1
+        assert len(state["calls"]) == probes
+
+    state["now"] += 30
+    state["error"] = None
+    assert runtime.hardware()["gpuUtil"] == 80
+    probes += 1
+    state["now"] += 1.999
+    runtime.hardware()
+    assert len(state["calls"]) == probes
+    state["now"] += .001
+    state["error"] = subprocess.TimeoutExpired("nvidia-smi", 3)
+    unavailable()
+    probes += 1
+    state["now"] += 2.999
+    unavailable()
+    assert len(state["calls"]) == probes
+    state["now"] += .001
+    unavailable()
+    assert len(state["calls"]) == probes + 1

@@ -50,6 +50,8 @@ export function App() {
     let active = true;
     let inFlight = false;
     let resumeRequested = false;
+    let failures = 0;
+    const failureDelays = [3000, 6000, 12000, 30000];
     let controller: AbortController | undefined;
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     let requestTimer: ReturnType<typeof setTimeout> | undefined;
@@ -62,18 +64,21 @@ export function App() {
       inFlight = true;
       resumeRequested = false;
       const request = new AbortController();
+      let failed = false;
       controller = request;
       requestTimer = setTimeout(() => {
+        failed = true;
         request.abort();
         if (active && !document.hidden) {
           setHardwareError("硬件采样超时，等待重试");
           setHardwareLoading(false);
         }
-      }, 4000);
+      }, 6000);
       try {
         const snapshot = await provider.getHardware(request.signal);
         if (!active || request.signal.aborted) return;
         if (provider.mode === "backend" && !isFreshHardware(snapshot)) throw new Error("硬件采样时间缺失或已过期，请更新后端后重试");
+        failures = 0;
         setHardware(snapshot);
         setHardwareError(null);
         clearTimeout(staleTimer);
@@ -83,13 +88,18 @@ export function App() {
           }, Math.max(0, Date.parse(snapshot.sampledAt!) + HARDWARE_MAX_AGE_MS - Date.now()));
         }
       } catch (reason: unknown) {
-        if (active && !request.signal.aborted) setHardwareError(reason instanceof Error ? reason.message : "无法读取硬件状态");
+        if (active && !request.signal.aborted) {
+          failed = true;
+          setHardwareError(reason instanceof Error ? reason.message : "无法读取硬件状态");
+        }
       } finally {
         clearTimeout(requestTimer);
         inFlight = false;
         if (active) {
+          if (failed) failures = Math.min(failures + 1, failureDelays.length);
+          const delay = failures ? failureDelays[failures - 1] : 3000;
           setHardwareLoading(false);
-          if (!document.hidden) pollTimer = setTimeout(() => { void poll(); }, resumeRequested ? 0 : 3000);
+          if (!document.hidden) pollTimer = setTimeout(() => { void poll(); }, resumeRequested ? 0 : delay);
         }
       }
     };

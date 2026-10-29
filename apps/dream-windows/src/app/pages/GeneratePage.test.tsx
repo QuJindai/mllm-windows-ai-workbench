@@ -9,6 +9,48 @@ import type { GenerationJob, GenerationRequest } from "../../domain/generation";
 import type { ModelRecord } from "../../domain/models";
 
 describe("Generate page", () => {
+  it("applies a scene recipe explicitly while preserving prompts, model, seed and advanced settings", async () => {
+    const provider = new MockDreamProvider();
+    const generate = vi.spyOn(provider, "generate");
+    const initialRequest = { prompt: "custom scene", negativePrompt: "custom exclusions", steps: 24, cfg: 6, seed: 123,
+      width: 640, height: 768, samplingMethod: "euler" as const, scheduler: "exponential" as const, traceLevel: "h6" as const, fusionMode: "none" as const };
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage initialRequest={initialRequest} /></DreamProviderContext.Provider>);
+    const applyRecipe = await screen.findByRole("button", { name: "应用模型推荐参数" });
+    await waitFor(() => expect(applyRecipe).toBeEnabled());
+    fireEvent.change(screen.getByRole("combobox", { name: "场景构图" }), { target: { value: "full" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用科幻场景" }));
+    expect(screen.getByLabelText("Steps")).toHaveValue(24);
+    expect(screen.getByLabelText("Width")).toHaveValue(640);
+    fireEvent.click(applyRecipe);
+    expect(screen.getByLabelText<HTMLTextAreaElement>("正向提示词").value).toContain("full body");
+    fireEvent.click(screen.getByRole("button", { name: "撤销场景替换" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成图像" }));
+    await waitFor(() => expect(generate).toHaveBeenCalledExactlyOnceWith({ ...initialRequest,
+      modelId: "cyberrealistic-xl-v10-standard", width: 768, height: 768, steps: 20, cfg: 4 }));
+  });
+
+  it("uses registered anime scene defaults without applying them when the framing changes", async () => {
+    class AnimeProvider extends MockDreamProvider {
+      override async listModels(): Promise<ModelRecord[]> {
+        const [base] = await super.listModels();
+        return [{ ...base, id: "illustrious-xl-v2.0", generationDefaults: {
+          width: 1024, height: 1024, steps: 30, cfg: 7, samplingMethod: "euler_a", scheduler: "discrete" } }];
+      }
+    }
+    const provider = new AnimeProvider(), generate = vi.spyOn(provider, "generate");
+    render(<DreamProviderContext.Provider value={provider}><GeneratePage initialRequest={{ modelId: "illustrious-xl-v2.0", width: 640, steps: 24, seed: 321 }} /></DreamProviderContext.Provider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "应用模型推荐参数" })).toBeEnabled());
+    fireEvent.change(screen.getByRole("combobox", { name: "场景构图" }), { target: { value: "portrait" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用古风场景" }));
+    expect(screen.getByLabelText("Width")).toHaveValue(640);
+    expect(screen.getByLabelText("Steps")).toHaveValue(24);
+    fireEvent.click(screen.getByRole("button", { name: "应用模型推荐参数" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成图像" }));
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(expect.objectContaining({ modelId: "illustrious-xl-v2.0",
+      width: 1024, height: 1024, steps: 30, cfg: 7, seed: 321,
+      prompt: expect.stringMatching(/anime illustration.*head and shoulders.*hanfu/), samplingMethod: "dpm++2m_sde", scheduler: "karras" })));
+  });
+
   it("submits a scene preset while preserving the chosen generation parameters", async () => {
     const provider = new MockDreamProvider();
     const generate = vi.spyOn(provider, "generate");

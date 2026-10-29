@@ -325,7 +325,7 @@ def test_stage_route_validates_durable_owned_receipts_and_deletion(redraw_servic
     job = completed(service, staged_request(reference(service)))
     assert job["state"] == "complete", job["error"]
     service.close()
-    with TestClient(create_app(service.config, DreamRuntime(service.config, job_runner=service.job_runner))) as client:
+    with TestClient(create_app(service.config, DreamRuntime(service.config, job_runner=service.job_runner)), base_url='http://127.0.0.1:8866') as client:
         url = f"/api/identity/jobs/{job['id']}/stages/harmonize"
         assert client.get(url).status_code == 200
         assert client.get(url).headers["content-type"] == "image/png"

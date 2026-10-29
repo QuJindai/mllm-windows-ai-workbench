@@ -182,12 +182,115 @@ describe("GUI-02 hardware acquisition to shell", () => {
       init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
     }) : Promise.resolve(response(sample(35))));
     await mount();
-    await advance(4000);
+    await advance(5999);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].signal?.aborted).toBe(false);
+    await advance(1);
+    expect(requests[0].signal?.aborted).toBe(true);
     expect(header().getByText("硬件不可用")).toBeVisible();
     blocked = false;
     await advance(3000);
     expect(requests).toHaveLength(2);
     expect(header().getByText("35%")).toBeVisible();
+  });
+
+  it.each(["http", "network", "stale"])("backs off %s failures, caps retries and resets only after a fresh success", async (failure) => {
+    let failed = false;
+    const requests = network(async () => {
+      if (!failed) return response(sample());
+      if (failure === "network") throw new TypeError("Network unavailable");
+      if (failure === "stale") return response({ ...sample(), sampledAt: "2026-01-01T00:00:00Z" });
+      return response({ code: "HARDWARE_TELEMETRY_UNAVAILABLE", message: "硬件读取失败" }, 503);
+    });
+    await mount();
+    failed = true;
+    await advance(3000);
+    for (const delay of [3000, 6000, 12000, 30000, 30000]) {
+      const count = requests.length;
+      expect(header().getByText("硬件不可用")).toBeVisible();
+      expect(header().queryByText("CUDA 就绪")).not.toBeInTheDocument();
+      expect(header().getByRole("meter", { name: "GPU 使用率" })).not.toHaveAttribute("aria-valuenow");
+      expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("当前硬件状态未知");
+      await advance(delay - 1);
+      expect(requests).toHaveLength(count);
+      await advance(1);
+      expect(requests).toHaveLength(count + 1);
+    }
+    failed = false;
+    await advance(30000);
+    expect(header().getByText("80%")).toBeVisible();
+    expect(screen.queryByRole("alert", { name: "硬件监控提示" })).not.toBeInTheDocument();
+    const recoveredCount = requests.length;
+    await advance(3000);
+    expect(requests).toHaveLength(recoveredCount + 1);
+    failed = true;
+    await advance(3000);
+    const count = requests.length;
+    await advance(2999);
+    expect(requests).toHaveLength(count);
+    await advance(1);
+    expect(requests).toHaveLength(count + 1);
+  });
+
+  it("backs off repeated six-second timeouts without overlapping requests", async () => {
+    const requests = network(init => new Promise((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    await mount();
+    for (const delay of [3000, 6000, 12000, 30000, 30000]) {
+      const count = requests.length;
+      await advance(5999);
+      expect(requests).toHaveLength(count);
+      expect(requests.at(-1)?.signal?.aborted).toBe(false);
+      await advance(1);
+      expect(requests.at(-1)?.signal?.aborted).toBe(true);
+      expect(header().getByText("硬件不可用")).toBeVisible();
+      await advance(delay - 1);
+      expect(requests).toHaveLength(count);
+      await advance(1);
+      expect(requests).toHaveLength(count + 1);
+    }
+  });
+
+  it("pauses a failure backoff while hidden and retains the failure streak on return", async () => {
+    const requests = network(async () => response({ message: "硬件读取失败" }, 503));
+    await mount();
+    await advance(3000);
+    expect(requests).toHaveLength(2);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
+    await advance(60000);
+    expect(requests).toHaveLength(2);
+    expect(screen.getByRole("alert", { name: "硬件监控提示" })).toHaveTextContent("暂停");
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+    expect(requests).toHaveLength(3);
+    await advance(11999);
+    expect(requests).toHaveLength(3);
+    await advance(1);
+    expect(requests).toHaveLength(4);
+  });
+
+  it("does not count a visibility abort as a probe failure", async () => {
+    let blocked = true;
+    const requests = network(init => blocked ? new Promise((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }) : Promise.resolve(response({ message: "硬件读取失败" }, 503)));
+    await mount();
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+    await advance(60000);
+    expect(requests).toHaveLength(1);
+    blocked = false;
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+    expect(requests).toHaveLength(2);
+    await advance(3000);
+    expect(requests).toHaveLength(3);
+    await advance(5999);
+    expect(requests).toHaveLength(3);
+    await advance(1);
+    expect(requests).toHaveLength(4);
   });
 
   it("does not keep cached telemetry fresh just because HTTP succeeds", async () => {

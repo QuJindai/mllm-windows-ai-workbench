@@ -25,6 +25,8 @@
 # Local browser QA artifacts
 /.playwright-cli/
 /output/
+/apps/dream-windows/.playwright-cli/
+/apps/dream-windows/output/
 /data/
 /outputs/
 /traces/

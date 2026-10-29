@@ -21,7 +21,7 @@
     "id": "scifi",
     "name": "科幻",
     "description": "未来航服 · 星舰舱室",
-    "prompt": "standing inside a starship bridge beside a large window with planet Earth and stars visible behind her, wearing a white and navy futuristic flight suit with blue illuminated panels, bare head, waist-up composition, cool cinematic lighting",
-    "negativePrompt": "helmet, tight close-up, cropped head"
+    "prompt": "standing inside a starship bridge beside a large window with planet Earth and stars visible behind her, wearing a white and navy futuristic flight suit with blue illuminated panels, bare head, cool cinematic lighting",
+    "negativePrompt": "helmet"
   }
 ]

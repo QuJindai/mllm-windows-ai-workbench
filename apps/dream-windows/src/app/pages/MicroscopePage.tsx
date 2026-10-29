@@ -9,6 +9,7 @@ import type { CaptureContext } from "./microscope-research";
 import { CorrelationMatrix } from "../components/CorrelationMatrix";
 import { LatentDeltaImage } from "../components/LatentDeltaImage";
 import { SelectedChannelComparison } from "../components/SelectedChannelComparison";
+import { CrossRunComparison } from "../components/research/CrossRunComparison";
 import type { CurrentHardwareSnapshot, ResearchStatus, RuntimeAttentionIndex, RuntimeAttentionMap, RuntimeAttentionMapDescriptor, RuntimeCapabilities, RuntimeLatentTelemetry, RuntimeNode, RuntimeTrace, RuntimeTraceEvent, RuntimeTraceSummary } from "../../domain/trace";
 
 type MicroscopeTab = "runtime" | "semantic" | "influence" | "latent" | "mechanism" | "expert" | "attention";
@@ -184,7 +185,7 @@ export function MicroscopePage() {
         {tab === "runtime" && <RuntimePanel trace={trace} traceMessage={traceMessage} hardware={hardware} hardwareMessage={hardwareMessage} />}
         {tab === "semantic" && <SemanticPanel trace={currentTrace} attentionIndex={currentAttentionIndex} attentionMessage={`${attentionGuidance} ${attentionMessage}`} />}
         {tab === "influence" && <RecordedResearchPanel key={`${selectedRunId}/${refreshVersion}`} kind="influence" runId={researchRunId} context={captureContext} cfg={currentTrace?.evidence?.cfg} />}
-        {tab === "latent" && <LatentPanel trace={trace} />}
+        {tab === "latent" && <><LatentPanel trace={trace} /><CrossRunComparison key={`${selectedRunId}/${refreshVersion}`} runId={researchRunId} runs={traceRuns} /></>}
         {tab === "mechanism" && <MechanismPanel trace={trace} />}
         {tab === "expert" && <ExpertPanel trace={currentTrace} traceMessage={traceMessage} attentionIndex={currentAttentionIndex} attentionMessage={attentionMessage} />}
         {tab === "expert" && !currentAttentionIndex?.available && <p role="status">{attentionGuidance}</p>}

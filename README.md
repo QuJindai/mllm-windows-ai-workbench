@@ -37,6 +37,10 @@ The separate Windows Dream W0/W1 lane is documented in
 `docs/dream-windows/W0_W1_ACCEPTANCE.md`; it keeps models, caches, builds,
 logs, and evidence below `E:\Dream` without changing Safe Core behavior.
 
+The [2026-10-29 creative upgrade guide and acceptance record](docs/dream-windows/CREATIVE_UPGRADE_20261029.md)
+covers independent refinement, explicit scene recipes, controlled GPU fusion and
+microscope comparisons, with current limitations and pending main-release/CI status.
+
 ## Architecture
 
 ```text

@@ -1,11 +1,89 @@
+// Load shared rules first; jsdom applies source order rather than CSS specificity.
+import "../shell.css";
+import "../workstation.css";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HISTORY_POLL_INTERVAL_MS, HistoryPage } from "./HistoryPage";
 import { DreamProviderContext } from "../providers";
 import { MockDreamProvider } from "../../providers/MockDreamProvider";
 import type { HistoryItem } from "../../domain/history";
-import "../shell.css";
 import { announceImageDeleted } from "../image-deletion";
+
+afterEach(() => vi.unstubAllGlobals());
+
+it.each(["filter", "unrelated deletion"])("keeps the refinement draft and retry UUID through history reloads: %s", async (cause) => {
+  let release!: () => void;
+  const reloading = new Promise<void>(resolve => { release = resolve; });
+  class RefinementHistoryProvider extends MockDreamProvider {
+    private calls = 0;
+    override async listHistory(query: Parameters<MockDreamProvider["listHistory"]>[0]) {
+      if (++this.calls > 1) await reloading;
+      return { items: [{ ...pagedHistoryItems[0], id: "identity-reload", title: "精修源图" }, pagedHistoryItems[1]], total: 2, page: query.page, pageSize: query.pageSize };
+    }
+  }
+  const provider = new RefinementHistoryProvider();
+  const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify(init?.method === "POST"
+    ? { detail: "响应丢失" }
+    : { sourceJobId: "identity-reload", selectedVersionId: "result", versions: [{ id: "result", state: "complete", message: "完成", imageUrl: "/result.png", parentVersionId: null, settings: {}, createdAt: "" }] }), { status: init?.method === "POST" ? 503 : 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<DreamProviderContext.Provider value={provider}><HistoryPage /></DreamProviderContext.Provider>);
+  fireEvent.click(await screen.findByRole("button", { name: "独立精修" }));
+  await screen.findByRole("button", { name: "精修一轮" });
+  fireEvent.change(screen.getByLabelText("精修提示词"), { target: { value: "不要丢弃我的编辑" } });
+  fireEvent.click(screen.getByRole("button", { name: "精修一轮" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "重试本次提交" })).toBeEnabled());
+  const first = JSON.parse(fetchMock.mock.calls.find(([, init]) => init?.method === "POST")![1]!.body as string);
+  if (cause === "filter") fireEvent.click(screen.getByRole("button", { name: "今天" }));
+  else act(() => announceImageDeleted("paged-history-2", provider));
+  expect(screen.getByLabelText("精修提示词")).toHaveValue("不要丢弃我的编辑");
+  await act(async () => { release(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "重试本次提交" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "重试本次提交" }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2));
+  const last = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").at(-1)!;
+  expect(JSON.parse(last[1]!.body as string)).toEqual(first);
+});
+
+it("offers refinement only for completed identity images and preserves replay and deletion", async () => {
+  const records = [
+    { ...pagedHistoryItems[0], id: "identity-history", title: "人物历史图" },
+    { ...pagedHistoryItems[1], id: "identity-failed", status: "failed" as const },
+    pagedHistoryItems[2],
+  ];
+  class IdentityHistoryProvider extends MockDreamProvider {
+    override async listHistory(query: Parameters<MockDreamProvider["listHistory"]>[0]) {
+      return { items: records, total: records.length, page: query.page, pageSize: query.pageSize };
+    }
+  }
+  const provider = new IdentityHistoryProvider();
+  const replay = vi.fn();
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ sourceJobId: "identity-history", selectedVersionId: "result",
+    versions: [{ id: "result", state: "complete", message: "完成", imageUrl: "/result.png", parentVersionId: null, settings: {}, createdAt: "2026-10-29" }] }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<DreamProviderContext.Provider value={provider}><HistoryPage onRerun={replay} /></DreamProviderContext.Provider>);
+  fireEvent.click(await screen.findByRole("button", { name: "重新生成此图" }));
+  expect(replay).toHaveBeenCalledWith(records[0]);
+  expect(getComputedStyle(document.querySelector(".history-viewer")!).position).toBe("sticky");
+  fireEvent.click(screen.getByRole("button", { name: "独立精修" }));
+  await screen.findByRole("button", { name: "精修一轮" });
+  expect(getComputedStyle(document.querySelector(".history-viewer")!).position).toBe("static");
+  expect(getComputedStyle(screen.getByRole("region", { name: "独立精修工作区" })).gridColumn).toBe("1 / -1");
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/identity/jobs/identity-history/refinements");
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.keyDown(window, { key: "Delete" });
+  fireEvent.keyDown(window, { key: "ArrowRight" });
+  expect(confirm).not.toHaveBeenCalled();
+  expect(screen.getByRole("heading", { name: "人物历史图" })).toBeInTheDocument();
+  act(() => announceImageDeleted("identity-history", provider));
+  await screen.findByRole("heading", { name: "历史项目 2" });
+  expect(screen.queryByRole("button", { name: "精修一轮" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "独立精修" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "下一个结果" }));
+  expect(screen.queryByRole("button", { name: "独立精修" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "重新生成此图" }));
+  expect(replay).toHaveBeenLastCalledWith(records[2]);
+  confirm.mockRestore();
+});
 
 it("removes a result deleted in another page and does not restore it from a stale refresh", async () => {
   const provider = new PagedHistoryProvider();

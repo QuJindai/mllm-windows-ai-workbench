@@ -3,6 +3,8 @@ import type { Experiment, ExperimentVariant } from "../../domain/experiment";
 import type { ResearchStatus, RuntimeCapabilities } from "../../domain/trace";
 import { TruthBadge } from "../components/TruthBadge";
 import { useDreamProvider } from "../providers";
+import { MobileFusionExperiment } from "../components/research/MobileFusionExperiment";
+import { ResearchImageExperiment } from "../components/research/ResearchImageExperiment";
 
 const defaultPrompt = "a serene mountain lake at sunrise, cinematic lighting, ultra detailed, photorealistic, 8k, dramatic clouds, reflection on water, adventure photography";
 const defaultNegativePrompt = "low quality, blurry, cartoon, anime, text, watermark, deformed, extra limbs, bad anatomy, lowres";
@@ -109,6 +111,8 @@ export function LabPage({ onPromote }: { onPromote?: (request: { prompt: string;
   return (
     <section className="lab-layout">
       <div className="lab-main">
+        <ResearchImageExperiment />
+        <MobileFusionExperiment />
         <div className="surface-card lab-controls">
           <div className="section-title">语义实验控制 <span className="truth-label truth-derived">同一随机种子 · 受控对照</span></div>
           <div className="lab-control-grid">

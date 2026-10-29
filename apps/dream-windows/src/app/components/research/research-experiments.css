@@ -1,0 +1,20 @@
+.research-experiment-panel { padding: 20px; margin-top: 16px; min-width: 0; }
+.research-experiment-panel h2 { font-size: 16px; margin: 12px 0; }
+.research-experiment-panel p { line-height: 1.65; overflow-wrap: anywhere; }
+.research-experiment-controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.research-experiment-panel label { display: grid; gap: 8px; margin-bottom: 12px; }
+.research-table-scroll { overflow-x: auto; margin: 16px 0; }
+.research-table-scroll table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.research-table-scroll th, .research-table-scroll td { padding: 10px; text-align: left; border-bottom: 1px solid var(--border-color, #ddd); white-space: nowrap; }
+.research-provenance { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.research-provenance code, .research-digest { display: block; overflow-wrap: anywhere; font-size: 12px; }
+.research-image-fields { border: 0; padding: 0; margin: 20px 0 0; min-width: 0; }
+.research-image-fields textarea { width: 100%; min-height: 88px; resize: vertical; box-sizing: border-box; }
+.research-image-parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.research-image-parameters input, .research-image-parameters select { width: 100%; min-width: 0; box-sizing: border-box; }
+.research-image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 20px; margin: 20px 0; }
+.research-image-grid figure { margin: 0; min-width: 0; }
+.research-image-grid img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.research-image-grid figcaption { padding: 12px 0; }
+.research-image-grid figcaption p { margin: 4px 0; font-variant-numeric: tabular-nums; }
+.research-encoded-tokens { max-height: 260px; overflow: auto; font-size: 12px; }

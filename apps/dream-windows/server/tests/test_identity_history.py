@@ -62,7 +62,7 @@ def test_delete_identity_history_removes_original_and_revokes_registered_downloa
     job_path.write_text(json.dumps({'id': IDENTITY_ID, 'state': 'complete', 'progress': 100,
                                    'message': '生成完成', 'error': None, 'request': request,
                                    'result': {'imageUrl': f'/api/history/{IDENTITY_ID}/image', 'metadata': value}}), encoding='utf-8')
-    with TestClient(create_app(config, runtime)) as client:
+    with TestClient(create_app(config, runtime), base_url='http://127.0.0.1:8866') as client:
         url = f'/api/identity/jobs/{IDENTITY_ID}/original'
         assert client.get(url).status_code == 200
         response = client.delete(f'/api/history/{IDENTITY_ID}')
@@ -138,7 +138,7 @@ def test_original_delete_failure_returns_api_error_and_preserves_history_for_ret
             raise PermissionError('controlled locked original')
         return rename(path, *args, **kwargs)
 
-    with TestClient(create_app(config, runtime)) as client:
+    with TestClient(create_app(config, runtime), base_url='http://127.0.0.1:8866') as client:
         with monkeypatch.context() as locked:
             locked.setattr(Path, 'rename', permission_denied)
             response = client.delete(f'/api/history/{IDENTITY_ID}')

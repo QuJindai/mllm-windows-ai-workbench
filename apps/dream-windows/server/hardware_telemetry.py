@@ -64,12 +64,14 @@ def _number(value: str) -> float | None:
 class HardwareTelemetry:
     # One driver query per process per window, including on failure. No GPU work.
     CACHE_SECONDS = 2.0
-    PROBE_TIMEOUT_SECONDS = 1.5
+    PROBE_TIMEOUT_SECONDS = 3.0
+    FAILURE_RETRY_SECONDS = (3.0, 6.0, 12.0, 30.0)
 
     def __init__(self, config: DreamServerConfig):
         self.config = config
         self._lock = threading.Lock()
         self._expires_at = 0.0
+        self._failures = 0
         self._snapshot: dict[str, Any] | None = None
         self._cpu: dict[str, Any] | None = None
 
@@ -80,10 +82,13 @@ class HardwareTelemetry:
                 self._snapshot = None
                 try:
                     self._snapshot = self._sample()
+                    self._failures = 0
                 except (OSError, subprocess.SubprocessError, ValueError, psutil.Error) as error:
                     # Log once for this failed cached sample, not once per API caller.
+                    self._failures = min(self._failures + 1, len(self.FAILURE_RETRY_SECONDS))
                     _log_sample_failure(error)
-                self._expires_at = time.monotonic() + self.CACHE_SECONDS
+                delay = self.FAILURE_RETRY_SECONDS[self._failures - 1] if self._failures else self.CACHE_SECONDS
+                self._expires_at = time.monotonic() + delay
             if self._snapshot is None:
                 raise DreamApiError(
                     "HARDWARE_TELEMETRY_UNAVAILABLE",

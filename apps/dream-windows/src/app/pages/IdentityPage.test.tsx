@@ -148,6 +148,47 @@ async function prepare(ui: ReturnType<typeof within>, id = "ref-test") {
 function posts(path: string) { return fetchCalls.filter((call) => call.method === "POST" && call.url === path); }
 
 describe("人物创作 HTTP workspace", () => {
+  it("applies a recipe without changing the selected face, LoRA, identity or batch settings", async () => {
+    render(<IdentityPage />);
+    await prepare(within(await screen.findByRole("region", { name: "人物创作工作区" })));
+    for (const [label, value] of [["身份强度", "0.77"], ["结构强度", "0.65"], ["FaceID 配套 LoRA 强度", "0.45"],
+      ["宽度", "640"], ["高度", "640"], ["步数", "24"], ["CFG", "6"], ["种子", "123"], ["生成张数", "2"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.change(screen.getByLabelText("可选 LoRA"), { target: { value: "style-sd15" } });
+    fireEvent.change(screen.getByLabelText("可选 LoRA 强度"), { target: { value: "0.4" } });
+    fireEvent.change(screen.getByLabelText("中间预览频率"), { target: { value: "5" } });
+    fireEvent.click(screen.getByLabelText("20 步"));
+    fireEvent.change(screen.getByRole("combobox", { name: "场景构图" }), { target: { value: "full" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用女帝场景" }));
+    expect(screen.getByLabelText("步数")).toHaveValue(24);
+    fireEvent.click(screen.getByRole("button", { name: "应用模型推荐参数" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成人物图像" }));
+    await waitFor(() => expect(batchRequest).toMatchObject({ count: 2, previewEvery: 5, stepValues: [20], request: {
+      modelId: "realistic-vision-v5.1-faceid", referenceId: "ref-test", faceIndex: 3, seed: 123,
+      width: 512, height: 768, steps: 28, cfg: 5.5, identityStrength: .77, structureStrength: .65, faceLoraStrength: .45,
+      loraId: "style-sd15", loraStrength: .4, facePolish: false, faceRestoreStrength: 1,
+      prompt: expect.stringMatching(/full body.*imperial throne/),
+    } }));
+    expect(screen.getByRole("button", { name: "应用模型推荐参数" })).toBeDisabled();
+  });
+
+  it("uses identity-route anime recipe limits and preserves the chosen reference", async () => {
+    twoModels();
+    render(<IdentityPage />);
+    await prepare(within(await screen.findByRole("region", { name: "人物创作工作区" })));
+    fireEvent.change(screen.getByLabelText("人物底图模型"), { target: { value: "illustrious-xl-v2.0-faceid" } });
+    fireEvent.change(screen.getByLabelText("身份强度"), { target: { value: "0.73" } });
+    fireEvent.change(screen.getByLabelText("步数"), { target: { value: "21" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用公主场景" }));
+    expect(screen.getByLabelText("步数")).toHaveValue(21);
+    fireEvent.click(screen.getByRole("button", { name: "应用模型推荐参数" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成人物图像" }));
+    await waitFor(() => expect(batchRequest?.request).toMatchObject({ modelId: "illustrious-xl-v2.0-faceid",
+      referenceId: "ref-test", faceIndex: 3, identityStrength: .73, width: 768, height: 768, steps: 30, cfg: 5,
+      prompt: expect.stringContaining("anime illustration") }));
+  });
+
   it("applies a scene while preserving the reference face, identity settings and batch parameters", async () => {
     render(<IdentityPage />);
     await screen.findByRole("option", { name: "单人参考.png" });

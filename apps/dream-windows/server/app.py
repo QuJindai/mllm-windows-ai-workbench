@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,17 +12,20 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DreamServerConfig
 from errors import DreamApiError
-from identity_routes import create_identity_router
+from identity_routes import create_identity_router, require_local_origin
+from identity_service import IdentityService
 from job_runner import JobRunner
 from models import ExperimentRequest, FavoriteRequest, GenerateRequest, SettingsUpdateRequest, WorkspaceOpenRequest
 from operations import ensure_generation_capacity, get_operations
 from runtime import DreamRuntime
+from research_experiment_routes import create_research_experiment_router
 
 
 def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | Any | None = None) -> FastAPI:
     resolved_config = config or DreamServerConfig.from_environment()
     resolved_runtime = runtime or DreamRuntime(resolved_config)
     app = FastAPI(title="Dream Windows Web", version="0.2.0")
+    app.include_router(create_research_experiment_router(resolved_runtime))
 
     @app.exception_handler(DreamApiError)
     async def dream_error_handler(_: Request, exc: DreamApiError) -> JSONResponse:
@@ -32,8 +36,10 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
         return JSONResponse(status_code=422, content={"code": "REQUEST_INVALID", "message": "Request validation failed", "retryable": False, "detail": {"errors": exc.errors()}})
 
     identity_runner = getattr(resolved_runtime, "job_runner", None)
+    identity_service = None
     if isinstance(identity_runner, JobRunner):
-        app.include_router(create_identity_router(resolved_config, identity_runner))
+        identity_service = IdentityService(resolved_config, identity_runner)
+        app.include_router(create_identity_router(resolved_config, identity_runner, service=identity_service))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -81,7 +87,15 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
         return FileResponse(path)
 
     @app.delete("/api/history/{item_id}")
-    def delete_history(item_id: str) -> dict[str, Any]:
+    def delete_history(item_id: str, request: Request) -> dict[str, Any]:
+        if identity_service is not None and re.fullmatch(r'identity-[a-f0-9]{24}', item_id):
+            require_local_origin(request, resolved_config)
+            try:
+                return {**identity_service.delete_history(item_id), 'truth': 'observed'}
+            except DreamApiError as exc:
+                if exc.code == 'IDENTITY_JOB_NOT_FOUND':
+                    return identity_service.refinement_operation('delete_legacy', item_id, resolved_runtime.delete_history)
+                raise
         return resolved_runtime.delete_history(item_id)
 
     @app.post("/api/history/{item_id}/favorite")

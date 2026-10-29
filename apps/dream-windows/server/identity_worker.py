@@ -13,15 +13,21 @@ def load_config(request, *, operation='generate'):
     if not path.is_file():
         raise ValueError('人物运行配置不存在')
     config = json.loads(path.read_text(encoding='utf-8-sig'))
-    if operation == 'status':
+    if operation in ('status', 'fusion'):
         return config
-    from identity_models import DEFAULT_MODEL_ID, resolve_identity_model, validate_extraction_assets
+    from identity_models import DEFAULT_MODEL_ID, ILLUSTRIOUS_MODEL_ID, resolve_identity_model, validate_extraction_assets
     if operation in ('inspect', 'prepare', 'anime_prepare'):
         kind = request.get('referenceKind', 'faceid') if operation != 'anime_prepare' else 'faceid'
         if kind not in ('faceid', 'visual'):
             raise ValueError('参考类型配置无效')
         return validate_extraction_assets(config, clip=operation != 'inspect', reference_kind=kind)
     selected = request.get('items', [request])[0]
+    if (operation == 'refine' and request.get('editSettings', {}).get('mode') == 'restore'
+            and selected.get('modelId', DEFAULT_MODEL_ID) in (DEFAULT_MODEL_ID, ILLUSTRIOUS_MODEL_ID)
+            and not selected.get('animeProfileId')):
+        # Independent FaceID restoration needs only the restoration/reference
+        # assets checked by FacePolisher, never an unused checkpoint/adapter.
+        return config
     return resolve_identity_model(config, selected.get('modelId', DEFAULT_MODEL_ID))
 
 
@@ -38,7 +44,7 @@ def main():
     parser.add_argument('--persistent', action='store_true')
     parser.add_argument('--ownership-handshake', action='store_true')
     parser.add_argument('--idle-ttl', type=float, default=60.)
-    parser.add_argument('--operation', choices=['status', 'inspect', 'generate', 'prepare', 'anime_prepare', 'batch'])
+    parser.add_argument('--operation', choices=['status', 'inspect', 'generate', 'prepare', 'anime_prepare', 'batch', 'refine', 'fusion'])
     parser.add_argument('--request', type=Path)
     parser.add_argument('--result', type=Path)
     args = parser.parse_args()
@@ -61,7 +67,8 @@ def main():
     try:
         request = json.loads(args.request.read_text(encoding='utf-8-sig'))
         config = load_config(request, operation=args.operation)
-        from identity_pipeline import generate, inspect_reference, registered_loras, prepare, generate_batch
+        if args.operation not in ('refine', 'fusion'):
+            from identity_pipeline import generate, inspect_reference, registered_loras, prepare, generate_batch
         if args.operation == 'status':
             require_dependencies()
             from identity_face_polish import face_polish_status
@@ -89,6 +96,12 @@ def main():
             result = prepare_anime(config, request)
         elif args.operation == 'batch':
             result = generate_batch(config, request)
+        elif args.operation == 'refine':
+            from identity_refinement_engine import refine
+            result = refine(config, request)
+        elif args.operation == 'fusion':
+            from research_image_engine import generate_fusion_images
+            result = generate_fusion_images(config, request)
         else:
             result = generate(config, request)
         code = 0

@@ -348,7 +348,10 @@ export function GeneratePage({ hardware, hardwareError, initialRequest }: { hard
           </div>
           {tab === "prompt" && <>
             <ScenePresetPicker modelId={request.modelId} prompt={request.prompt} negativePrompt={request.negativePrompt} disabled={busy || loadingModels}
-              onApply={value => setRequest(current => ({ ...current, ...value }))} />
+              modelName={selectedModel?.displayName} modelReady={selectedModel?.status === "ready" && selectedModel.kind === "Checkpoint"}
+              recipeDefaults={selectedModel?.generationDefaults}
+              onApply={value => setRequest(current => ({ ...current, ...value }))}
+              onApplyRecipe={value => setRequest(current => ({ ...current, ...value }))} />
             <label className="field-label" htmlFor="prompt">正向提示词</label>
             <textarea id="prompt" value={request.prompt} onChange={(event) => update("prompt", event.target.value)} rows={4} placeholder="描述你想创建的图像" />
             <label className="field-label" htmlFor="negative-prompt">负向提示词</label>

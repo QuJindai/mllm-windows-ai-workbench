@@ -15,5 +15,9 @@
 .scene-preset span { color: #a2bac8; font-size: 12px; }
 .scene-presets-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; color: #a2bac8; font-size: 12px; }
 .scene-presets-footer small { flex: 1 1 180px; line-height: 1.5; }
+.scene-recipe { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #294553; }
+.scene-recipe p { margin: 0; color: #a2bac8; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.scene-recipe .scene-recipe-values { color: #d9eef7; font-weight: 600; }
+.scene-recipe button { justify-self: start; white-space: normal; }
 .scene-presets:disabled { opacity: .65; }
 @media (max-width: 480px) { .scene-presets-grid { grid-template-columns: 1fr; } }

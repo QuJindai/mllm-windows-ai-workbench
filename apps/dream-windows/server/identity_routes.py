@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
+from identity_refinements import RefinementRequest, VersionSelection
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
@@ -21,10 +22,27 @@ from identity_profiles import ProfileCreate, ProfileName, ProfilePreset
 from identity_batches import BatchRequest, BatchRetryRequest
 from identity_anime_profiles import AnimeProfileCreate, AnimeProfileImport
 from history_transactions import history_deletion_flags
+from research_experiment_routes import create_research_image_router
 
 
-def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> APIRouter:
-    service = IdentityService(config, job_runner)
+def require_local_origin(request: Request, config: DreamServerConfig):
+    allowed_hosts = {"localhost", "127.0.0.1", "::1", config.host} - {"0.0.0.0", "::"}
+    trusted = (request.url.hostname in allowed_hosts
+               and request.headers.get('sec-fetch-site') in {None, 'none', 'same-origin'})
+    origin = request.headers.get('origin')
+    if origin is not None:
+        try:
+            parsed = urlsplit(origin)
+            trusted = (trusted and parsed.scheme == request.url.scheme and parsed.netloc == request.url.netloc
+                       and parsed.path == '' and not parsed.query and not parsed.fragment and not parsed.username)
+        except ValueError:
+            trusted = False
+    if not trusted:
+        raise DreamApiError('IDENTITY_ORIGIN_FORBIDDEN', '人物操作必须来自可信的同源页面，请从 Dream 页面重试', status_code=403)
+
+
+def create_identity_router(config: DreamServerConfig, job_runner: JobRunner, *, service: IdentityService | None = None) -> APIRouter:
+    service = service or IdentityService(config, job_runner)
 
     def result_availability(record, deleted):
         # Decorate a detached public copy only. Frozen jobs and profile presets
@@ -51,18 +69,7 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
                 if request.method in {"POST", "DELETE"}:
                     # Check actual Host too: reflecting a forged Host into Origin
                     # comparison alone would permit DNS rebinding attacks.
-                    allowed_hosts = {"localhost", "127.0.0.1", "::1", config.host} - {"0.0.0.0", "::"}
-                    origin = request.headers.get("origin")
-                    fetch_site = request.headers.get("sec-fetch-site")
-                    trusted = request.url.hostname in allowed_hosts and fetch_site in {None, "none", "same-origin"}
-                    if origin is not None:
-                        try:
-                            parsed = urlsplit(origin)
-                            trusted = trusted and parsed.scheme == request.url.scheme and parsed.netloc == request.url.netloc and parsed.path == "" and not parsed.query and not parsed.fragment and not parsed.username
-                        except ValueError:
-                            trusted = False
-                    if not trusted:
-                        raise DreamApiError("IDENTITY_ORIGIN_FORBIDDEN", "人物操作必须来自可信的同源页面，请从 Dream 页面重试", status_code=403)
+                    require_local_origin(request, config)
                     image_upload = request.url.path in {'/api/identity/references', '/api/identity/anime-profiles/import'}
                     limit = MAX_BASE64 + 64 * 1024 if image_upload else 64 * 1024
                     try:
@@ -96,6 +103,28 @@ def create_identity_router(config: DreamServerConfig, job_runner: JobRunner) -> 
             await run_in_threadpool(service.close)
 
     router = APIRouter(prefix="/api/identity", route_class=IdentityRoute, lifespan=lifespan)
+    router.include_router(create_research_image_router(service))
+
+    @router.get('/jobs/{source_id}/refinements')
+    def refinement_workspace(source_id: str):
+        return service.refinement_operation('workspace', source_id)
+
+    @router.post('/jobs/{source_id}/refinements/select')
+    def select_refinement(source_id: str, payload: VersionSelection):
+        return service.refinement_operation('select', source_id, payload)
+
+    @router.post('/refinements')
+    def create_refinement(payload: RefinementRequest):
+        operations.ensure_generation_capacity(config)
+        return service.refinement_operation('submit', payload)
+
+    @router.post('/refinements/{version_id}/cancel')
+    def cancel_refinement(version_id: str):
+        return service.refinement_operation('cancel', version_id)
+
+    @router.get('/refinements/{version_id}/image')
+    def refinement_image(version_id: str):
+        return FileResponse(service.refinement_operation('image', version_id), media_type='image/png')
 
     @router.get('/anime-profiles')
     def anime_profiles():

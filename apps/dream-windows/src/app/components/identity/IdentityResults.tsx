@@ -4,6 +4,7 @@ import type { IdentityBatch, IdentityJob, IdentityProfile, IdentityReference, Vi
 import { identityApi } from "../../../providers/identity-api";
 import { DeleteImageButton } from "../DeleteImageButton";
 import { useDeletedImageIds } from "../../image-deletion";
+import { RefinementWorkspace } from "./RefinementWorkspace";
 
 export function ResultPreview({ imageUrl, label = "生成结果" }: { imageUrl: string; label?: string }) {
   const [unavailable, setUnavailable] = useState(false);
@@ -131,6 +132,7 @@ function remainingTime(batch: IdentityBatch): string {
 
 export function IdentityResults({ batch, job, reference, profile, opening, cancelling, pending, pollError, onCancel, onSavePreset }: Props) {
   const deletedImages = useDeletedImageIds();
+  const [refiningId, setRefiningId] = useState<string | null>(null);
   const isDeleted = (item: IdentityJob) => item.resultDeleted || item.historyDeleted || deletedImages.has(item.id);
   const observationHeading = useRef<HTMLHeadingElement>(null);
   const lastFocusedBatch = useRef<string | undefined>(undefined);
@@ -149,6 +151,8 @@ export function IdentityResults({ batch, job, reference, profile, opening, cance
     return <section className="surface-card identity-results" aria-label="人物任务详情"><h2>批次观察</h2><p role="status">批次已删除，人物档案与参考照片保留。</p><ReferenceImage reference={reference} faceIndex={batch.request.request.faceIndex} /></section>;
   }
   const completed = batch?.items.filter((item) => item.state === "complete" && item.result && !isDeleted(item)) ?? [];
+  const refinementSource = (batch ? completed : job ? [job] : []).find(item => item.id === refiningId && item.state === "complete" && item.result && !isDeleted(item));
+  const refineButton = (item: IdentityJob) => item.id.startsWith("identity-") && <button type="button" className="secondary-button" disabled={pending || opening} onClick={() => setRefiningId(item.id)}>独立精修</button>;
   const saveButton = (item: IdentityJob) => <button type="button" className="secondary-button" aria-label={`将 ${item.id} 存为人物预设`}
     disabled={pending || opening || profile?.state !== "ready" || profile.referenceId !== item.request.referenceId || profile.faceIndex !== item.request.faceIndex}
     onClick={() => onSavePreset(item)}>将此图参数存为人物预设</button>;
@@ -179,19 +183,20 @@ export function IdentityResults({ batch, job, reference, profile, opening, cance
       <div className="identity-images">
         <ReferenceImage reference={reference} faceIndex={batch?.request.request.faceIndex ?? job?.request.faceIndex} />
         {batch ? batch.request.previewEvery !== 0 && batch.previewUrl ? <IntermediatePreview key={`${batch.id}:${batch.previewUrl}`} url={batch.previewUrl} /> : <p className="identity-note">{batch.request.previewEvery === 0 ? "中间预览已关闭" : "等待服务返回中间预览"}</p>
-          : job && isDeleted(job) ? <p role="status">{job.resultDeleted ? "图片已删除，仍可复用生成参数。" : "历史记录已删除，仍可复用生成参数。"}</p> : job?.result?.imageUrl ? <div><JobResultPreview job={job} />{job.state === "complete" && <DeleteImageButton key={job.id} id={job.id} disabled={pending || opening} onDelete={identityApi.deleteJob} />}</div> : <figure><div className="identity-empty">结果尚未生成</div><figcaption>生成结果</figcaption></figure>}
+          : job && isDeleted(job) ? <p role="status">{job.resultDeleted ? "图片已删除，仍可复用生成参数。" : "历史记录已删除，仍可复用生成参数。"}</p> : job?.result?.imageUrl ? <div><JobResultPreview job={job} />{job.state === "complete" && refineButton(job)}{job.state === "complete" && <DeleteImageButton key={job.id} id={job.id} disabled={pending || opening} onDelete={identityApi.deleteJob} />}</div> : <figure><div className="identity-empty">结果尚未生成</div><figcaption>生成结果</figcaption></figure>}
       </div>
     </section>
     {batch ? <section className="surface-card" aria-label="已完成结果"><h2>已完成结果 · {completed.length} 张</h2>
       <div className="identity-completed-grid">{completed.map((item) => <article className="identity-result-card" key={item.id} aria-label={`已完成结果 ${item.id}`}>
         <JobResultPreview job={item} />
         <p>种子 {identityJobSeed(item)} · {item.request.steps} 步</p>
-        <p className="identity-note">{item.id}</p>{saveButton(item)}
+        <p className="identity-note">{item.id}</p>{saveButton(item)}{refineButton(item)}
         <DeleteImageButton id={item.id} disabled={pending || opening} onDelete={identityApi.deleteJob} />
         <details><summary>查看实测过程</summary><Measurements job={item} /></details>
       </article>)}</div>
       {!completed.length && <p className="identity-note">{batch.items.some(isDeleted) ? "已完成的图片已删除，任务参数仍保留。" : "尚无已完成结果，完成的原图会逐张保留在这里。"}</p>}
       {!profile && completed.length > 0 && <p className="identity-note">本批未绑定人物档案，不能保存人物预设。可用原参考照创建档案后，打开这张历史任务保存参数。</p>}
     </section> : <section className="surface-card"><h2>实测过程</h2><Measurements job={job} />{job?.state === "complete" && job.result && saveButton(job)}</section>}
+    {refinementSource && <RefinementWorkspace sourceJobId={refinementSource.id} onClose={() => setRefiningId(null)} />}
   </div>;
 }

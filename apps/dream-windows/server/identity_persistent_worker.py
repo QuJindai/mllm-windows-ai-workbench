@@ -1,6 +1,6 @@
 """Bounded JSON-lines identity transport (no GPU imports at module load).
 
-The child owns ONE IdentitySession, ever. Incompatibility/error/EOF/60s idle
+The child owns ONE IdentitySession or restore processor, ever. Incompatibility/error/EOF/60s idle
 ends that process; parent release/cancel/close waits for exit before returning.
 Main must serialize identity work with native work and register release as the
 native before-run barrier. lifetime_factory must bind the owned process to the
@@ -223,7 +223,9 @@ def _reader(stream, inbox, limit, stop, *, single=False):
         deliver(b"")
 
 
-def serve(worker, source, target, *, idle_ttl=IDLE_TTL, ownership_handshake=False):
+def serve(worker, source, target, *, idle_ttl=IDLE_TTL, ownership_handshake=False, operation='batch'):
+    if operation not in ('batch', 'refine'):
+        raise ValueError('Unsupported worker operation')
     if not math.isfinite(idle_ttl) or not 0 < idle_ttl <= IDLE_TTL:
         raise ValueError("Idle TTL must be positive and at most 60 seconds")
     inbox = queue.Queue(maxsize=1)
@@ -258,11 +260,11 @@ def serve(worker, source, target, *, idle_ttl=IDLE_TTL, ownership_handshake=Fals
                 request_id = message["id"]
                 if message.get("op") == "close":
                     return 0
-                if message.get("op") != "batch" or not isinstance(message.get("payload"), dict):
+                if message.get("op") != operation or not isinstance(message.get("payload"), dict):
                     raise ValueError("Unsupported operation")
                 # Pipeline/library progress cannot contaminate the JSON channel.
                 with redirect_stdout(sys.stderr):
-                    result = worker.run_batch(message["payload"])
+                    result = (worker.run_batch if operation == 'batch' else worker.run_refine)(message["payload"])
                 reply = {"id": request_id, "ok": True, "result": result}
                 code = 0
             except Exception as exc:
@@ -402,6 +404,11 @@ class PersistentWorkerClient:
             self._ownership_confirmed = True
 
     def run_batch(self, payload, *, cancelled=None, timeout=900, on_poll=None):
+        return self.run_operation('batch', payload, cancelled=cancelled, timeout=timeout, on_poll=on_poll)
+
+    def run_operation(self, operation, payload, *, cancelled=None, timeout=900, on_poll=None):
+        if operation not in ('batch', 'refine'):
+            raise ValueError('Unsupported worker operation')
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Invalid worker timeout")
         if not self._request.acquire(blocking=False):
@@ -413,7 +420,7 @@ class PersistentWorkerClient:
                 if cancelled is not None and cancelled.is_set():
                     raise PersistentWorkerCancelled("Identity request cancelled")
                 identifier = uuid.uuid4().hex
-                data = _json({"id": identifier, "op": "batch", "payload": payload}) + b"\n"
+                data = _json({"id": identifier, "op": operation, "payload": payload}) + b"\n"
                 if len(data) > MAX_REQUEST:
                     raise ValueError("Identity request too large")
                 process, responses = self._start(epoch)

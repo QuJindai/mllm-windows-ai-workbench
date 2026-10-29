@@ -310,6 +310,31 @@ def test_identical_scene_with_real_face_neck_contrast_is_unchanged():
     assert info['sceneResidual']['baselineMeanAbsoluteLuma'] == 0
 
 
+@pytest.mark.parametrize('patch_rgb', [(150, 150, 150), (149, 149, 149), (151, 150, 150)])
+def test_nearby_lighting_residual_cannot_worsen_a_local_scene_match(patch_rgb):
+    from identity_edge_lighting import edge_lighting_candidate
+    image, labels = fixture_pixels(face=150)
+    scene_pixels = np.asarray(scene_fixture(face=180)).copy()
+    # A small jaw patch already matches the scene, needs the opposite sign, or
+    # needs less than one RGB level. Nearby skin still needs brightening. This
+    # reproduces local regressions hidden by an improving regional mean.
+    scene_pixels[126:133, 70:90] = patch_rgb
+    scene = Image.fromarray(scene_pixels)
+    selected_bytes, scene_bytes = image.tobytes(), scene.tobytes()
+    result, info = edge_lighting_candidate(image, labels, POINTS, BOX, .65, scene=scene)
+    before, after = np.asarray(image).astype(float), np.asarray(result).astype(float)
+    luma = lambda pixels: (.2126 * pixels[..., 0] + .7152 * pixels[..., 1]
+                           + .0722 * pixels[..., 2])
+    old_error = np.abs(luma(scene_pixels) - luma(before))
+    new_error = np.abs(luma(scene_pixels) - luma(after))
+    assert np.all(new_error <= old_error + 1e-10)
+    assert np.array_equal(after[126:133, 70:90], before[126:133, 70:90])
+    assert (after > before).any()  # A valid surrounding correction is retained.
+    assert info['diagnostics']['retention']['protected']['changedPixels'] == 0
+    assert info['diagnostics']['retention']['outsideEdit']['changedPixels'] == 0
+    assert image.tobytes() == selected_bytes and scene.tobytes() == scene_bytes
+
+
 @pytest.mark.parametrize('mode', ['missing', 'not-found', 'different-size', 'rgba'])
 def test_scene_is_required_and_checked_before_model_loading(mode, monkeypatch, tmp_path):
     import identity_edge_lighting as edge

@@ -5,6 +5,13 @@ are implemented. The separate CPU edge-lighting helper is connected to the worke
 and returns actual mask diagnostics. See the [creative upgrade acceptance record](dream-windows/CREATIVE_UPGRADE_20261029.md)
 for current GPU, GUI, integrity and release status.
 
+The follow-up `immutable-scene-luma-ring-v3` guard checks each quantized proposal
+against that pixel's original scene-luma residual. Non-improving proposals are
+discarded without changing the target-derived mask. See the
+[composition and local-lighting repair](dream-windows/COMPOSITION_REPAIR_20261029.md)
+for the real-fixture regression and its limits; older measurements below remain
+historical evidence for the v2 implementation.
+
 These diagnostic tools do not themselves execute generation, initialize CUDA,
 stop workers or select a better image. They produce no identity score, combined
 quality score, automatic ranking or automatic correction. Real observations below

@@ -241,7 +241,11 @@ export function IdentityPage({ replay }: { replay?: IdentityReplay | null }) {
           <ScenePresetPicker modelId={modelId} prompt={form.prompt} negativePrompt={form.negativePrompt} disabled={locked}
             modelName={selectedModel?.name} modelReady={status?.ready === true && selectedModel?.ready === true}
             onApply={value => editForm(current => ({ ...current, ...value }))}
-            onApplyRecipe={value => editForm(current => ({ ...current, ...value }))} />
+            onApplyRecipe={value => editForm(current => ({ ...current, ...value }))}
+            onApplyFullBodyRecipe={({ width, height, steps, cfg, identityStrength, referenceStart, referenceEnd }) => {
+              if (locked || modelId !== "cyberrealistic-xl-plus-face" || status?.ready !== true || selectedModel?.ready !== true) return;
+              editForm(current => ({ ...current, width, height, steps, cfg, identityStrength, referenceStart, referenceEnd }));
+            }} />
           {!selectedModel?.ready && !initializing && (status?.models || !selectedModel) && <p className="identity-error" role="alert">{selectedModel?.message ?? "所选底模不可用，请检查模型配置"}</p>}
           {isXL && <p className="identity-note">插画底模 · SDXL 专用 FaceID；复用已有档案。6GB 显存使用分段加载，速度慢于 SD1.5。支持 H6/H7 代表采集，暂不支持扩展采集；不保证人物相似度提升。</p>}
           <label>场景提示词<textarea rows={4} maxLength={2000} value={form.prompt} onChange={(event) => editForm((value) => ({ ...value, prompt: event.target.value }))} placeholder="描述人物所在的场景、服装与光线" /></label>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { defaultSceneStyle, sceneModelStyles, scenePresets, scenePrompts, sceneRecipe } from "../../domain/scene-presets";
-import type { SceneFraming, ScenePrompts, SceneRecipe, SceneStyle } from "../../domain/scene-presets";
+import { defaultSceneStyle, sceneFullBodyRecipe, sceneModelStyles, scenePresets, scenePrompts, sceneRecipe } from "../../domain/scene-presets";
+import type { SceneFraming, SceneFullBodyRecipe, ScenePrompts, SceneRecipe, SceneStyle } from "../../domain/scene-presets";
 import "./ScenePresetPicker.css";
 
 type Props = ScenePrompts & {
@@ -11,15 +11,17 @@ type Props = ScenePrompts & {
   disabled?: boolean;
   onApply: (value: ScenePrompts) => void;
   onApplyRecipe?: (value: SceneRecipe) => void;
+  onApplyFullBodyRecipe?: (value: SceneFullBodyRecipe) => void;
 };
 
-export function ScenePresetPicker({ modelId, modelName, modelReady = false, recipeDefaults, prompt, negativePrompt, disabled = false, onApply, onApplyRecipe }: Props) {
+export function ScenePresetPicker({ modelId, modelName, modelReady = false, recipeDefaults, prompt, negativePrompt, disabled = false, onApply, onApplyRecipe, onApplyFullBodyRecipe }: Props) {
   const [style, setStyle] = useState<SceneStyle>(() => defaultSceneStyle(modelId));
   const [framing, setFraming] = useState<SceneFraming>("half");
   const [last, setLast] = useState<{ name: string; before: ScenePrompts; after: ScenePrompts } | null>(null);
   useEffect(() => { setStyle(defaultSceneStyle(modelId)); }, [modelId]);
   const unchanged = last && prompt === last.after.prompt && negativePrompt === last.after.negativePrompt;
   const recipe = sceneRecipe(modelId, style, recipeDefaults);
+  const fullBodyRecipe = sceneFullBodyRecipe(modelId, style, framing);
   const modelStyles = sceneModelStyles(modelId).map(value => value === "photo" ? "写实" : "动漫插画").join(" / ");
 
   return <fieldset className="scene-presets" disabled={disabled}>
@@ -52,6 +54,15 @@ export function ScenePresetPicker({ modelId, modelName, modelReady = false, reci
         : !recipe && <p>当前模型与画风没有兼容的推荐参数，可继续仅应用提示词。</p>}
       <button type="button" className="secondary-button" disabled={!modelReady || !recipe}
         onClick={() => { if (!disabled && modelReady && recipe) onApplyRecipe(recipe); }}>应用模型推荐参数</button>
+    </div>}
+    {onApplyFullBodyRecipe && fullBodyRecipe && <div className="scene-recipe scene-full-body-recipe">
+      <p className="scene-recipe-values">全身构图方案：{fullBodyRecipe.width} × {fullBodyRecipe.height} · {fullBodyRecipe.steps} 步 · CFG {fullBodyRecipe.cfg}</p>
+      <p className="scene-recipe-values">视觉参考强度 {fullBodyRecipe.identityStrength} · 参考开始比例 {fullBodyRecipe.referenceStart} · 参考结束比例 {fullBodyRecipe.referenceEnd}</p>
+      <p>先由提示词建立全身构图，再引入视觉参考。脸部细节可在生成后独立精修，不保证人物相似度。</p>
+      <p>仅更新上述七项参数；保留人物档案、参考图、人脸、LoRA、修脸设置、种子和提示词。</p>
+      {!modelReady && <p>当前模型未就绪，全身构图方案不可用。</p>}
+      <button type="button" className="secondary-button" disabled={disabled || !modelReady}
+        onClick={() => { if (!disabled && modelReady) onApplyFullBodyRecipe(fullBodyRecipe); }}>应用全身构图方案</button>
     </div>}
   </fieldset>;
 }

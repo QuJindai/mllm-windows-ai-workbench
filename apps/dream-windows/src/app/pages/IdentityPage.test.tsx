@@ -148,6 +148,50 @@ async function prepare(ui: ReturnType<typeof within>, id = "ref-test") {
 function posts(path: string) { return fetchCalls.filter((call) => call.method === "POST" && call.url === path); }
 
 describe("人物创作 HTTP workspace", () => {
+  it("applies only the seven full-body fields and preserves the selected visual profile, polish, prompts and batch", async () => {
+    runtime.models = [{ id: "cyberrealistic-xl-plus-face", name: "CyberRealistic XL Plus Face", architecture: "SDXL", ready: true, message: "就绪", loras: [] }];
+    runtime.visualPolish = { ready: true, message: "可精修", referenceAnchorReady: true };
+    const profile = { id: "profile-visual", referenceKind: "visual", name: "视觉档案", referenceId: "ref-test", faceIndex: 3,
+      state: "ready", error: null, createdAt: "2026-10-29", updatedAt: "2026-10-29", defaults: {
+        modelId: "cyberrealistic-xl-plus-face", width: 640, height: 640, steps: 24, cfg: 6, identityStrength: .83,
+        referenceStart: 0, referenceEnd: .85, seed: 20261029, prompt: "keep full-body garden prompt", negativePrompt: "keep exclusions",
+        facePolish: true, faceRestoreStrength: .6, animeDenoiseStrength: .2, visualPolishMode: "reference-anchor", visualAnchorStrength: .8,
+        visualPolishPasses: 2, visualPolishPrompt: "keep face details", visualPolishNegativePrompt: "keep face exclusions", loraStrength: .41,
+      } };
+    fetchOverride = url => url === "/api/identity/profiles" ? Promise.resolve(json([profile]))
+      : url === "/api/identity/profiles/profile-visual" ? Promise.resolve(json(profile)) : undefined;
+    render(<IdentityPage />);
+    await screen.findByRole("option", { name: /视觉档案/ });
+    fireEvent.change(screen.getByLabelText("选择人物档案"), { target: { value: profile.id } });
+    await waitFor(() => expect(screen.getByLabelText("场景提示词")).toHaveValue("keep full-body garden prompt"));
+    fireEvent.change(screen.getByLabelText("生成张数"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("中间预览频率"), { target: { value: "5" } });
+    fireEvent.click(screen.getByLabelText("20 步"));
+    const readSaved = () => JSON.parse(localStorage.getItem("dream.identity.text-draft.v1")!);
+    await waitFor(() => expect(readSaved()?.parameters?.width).toBe(640));
+    const before = readSaved();
+    fireEvent.change(screen.getByLabelText("场景构图"), { target: { value: "full" } });
+    expect(screen.getByLabelText("参考开始比例")).toHaveValue(0);
+    expect(screen.getByLabelText("宽度")).toHaveValue(640);
+    expect(posts("/api/identity/batches")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "应用全身构图方案" }));
+    await waitFor(() => expect(readSaved()).toEqual({ ...before, parameters: { ...before.parameters,
+      width: 512, height: 768, steps: 30, cfg: 5, identityStrength: .7, referenceStart: .35, referenceEnd: 1 } }));
+    expect(screen.getByLabelText("选择人物档案")).toHaveValue(profile.id);
+    expect(screen.getByLabelText("选择参考照")).toHaveValue("ref-test");
+    expect(screen.getByRole("radio", { name: "人脸 4" })).toBeChecked();
+    expect(posts("/api/identity/batches")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "生成人物图像" }));
+    await waitFor(() => expect(batchRequest).toMatchObject({ profileId: profile.id, count: 2, previewEvery: 5, stepValues: [20], request: {
+      modelId: "cyberrealistic-xl-plus-face", referenceId: "ref-test", faceIndex: 3, seed: 20261029,
+      width: 512, height: 768, steps: 30, cfg: 5, identityStrength: .7, referenceStart: .35, referenceEnd: 1,
+      prompt: "keep full-body garden prompt", negativePrompt: "keep exclusions", facePolish: true, faceRestoreStrength: .6,
+      animeDenoiseStrength: .2, visualPolishMode: "reference-anchor", visualAnchorStrength: .8, visualPolishPasses: 2,
+      visualPolishPrompt: "keep face details", visualPolishNegativePrompt: "keep face exclusions",
+    } }));
+    expect(screen.getByRole("button", { name: "应用全身构图方案" })).toBeDisabled();
+  });
+
   it("applies a recipe without changing the selected face, LoRA, identity or batch settings", async () => {
     render(<IdentityPage />);
     await prepare(within(await screen.findByRole("region", { name: "人物创作工作区" })));

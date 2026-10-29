@@ -9,6 +9,9 @@ Only face skin within the target-derived protected-v3 ring, near a directly
 adjacent visible neck, may change. Neck pixels are never edits. The independent
 immutable scene supplied by the parent is the lighting target. A smoothed local
 scene-minus-selected luma residual supplies an additive offset, not blurred pixels.
+Each quantized proposal must reduce that pixel's absolute scene-luma residual;
+otherwise the selected pixel is retained. This is a local consistency guard,
+not a perceptual quality test or a reason to alter the target-derived edit mask.
 Strength .15..65 scales an 8-level ceiling; quantization can round a sub-level
 bound up, but no channel can change by more than 8. Missing evidence raises;
 an already balanced image returns status='unchanged' with honest diagnostics.
@@ -199,13 +202,20 @@ def edge_lighting_candidate(image, labels, points, box, strength=.3, *, scene):
     result_pixels = np.clip(np.rint(rgb + correction[..., None]), 0, 255).astype(np.uint8)
     frozen = (edit == 0) | masks['protected']
     result_pixels[frozen] = np.asarray(image)[frozen]
+    # Nearby residuals can have the opposite sign, or overwhelm an already
+    # matching pixel. Check the actual quantized/clipped proposal, not only its
+    # floating offset or a regional mean. Keep masks independent of acceptance.
+    proposed = np.any(result_pixels != rgb, axis=2)
+    proposed_luma = result_pixels @ np.array([.2126, .7152, .0722])
+    rejected = proposed & (np.abs(scene_luma - proposed_luma) >= np.abs(residual) - 1e-10)
+    result_pixels[rejected] = np.asarray(image)[rejected]
     result = Image.fromarray(result_pixels)
     diagnostics = compare_images(image, result, edit_mask=edit, protected_mask=masks['protected'],
                                  baseline_label='selected-source', candidate_label='edge-lighting')
     changed = diagnostics['retention']['whole']['changedPixels']
     edited_support = edit > 0
     result_luma = result_pixels @ np.array([.2126, .7152, .0722])
-    return result, {'mode': 'edge-lighting', 'method': 'immutable-scene-luma-ring-v2', 'device': 'CPU',
+    return result, {'mode': 'edge-lighting', 'method': 'immutable-scene-luma-ring-v3', 'device': 'CPU',
         'status': 'complete' if changed else 'unchanged', 'strength': strength,
         'reasonCode': None if changed else ('NO_LIGHTING_RESIDUAL' if not np.any(residual[edited_support])
                                             else 'NO_PIXEL_CHANGE_WITHIN_BOUND'),
@@ -215,7 +225,10 @@ def edge_lighting_candidate(image, labels, points, box, strength=.3, *, scene):
         'settings': {'strength': strength, 'maxChannelDelta': 8, 'scaledFloatBound': bound,
                      'sigmaPixels': masks['sigma'], 'sampleContrastLimit': 16,
                      'sampleRule': 'current-and-scene-low-gradient-current-skin',
+                     'acceptanceRule': 'quantized-pixel-absolute-scene-luma-residual-must-decrease',
                      'minimumSamples': 32, 'minimumSmoothedSupport': .01},
+        'localGuard': {'proposedChangedPixels': int(proposed.sum()),
+                       'rejectedNonImprovingPixels': int(rejected.sum())},
         'scene': {'pixelSha256': hashlib.sha256(scene.tobytes()).hexdigest(),
                   'width': scene.width, 'height': scene.height, 'encoding': 'RGB-uint8-row-major',
                   'binding': 'parent-resolved-immutable-source-job-scene'},

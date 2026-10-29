@@ -19,5 +19,7 @@
 .scene-recipe p { margin: 0; color: #a2bac8; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .scene-recipe .scene-recipe-values { color: #d9eef7; font-weight: 600; }
 .scene-recipe button { justify-self: start; white-space: normal; }
+.scene-full-body-recipe { padding: 12px; border: 1px solid #346378; border-radius: 8px; background: #52d2ff08; }
+.scene-full-body-recipe button { max-width: 100%; }
 .scene-presets:disabled { opacity: .65; }
 @media (max-width: 480px) { .scene-presets-grid { grid-template-columns: 1fr; } }

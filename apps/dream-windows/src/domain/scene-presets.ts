@@ -7,6 +7,12 @@ export type SceneStyle = "photo" | "anime";
 export type SceneFraming = "portrait" | "half" | "full";
 export type ScenePrompts = { prompt: string; negativePrompt: string };
 export type SceneRecipe = { width: number; height: number; steps: number; cfg: number };
+export type SceneFullBodyRecipe = SceneRecipe & { identityStrength: number; referenceStart: number; referenceEnd: number };
+
+export function sceneFullBodyRecipe(modelId: string, style: SceneStyle, framing: SceneFraming): SceneFullBodyRecipe | null {
+  if (modelId !== "cyberrealistic-xl-plus-face" || style !== "anime" || framing !== "full") return null;
+  return { width: 512, height: 768, steps: 30, cfg: 5, identityStrength: .7, referenceStart: .35, referenceEnd: 1 };
+}
 
 // Fallbacks for catalog entries without generationDefaults. Values match the local
 // config/dream/model-registry.json and GeneratePage's CyberRealistic defaults.
@@ -49,7 +55,7 @@ export function scenePrompts(scene: ScenePreset, style: SceneStyle, framing: Sce
   };
   const subject = `solo adult woman, ${framingPrompts[framing]}`;
   const quality = style === "anime"
-    ? "masterpiece, best quality, anime illustration, clean lineart, cel shading, 1girl"
+    ? "anime illustration, best quality, clean lineart, cel shading"
     : `realistic cinematic ${framing === "full" ? "photo" : "portrait photo"}, natural skin texture`;
   const excluded = "low quality, blurry, deformed face, bad anatomy, extra limbs, extra fingers, duplicate person, text, watermark";
   return {

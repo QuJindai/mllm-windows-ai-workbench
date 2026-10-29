@@ -3,6 +3,77 @@ import { describe, expect, it, vi } from "vitest";
 import { ScenePresetPicker } from "./ScenePresetPicker";
 
 describe("Scene presets", () => {
+  it("applies the seven-field full-body recipe only after an explicit eligible action", () => {
+    const onApply = vi.fn(), onApplyRecipe = vi.fn(), onApplyFullBodyRecipe = vi.fn();
+    const props = { modelId: "cyberrealistic-xl-plus-face", prompt: "keep draft", negativePrompt: "keep exclusions", modelReady: true,
+      onApply, onApplyRecipe, onApplyFullBodyRecipe };
+    const view = render(<ScenePresetPicker {...props} />);
+    expect(screen.queryByRole("button", { name: "应用全身构图方案" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("场景构图"), { target: { value: "full" } });
+    expect(screen.getByRole("button", { name: "应用全身构图方案" })).toBeEnabled();
+    expect(screen.getByText(/全身构图方案：512 × 768.*30 步.*CFG 5/)).toBeVisible();
+    expect(screen.getByText(/视觉参考强度 0.7.*参考开始比例 0.35.*参考结束比例 1/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("场景画风"), { target: { value: "photo" } });
+    expect(screen.queryByRole("button", { name: "应用全身构图方案" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("场景画风"), { target: { value: "anime" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用公主场景" }));
+    view.rerender(<ScenePresetPicker {...props} modelId="illustrious-xl-v2.0-plus-face" />);
+    expect(screen.queryByRole("button", { name: "应用全身构图方案" })).not.toBeInTheDocument();
+    view.rerender(<ScenePresetPicker {...props} />);
+    expect(onApplyFullBodyRecipe).not.toHaveBeenCalled();
+    expect(onApplyRecipe).not.toHaveBeenCalled();
+    onApply.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "应用全身构图方案" }));
+    expect(onApplyFullBodyRecipe).toHaveBeenCalledExactlyOnceWith({ width: 512, height: 768, steps: 30, cfg: 5,
+      identityStrength: .7, referenceStart: .35, referenceEnd: 1 });
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onApplyRecipe).not.toHaveBeenCalled();
+  });
+
+  it.each(["realistic-vision-v5.1-faceid", "illustrious-xl-v2.0-faceid", "illustrious-xl-v2.0-plus-face", "cyberrealistic-xl-v10-standard"])(
+    "does not expose the full-body recipe for %s", modelId => {
+      const onApplyFullBodyRecipe = vi.fn();
+      render(<ScenePresetPicker modelId={modelId} prompt="draft" negativePrompt="excluded" modelReady onApply={vi.fn()} onApplyFullBodyRecipe={onApplyFullBodyRecipe} />);
+      fireEvent.change(screen.getByLabelText("场景画风"), { target: { value: "anime" } });
+      fireEvent.change(screen.getByLabelText("场景构图"), { target: { value: "full" } });
+      expect(screen.queryByRole("button", { name: "应用全身构图方案" })).not.toBeInTheDocument();
+      expect(onApplyFullBodyRecipe).not.toHaveBeenCalled();
+    });
+
+  it("keeps generic prompt/recipe consumers free of the identity-only full-body action", () => {
+    const onApply = vi.fn(), onApplyRecipe = vi.fn();
+    render(<ScenePresetPicker modelId="cyberrealistic-xl-plus-face" prompt="draft" negativePrompt="excluded" modelReady onApply={onApply} onApplyRecipe={onApplyRecipe} />);
+    fireEvent.change(screen.getByLabelText("场景构图"), { target: { value: "full" } });
+    expect(screen.queryByRole("button", { name: "应用全身构图方案" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "应用模型推荐参数" }));
+    expect(onApplyRecipe).toHaveBeenCalledExactlyOnceWith({ width: 768, height: 768, steps: 30, cfg: 5 });
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("blocks the full-body action for unavailable models and locked workspaces", () => {
+    const onApplyFullBodyRecipe = vi.fn();
+    const props = { modelId: "cyberrealistic-xl-plus-face", prompt: "draft", negativePrompt: "excluded", onApply: vi.fn(), onApplyFullBodyRecipe };
+    const view = render(<ScenePresetPicker {...props} modelReady={false} />);
+    fireEvent.change(screen.getByLabelText("场景构图"), { target: { value: "full" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用全身构图方案" }));
+    expect(screen.getByRole("button", { name: "应用全身构图方案" })).toBeDisabled();
+    view.rerender(<ScenePresetPicker {...props} modelReady disabled />);
+    expect(screen.getByRole("button", { name: "应用全身构图方案" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "应用全身构图方案" }));
+    expect(onApplyFullBodyRecipe).not.toHaveBeenCalled();
+  });
+
+  it.each(["古风", "女帝", "公主", "科幻"])("uses the shorter anime prefix while preserving the adult full-body subject for %s", name => {
+    const onApply = vi.fn();
+    render(<ScenePresetPicker modelId="cyberrealistic-xl-plus-face" prompt="" negativePrompt="" onApply={onApply} />);
+    fireEvent.change(screen.getByLabelText("场景构图"), { target: { value: "full" } });
+    fireEvent.click(screen.getByRole("button", { name: `应用${name}场景` }));
+    const value = onApply.mock.lastCall![0];
+    expect(value.prompt).toMatch(/^anime illustration, best quality, clean lineart, cel shading, solo adult woman, full body, head to toe, feet in frame/);
+    expect(value.prompt).not.toMatch(/masterpiece|1girl/);
+    expect(value.negativePrompt).toContain("cropped feet");
+  });
+
   it.each(["古风", "女帝", "公主", "科幻"])("applies each framing to %s without contradictory crops or automatic edits", (name) => {
     const onApply = vi.fn();
     render(<ScenePresetPicker modelId="realistic-vision-v5.1-faceid" prompt="draft" negativePrompt="excluded" onApply={onApply} />);

@@ -162,6 +162,33 @@ def test_original_encoding_can_differ_when_pixels_match(case):
     assert helper.images['garment'].size == (224, 224)
 
 
+def test_jpeg_person_matches_normalized_identity_reference(case):
+    jpeg = case.root / 'person-original.jpg'
+    with Image.open(case.inputs['person']['path']) as source:
+        source.save(jpeg)
+    with Image.open(jpeg) as decoded:
+        decoded.convert('RGB').save(case.first['imagePath'])
+    digest = hashlib.sha256(jpeg.read_bytes()).hexdigest()
+    case.inputs['person'].update(path=str(jpeg), sha256=digest)
+
+    helper = IdentityHQConditioning(case.identity, case.first, case.params, lambda e: None)
+    assert helper.run.audit['inputs']['person']['sha256'] == digest
+    assert helper.run.audit['identityReference']['pixelEqualityVerified'] is True
+
+
+def test_multiframe_garment_is_rejected(case):
+    garment = Path(case.inputs['garment']['path'])
+    first = Image.new('RGB', (32, 32), 'red')
+    second = Image.new('RGB', (32, 32), 'blue')
+    first.save(garment, save_all=True, append_images=[second])
+    case.inputs['garment']['sha256'] = hashlib.sha256(garment.read_bytes()).hexdigest()
+
+    with pytest.raises(PipelineError) as failure:
+        IdentityHQConditioning(case.identity, case.first, case.params, lambda e: None)
+    assert failure.value.code == 'INVALID_INPUT'
+    assert failure.value.details['role'] == 'garment'
+
+
 def test_person_pixel_mismatch_rejected(case):
     Image.new('RGB', (300, 400), 'white').save(case.first['imagePath'])
     with pytest.raises(PipelineError) as failure:

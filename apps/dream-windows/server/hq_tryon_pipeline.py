@@ -249,7 +249,7 @@ class ConditioningAudit:
             if digest != item['sha256'].lower():
                 raise PipelineError('INPUT_HASH_MISMATCH', 'Input bytes differ from the trusted request', role=role)
             with Image.open(io.BytesIO(data)) as image:
-                if image.width * image.height > 40_000_000 or image.n_frames != 1:
+                if image.width * image.height > 40_000_000 or getattr(image, 'n_frames', 1) != 1:
                     raise PipelineError('INVALID_INPUT', 'Expected one image of at most 40 megapixels', role=role)
                 self.audit['inputs'][role] = {'id': item['id'], 'path': str(path), 'sha256': digest,
                                               'width': image.width, 'height': image.height, 'mode': image.mode,

@@ -244,7 +244,7 @@ export function HQTryOnPage() {
     <section className="surface-card hq-status" aria-label="本地 HQ 状态">
       <div className="card-head"><h2>本机三图试衣</h2><button className="secondary-button" disabled={loading} onClick={() => refreshJobs(true)}>刷新图库与任务</button></div>
       <p>使用 Realistic Vision V5.1 和 FaceID 固定人物，结合服装原图生成一张全身成片。可选修脸和独立精修。</p>
-      {currentStatus?.pipeline === hqExecutionBasis && <p>可从完整姿势图库选材。A/B/C 定稿姿势使用原始配对深度图，其他姿势使用原图提取的单人骨架。</p>}
+      {currentStatus?.pipeline === hqExecutionBasis && <p>选材时预览白模，Dream 本机生成时按姿势和视角读取配对深度图。当前已配对 {currentStatus.pairedDepthPoseIds?.length ?? 0} 个姿势。</p>}
       {presetMismatch && <p className="hq-error">本地服务使用旧管线，请启用配对深度版本后刷新页面。</p>}
       <p className="hq-hint">服装为图像参考生成，版型、配饰和细节可能有偏差，请对照原图验收。</p>
       <ol className="hq-workflow" aria-label="人物试衣流程"><li>固定人物与构图</li><li>底图</li><li>可选换脸</li><li>独立精修</li></ol>
@@ -289,7 +289,7 @@ export function HQTryOnPage() {
         {currentStatus?.pipeline === hqExecutionBasis && <button type="button" className="secondary-button" onClick={() => {
           setParameters({ ...defaultHQParameters }); setFaceOptions({ ...defaultHQIdentity });
         }}>套用 A/B/C 定稿参数</button>}
-        {selection.pose && currentStatus && <p className="hq-hint">所选姿势使用{basis === hqExecutionBasis ? "定稿深度图" : "OpenPose 骨架"}。</p>}
+        {selection.pose && currentStatus && <p className="hq-hint">所选姿势使用{basis === hqExecutionBasis ? "配对深度图" : "OpenPose 骨架"}。</p>}
         {selection.pose && currentStatus?.posePipelineReady?.[basis] === false && <p role="alert" className="hq-error">所选姿势需要的本机模型尚未就绪。</p>}
         <div className="hq-profile">
           <label>固定人物档案（可选）<select value={profileId} onChange={e => setProfileId(e.target.value)}>

@@ -1,4 +1,5 @@
 import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -38,3 +39,40 @@ def test_released_pairs_match_the_real_abc_control_images():
             depth.control_image(run, image)
     with pytest.raises(PipelineError, match='没有已核验'):
         depth.lookup('unknown')
+
+
+def test_full_library_checks_white_identity_and_downloads_only_the_selected_blobs(tmp_path, monkeypatch):
+    # A separate pinned library can include a pose which used OpenPose before.
+    legacy = depth.catalog()['items'][0]
+    data = depth.object_path(legacy).read_bytes()
+    digest = legacy['depthSha256']
+    item = {**legacy, 'id': 'previously_unpaired', 'bytes': len(data),
+            'r2Object': f'hq-tryon-assets/dream-depth/v1/objects/{digest}.webp'}
+    manifest = {'depthRelease': 'test-depth', 'release': 'test-white', 'poseEstimator': depth.ESTIMATOR, 'items': [item]}
+    raw = json.dumps(manifest).encode()
+    (tmp_path / 'manifest.json').write_bytes(raw)
+    lock = {'manifestSHA256': hashlib.sha256(raw).hexdigest(), 'count': 1, 'depthRelease': 'test-depth', 'whiteRelease': 'test-white'}
+    monkeypatch.setattr(depth, 'full_release', lambda: lock)
+    config = {'poseEstimator': depth.ESTIMATOR, 'pairedDepthLibrary': str(tmp_path), 'depthReaderNode': 'node', 'depthReaderCli': 'reader'}
+    run = SimpleNamespace(inputs={'pose': {'id': item['id'], 'sha256': '0' * 64}}, check_cancel=lambda: None)
+    calls = []
+
+    def get(command, **kwargs):
+        from pathlib import Path
+        assert command[2:7] == ['r2', 'object', 'get', item['r2Object'], '--remote']
+        calls.append(command)
+        Path(command[command.index('--file') + 1]).write_bytes(data)
+
+    monkeypatch.setattr(depth.subprocess, 'run', get)
+    assert depth.pipeline_id(config, item['id']) == depth.PIPELINE
+    assert depth.pipeline_id(config, 'future_pose') == depth.LEGACY_PIPELINE
+    with pytest.raises(PipelineError, match='版本不一致'):
+        depth.ensure_depth(run, config)
+    assert not calls
+    run.inputs['pose']['sha256'] = item['fullSha256']
+    assert depth.ensure_depth(run, config) == 'r2-download'
+    assert depth.ensure_depth(run, config) == 'verified-r2-cache'
+    assert len(calls) == 1 and depth.object_path(item, config).read_bytes() == data
+    (tmp_path / 'manifest.json').write_bytes(raw + b' ')
+    with pytest.raises(PipelineError, match='清单'):
+        depth.lookup(item['id'], config)

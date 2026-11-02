@@ -1,27 +1,27 @@
 # HQ conditioning inside the existing identity pipeline
 
-The local browser release `dream-hq-full-pose-catalog-20261102` serves the full
-R2 pose catalog and uses the original depth images for the approved A/B/C poses. Open
+The local browser release `dream-hq-r2-depth-library-20261102` serves the full
+R2 white-model pose catalog and resolves the matching depth image for local generation. Open
 [HQ 试衣](http://127.0.0.1:8766/?view=hq-tryon), choose a person, garment and
 pose, then select **本机生成**. **套用 A/B/C 定稿参数** restores 768 × 1152,
 30 Euler steps, seed 20261104 and optional face polish at 0.35. FaceID uses
 CFG 5.5, identity 0.82, structure 0.9 and companion LoRA 0.55. The garment
 adapter runs at 0.7 and SD1.5 Depth ControlNet runs at 0.9 over all steps.
 
-The released pose pairs are `full_single_P001_low` (A/C, low-angle sitting)
-and `full_single_P015_front` (B, frontal standing). All other selected poses
-use the existing DWPose extractor and the SD1.5 OpenPose weights selected by
-the server-owned `openpose` section in the HQ config. Each route has its own
-readiness, job identity and captured pose conditioning. The picker forwards
-pagination, search and categories to the owned R2 catalog.
-The two small public control maps, their R2 keys, the original pose checksums
-and depth checksums are packaged in `config/dream/hq-paired-depth-v1`.
-Paired depth jobs verify the R2 original and depth file. Skeleton jobs verify
-the R2 original and record the extracted skeleton. Both capture the tensor
-observed during sampling.
+The full release pairs all 1,439 current R2 white poses with depth maps.
+The checked-in release pin identifies a content-addressed R2 object per depth map,
+an immutable index and a verified install bundle under `dream-depth/v1/`.
+The original two test-pose maps are also bundled for older configurations.
+The picker still reads white originals. Only the local Dream worker resolves a
+depth key. It verifies the selected white hash, reads the verified cache or
+fetches the specific R2 object on a cache miss, and records both hashes, the
+R2 key, cache source and real sampling tensor. Future unmatched poses retain
+the existing OpenPose path. The public plugin's MCP tools and contracts remain
+on their original white assets.
 
 On the existing Windows installation, run `scripts/stop_dream_web.ps1` while
-idle, then `scripts/enable_hq_paired_depth.ps1`, build the browser frontend
+idle, then `scripts/enable_hq_paired_depth.ps1` and
+`python scripts/install_hq_depth_library.py --activate`, build the browser frontend
 with `npm.cmd run build` from `apps/dream-windows`, and launch
 `scripts/start_dream_web_background.ps1`. The enable script verifies the model
 and packaged maps and prints the backup path for the previous pipeline

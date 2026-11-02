@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "bucket": "hq-tryon-assets",
+  "depthRelease": "20261102-36ff730b-v1",
+  "whiteRelease": "20261101-r2-v2",
+  "sourceCommit": "36ff730bea10788f4a991b410cb42bc36a776da2",
+  "count": 1439,
+  "uniqueObjects": 1439,
+  "depthBytes": 24046098,
+  "manifestSHA256": "d0a0b81bc203cc10364ea34a4f911d8d756508d6d802ca9c28431e365cecb189",
+  "manifestObject": "hq-tryon-assets/dream-depth/v1/releases/20261102-36ff730b-v1/manifest.json",
+  "bundleSHA256": "b8ecb43c6d9383d7bfbdb9f561a9af91075778b62c8179b1e70054871bf3750c",
+  "bundleBytes": 25052179,
+  "bundleObject": "hq-tryon-assets/dream-depth/v1/releases/20261102-36ff730b-v1/bundle.zip"
+}

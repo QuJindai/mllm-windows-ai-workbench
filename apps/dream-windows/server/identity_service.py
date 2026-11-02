@@ -1748,11 +1748,12 @@ class IdentityService:
             raise DreamApiError('HQ_AUDIT_INVALID', 'HQ 人物管线未返回完整三图绑定审计')
         if audit['pipeline'] == paired_depth.PIPELINE:
             binding = audit.get('conditioning', {}).get('pose', {})
-            pair = paired_depth.lookup(expected['inputs']['pose']['id'])
+            config = read_json(Path(expected['configPath']), 64 * 1024)
+            pair = paired_depth.lookup(expected['inputs']['pose']['id'], config)
             receipt = binding.get('receipt') or {}
             if (binding.get('method') != paired_depth.ESTIMATOR or receipt.get('sha256') != pair['depthSha256']
                     or receipt.get('poseSha256') != expected['inputs']['pose']['sha256']
-                    or receipt.get('poseId') != pair['id']):
+                    or receipt.get('poseId') != pair['id'] or receipt.get('r2Object') != pair['r2Object']):
                 raise DreamApiError('HQ_AUDIT_INVALID', '成片所用的深度图与所选姿势不一致')
         for role, item in expected['inputs'].items():
             bound = audit.get('inputs', {}).get(role, {})

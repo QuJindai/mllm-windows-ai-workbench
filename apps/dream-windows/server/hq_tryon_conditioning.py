@@ -343,6 +343,8 @@ class IdentityHQConditioning:
                     raise PipelineError('HQ_PIPELINE_CHANGED', '任务提交后所选姿势的管线发生变化，请重新提交')
                 self.config = validate_config(paired_depth.model_config(configured, expected), identity_config)
                 self.images = self.run.prepare_images()
+                if expected == paired_depth.PIPELINE:
+                    self.depth_source = paired_depth.ensure_depth(self.run, self.config)
                 self.run.audit['identityReference'].update(referenceId=params.referenceId, faceIndex=params.faceIndex)
                 self.run.fingerprint_models(self.config, identity_config)
                 if configured.get('poseEstimator') == paired_depth.ESTIMATOR and expected == paired_depth.LEGACY_PIPELINE:
@@ -405,7 +407,7 @@ class IdentityHQConditioning:
         depth_mode = self.config['poseEstimator'] == paired_depth.ESTIMATOR
         with self.run.stage('HQ 读取已配对的原始深度图' if depth_mode else 'HQ CPU 姿态提取'):
             if depth_mode:
-                self.pose_image = paired_depth.control_image(self.run, self.images['pose'])
+                self.pose_image = paired_depth.control_image(self.run, self.images['pose'], self.config, self.depth_source)
             else:
                 self.pose_image = extract_pose(self.config, self.images['pose'], self.run)
             self.run.audit['conditioning']['pose']['scale'] = self.config['poseScale']

@@ -337,7 +337,8 @@ class HQService:
                 result['pipeline'] = self._pipeline(settings)
                 ready = {result['pipeline']: self._ready(settings, result['pipeline'])}
                 if result['pipeline'] == paired_depth.PIPELINE:
-                    result['pairedDepthPoseIds'] = [item['id'] for item in paired_depth.catalog()['items']]
+                    configured = read_json(Path(settings['pipelineConfig']), 64 * 1024)
+                    result['pairedDepthPoseIds'] = [item['id'] for item in paired_depth.catalog(configured)['items']]
                     ready[PIPELINE] = self._ready(settings, PIPELINE)
                 result['posePipelineReady'] = ready
                 result['modelReady'] = any(ready.values())

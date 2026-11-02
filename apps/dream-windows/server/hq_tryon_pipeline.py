@@ -65,12 +65,19 @@ def validate_config(config, identity_config=None):
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 2:
             raise PipelineError('MODEL_NOT_READY', 'Conditioning scale must be positive and at most 2', field=key)
         result[key] = float(value)
+    if depth_mode and result.get('pairedDepthLibrary'):
+        if bool(result.get('depthReaderNode')) != bool(result.get('depthReaderCli')):
+            raise PipelineError('MODEL_NOT_READY', 'R2 深度读取工具配置不完整')
+        for key in ('pairedDepthLibrary', 'depthReaderNode', 'depthReaderCli'):
+            if result.get(key):
+                result[key] = str(absolute_path(result[key], key))
+                path_keys += (key,)
     # Sampling, FaceID and restoration parameters belong to IdentityGenerateRequest.
     # Legacy duplicated HQ settings are not allowed to override that request.
     return {'schemaVersion': 1, **{key: result[key] for key in path_keys + tuple(DEFAULTS)}}
 
 
-def required_assets(config):
+def required_assets(config, pose_id=None):
     cfg = validate_config(config)
     rows = {key: Path(cfg[key]) for key in FILE_KEYS if key in cfg}
     rows['controlnetConfig/config.json'] = Path(cfg['controlnetConfig']) / 'config.json'
@@ -85,9 +92,13 @@ def required_assets(config):
             if path.is_file() and '.cache' not in path.parts:
                 rows['pipelineConfig/' + path.relative_to(root).as_posix()] = path
     if cfg['poseEstimator'] == paired_depth.ESTIMATOR:
-        rows['posePairs/manifest'] = paired_depth.ASSETS / 'manifest.json'
-        for item in paired_depth.catalog()['items']:
-            rows['posePairs/' + item['id']] = paired_depth.ASSETS / (item['depthSha256'] + '.webp')
+        rows['posePairs/manifest'] = paired_depth.manifest_path(cfg)
+        library = paired_depth.catalog(cfg)
+        # A full library can be cached lazily. Fingerprint the depth map used
+        # by this job after it has been fetched and verified.
+        items = [paired_depth.lookup(pose_id, cfg)] if pose_id else ([] if cfg.get('pairedDepthLibrary') else library['items'])
+        for item in items:
+            rows['posePairs/' + item['id']] = paired_depth.object_path(item, cfg)
         return rows
     aux = Path(cfg['poseAuxSource']) / 'custom_controlnet_aux'
     for name in ('__init__.py', 'util.py', 'dwpose/__init__.py', 'dwpose/wholebody.py', 'dwpose/util.py',
@@ -273,7 +284,7 @@ class ConditioningAudit:
         return images
 
     def fingerprint_models(self, config, identity_config):
-        rows = required_assets(config)
+        rows = required_assets(config, self.inputs['pose']['id'])
         for key in ('faceSwapModel', 'faceRestoreModel', 'faceParsingModel'):
             if identity_config.get(key) and Path(identity_config[key]).is_file():
                 rows['identity/' + key] = Path(identity_config[key])

@@ -9,7 +9,7 @@ export interface HQAsset {
   width?: number; height?: number;
 }
 export interface HQCatalog { items: HQAsset[]; total: number; hasMore: boolean; categories: string[] }
-export interface HQStatus { configured: boolean; authorized: boolean; modelReady: boolean; pipeline?: string; supportedPoseIds?: string[]; error?: HQError }
+export interface HQStatus { configured: boolean; authorized: boolean; modelReady: boolean; pipeline?: string; pairedDepthPoseIds?: string[]; posePipelineReady?: Partial<Record<HQBasis, boolean>>; error?: HQError }
 export type HQError = string | { code?: string; message?: string } | null;
 export interface HQInput extends HQAsset { role: HQRole; dimensions?: { width: number; height: number } }
 export interface HQResult { sha256: string; width?: number; height?: number; mime?: string; metadata?: Record<string, unknown> }
@@ -45,6 +45,14 @@ export const hqResolutionPresets = [
 ] as const;
 export const defaultHQIdentity = { facePolish: true, faceRestoreStrength: 0.35 };
 export const hqExecutionBasis = "identity-session-hq-paired-depth-v1";
+export const hqOpenPoseBasis = "identity-session-hq-sd15-v1";
+export type HQBasis = typeof hqExecutionBasis | typeof hqOpenPoseBasis;
+export const isHQBasis = (value: unknown): value is HQBasis => value === hqExecutionBasis || value === hqOpenPoseBasis;
+export function hqBasisForPose(status: HQStatus | null, poseId?: string): HQBasis {
+  if (status?.pipeline === hqOpenPoseBasis) return hqOpenPoseBasis;
+  if (poseId && status?.pairedDepthPoseIds && !status.pairedDepthPoseIds.includes(poseId)) return hqOpenPoseBasis;
+  return hqExecutionBasis;
+}
 export function validHQParameters(p: HQParameters) {
   return Number.isInteger(p.seed) && p.seed >= 0 && p.seed <= 2147483647
     && [p.width, p.height].every(n => Number.isInteger(n) && n >= 256 && n <= 1152 && n % 64 === 0)

@@ -299,6 +299,27 @@ def complete(hq, job_id):
     return hq.service.get_job(job_id)
 
 
+def test_depth_preset_preserves_upstream_poses_and_routes_unpaired_jobs(hq):
+    import hq_paired_depth as depth
+    path = hq.root / 'pipeline.json'
+    config = json.loads(path.read_text(encoding='utf-8'))
+    config.update(poseEstimator=depth.ESTIMATOR,
+                  openpose={key: config[key] for key in ('controlnet', 'controlnetConfig')})
+    atomic_json(path, config)
+    status = hq.service.status()
+    assert status['posePipelineReady'] == {depth.PIPELINE: True, depth.LEGACY_PIPELINE: True}
+    assert hq.payload.poseId not in status['pairedDepthPoseIds']
+    assert [row['id'] for row in hq.service.catalog('pose')['items']] == [hq.payload.poseId]
+    created, reused = hq.service.create_job(hq.payload)
+    assert not reused and created['pipeline'] == depth.LEGACY_PIPELINE
+    assert complete(hq, created['id'])['state'] == 'succeeded'
+    assert hq.service.create_job(hq.payload)[1] is True
+    # A missing skeleton model must leave the paired depth poses usable.
+    config['openpose']['controlnet'] = str(hq.root / 'missing-skeleton.pth')
+    atomic_json(path, config)
+    assert hq.service.status()['posePipelineReady'] == {depth.PIPELINE: True, depth.LEGACY_PIPELINE: False}
+
+
 def test_status_is_file_inventory_not_gpu_and_never_returns_token(hq):
     status = hq.service.status()
     assert status['configured'] and status['authorized'] and status['modelReady']

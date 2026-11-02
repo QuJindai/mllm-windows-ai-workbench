@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { HQAsset, HQCatalog, HQJob, HQParameters, HQRole, HQStatus } from "../../domain/hq-tryon";
-import { defaultHQIdentity, defaultHQParameters, hqActive, hqError, hqExecutionBasis, hqResolutionPresets, hqRoleLabels, hqRoles, hqStateLabels, validHQParameters } from "../../domain/hq-tryon";
+import { defaultHQIdentity, defaultHQParameters, hqActive, hqBasisForPose, hqError, hqExecutionBasis, hqResolutionPresets, hqRoleLabels, hqRoles, hqStateLabels, isHQBasis, validHQParameters } from "../../domain/hq-tryon";
 import type { IdentityJob, IdentityProfile, IdentityStatus } from "../../domain/identity";
 import { identityStateLabels } from "../../domain/identity";
 import { identityApi } from "../../providers/identity-api";
@@ -69,13 +69,14 @@ export function HQTryOnPage() {
   const [resultError, setResultError] = useState("");
   const [, setReceiptVersion] = useState(0);
   const body = { personId: selection.person?.id || "", garmentId: selection.garment?.id || "", poseId: selection.pose?.id || "", parameters, ...(profileId ? { profileId } : {}), ...faceOptions };
-  const operation = readHQOperations().find(r => r.fingerprint === hqFingerprint(body));
+  const basis = hqBasisForPose(status, selection.pose?.id);
+  const operation = readHQOperations().find(r => r.fingerprint === hqFingerprint(body, basis));
   const validProfile = !profileId || !profileLoading && !profileError && selectedProfile?.id === profileId && selectedProfile.state === "ready" && (selectedProfile.referenceKind ?? "faceid") === "faceid";
   const validFace = Number.isFinite(faceOptions.faceRestoreStrength) && faceOptions.faceRestoreStrength >= 0 && faceOptions.faceRestoreStrength <= 1 && (!faceOptions.facePolish || identityStatus?.facePolish?.ready === true && !identityError);
-  const presetMismatch = Boolean(status?.pipeline && status.pipeline !== hqExecutionBasis);
-  const ready = reconciled && !presetMismatch && validProfile && validFace && status?.configured === true && status.authorized === true && status.modelReady === true && !connectionError;
-  const unsupportedPose = Boolean(selection.pose && status?.supportedPoseIds && !status.supportedPoseIds.includes(selection.pose.id));
-  const allSelected = hqRoles.every(role => selection[role]) && !unsupportedPose;
+  const presetMismatch = Boolean(status?.pipeline && !isHQBasis(status.pipeline));
+  const routeReady = status?.posePipelineReady?.[basis] ?? status?.modelReady;
+  const ready = reconciled && !presetMismatch && validProfile && validFace && status?.configured === true && status.authorized === true && routeReady === true && !connectionError;
+  const allSelected = hqRoles.every(role => selection[role]);
   const retryJobs = job?.id === activeId ? [job, ...jobs.filter(item => item.id !== job.id)] : jobs;
   const retryJob = reconciled && !loading && !detailLoading && !connectionError && !detailError && jobsRevision === refresh && detailRevision === refresh
     && job?.id === activeId && job.id === operation?.jobId ? retryableHQJob(operation, retryJobs) : undefined;
@@ -205,7 +206,7 @@ export function HQTryOnPage() {
     submittingRef.current = true; setSubmitting(true); setActionError(""); setNotice(null);
     let dispatched = false;
     try {
-      const receipt = newAttempt ? await reserveHQRetry(body, retryJobs, operation!.idempotencyKey) : reserveHQOperation(body, jobs);
+      const receipt = newAttempt ? await reserveHQRetry(body, retryJobs, operation!.idempotencyKey, basis) : reserveHQOperation(body, jobs, basis);
       if (receipt.jobId) { setActiveId(receipt.jobId); setRefresh(n => n + 1); return; }
       saveHQOperation({ ...receipt, delivery: "unknown" });
       pendingCreate.current = receipt;
@@ -243,7 +244,7 @@ export function HQTryOnPage() {
     <section className="surface-card hq-status" aria-label="本地 HQ 状态">
       <div className="card-head"><h2>本机三图试衣</h2><button className="secondary-button" disabled={loading} onClick={() => refreshJobs(true)}>刷新图库与任务</button></div>
       <p>使用 Realistic Vision V5.1 和 FaceID 固定人物，结合服装原图生成一张全身成片。可选修脸和独立精修。</p>
-      {currentStatus?.pipeline === hqExecutionBasis && <p>当前使用 A/B/C 定稿版。原始配对深度图全程控制姿势，可选姿势 {currentStatus.supportedPoseIds?.length} 个。</p>}
+      {currentStatus?.pipeline === hqExecutionBasis && <p>可从完整姿势图库选材。A/B/C 定稿姿势使用原始配对深度图，其他姿势使用原图提取的单人骨架。</p>}
       {presetMismatch && <p className="hq-error">本地服务使用旧管线，请启用配对深度版本后刷新页面。</p>}
       <p className="hq-hint">服装为图像参考生成，版型、配饰和细节可能有偏差，请对照原图验收。</p>
       <ol className="hq-workflow" aria-label="人物试衣流程"><li>固定人物与构图</li><li>底图</li><li>可选换脸</li><li>独立精修</li></ol>
@@ -288,7 +289,8 @@ export function HQTryOnPage() {
         {currentStatus?.pipeline === hqExecutionBasis && <button type="button" className="secondary-button" onClick={() => {
           setParameters({ ...defaultHQParameters }); setFaceOptions({ ...defaultHQIdentity });
         }}>套用 A/B/C 定稿参数</button>}
-        {unsupportedPose && <p role="alert" className="hq-error">草稿中的姿势缺少配对深度图，请在姿势页重选。</p>}
+        {selection.pose && currentStatus && <p className="hq-hint">所选姿势使用{basis === hqExecutionBasis ? "定稿深度图" : "OpenPose 骨架"}。</p>}
+        {selection.pose && currentStatus?.posePipelineReady?.[basis] === false && <p role="alert" className="hq-error">所选姿势需要的本机模型尚未就绪。</p>}
         <div className="hq-profile">
           <label>固定人物档案（可选）<select value={profileId} onChange={e => setProfileId(e.target.value)}>
             <option value="">使用所选 R2 人物图 · 本地导入 / 缓存</option>

@@ -323,6 +323,7 @@ class IdentityHQConditioning:
     """Add two conditions to an IdentitySession; never own sampling or publication."""
     def __init__(self, identity_config, first, params, emit):
         from hq_tryon_pipeline import ConditioningAudit, read_json, validate_config
+        import hq_paired_depth as paired_depth
         if params.modelId != 'realistic-vision-v5.1-faceid' or identity_config.get('architecture', 'SD1.5') != 'SD1.5':
             raise PipelineError('HQ_MODEL_UNSUPPORTED', 'HQ conditioning currently supports only existing RV SD1.5 FaceID')
         if params.animeProfileId or params.identityStrength <= 0:
@@ -336,10 +337,19 @@ class IdentityHQConditioning:
         self.observer = None
         try:
             with self.run.stage('HQ 校验原始素材与模型绑定'):
-                self.config = validate_config(read_json(self.run.config_path), identity_config)
+                configured = read_json(self.run.config_path)
+                expected = paired_depth.pipeline_id(configured, self.run.inputs['pose']['id'])
+                if expected != self.run.audit['pipeline']:
+                    raise PipelineError('HQ_PIPELINE_CHANGED', '任务提交后所选姿势的管线发生变化，请重新提交')
+                self.config = validate_config(paired_depth.model_config(configured, expected), identity_config)
                 self.images = self.run.prepare_images()
                 self.run.audit['identityReference'].update(referenceId=params.referenceId, faceIndex=params.faceIndex)
                 self.run.fingerprint_models(self.config, identity_config)
+                if configured.get('poseEstimator') == paired_depth.ESTIMATOR and expected == paired_depth.LEGACY_PIPELINE:
+                    models = self.run.audit['models']
+                    if (models['controlnet']['sha256'] != paired_depth.OPENPOSE_SHA256 or
+                            models['controlnetConfig/config.json']['sha256'] != paired_depth.OPENPOSE_CONFIG_SHA256):
+                        raise PipelineError('MODEL_NOT_READY', '骨架 ControlNet 与已验证的版本不一致')
                 self.run.audit['configuration'] = {'path': str(self.run.config_path),
                     'sha256': self.run.audit['models']['hqConfig']['sha256'], 'effective': self.config,
                     'parameterAuthority': 'IdentityGenerateRequest', 'modelAuthority': 'resolved-identity-runtime'}
@@ -393,8 +403,6 @@ class IdentityHQConditioning:
             }
         import hq_paired_depth as paired_depth
         depth_mode = self.config['poseEstimator'] == paired_depth.ESTIMATOR
-        if self.run.audit['pipeline'] != paired_depth.pipeline_id(self.config):
-            raise PipelineError('HQ_PIPELINE_CHANGED', '任务提交后姿势管线已变更，请重新选择预设')
         with self.run.stage('HQ 读取已配对的原始深度图' if depth_mode else 'HQ CPU 姿态提取'):
             if depth_mode:
                 self.pose_image = paired_depth.control_image(self.run, self.images['pose'])

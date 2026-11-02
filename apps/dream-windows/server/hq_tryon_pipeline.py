@@ -99,13 +99,14 @@ def required_assets(config):
     return rows
 
 
-def readiness(config_path, identity_config=None):
+def readiness(config_path, identity_config=None, *, pipeline=None):
     """Presence-only service inventory. No inference imports, GPU or downloads."""
     try:
         if identity_config is None:
             from identity_worker import load_config
             identity_config = load_config({'modelId': 'realistic-vision-v5.1-faceid'})
-        effective = validate_config(read_json(config_path), identity_config)
+        config = read_json(config_path)
+        effective = validate_config(paired_depth.model_config(config, pipeline), identity_config)
         missing = [{'key': key, 'path': str(path)} for key, path in required_assets(effective).items()
                    if not path.is_file()]
         return {'ready': not missing, 'code': 'MODEL_NOT_READY' if missing else None, 'missing': missing}

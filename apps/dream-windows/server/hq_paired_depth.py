@@ -13,10 +13,27 @@ LEGACY_PIPELINE = 'identity-session-hq-sd15-v1'
 ASSETS = Path(__file__).resolve().parents[3] / 'config' / 'dream' / 'hq-paired-depth-v1'
 CONTROLNET_SHA256 = '761077ffe369fe8cf16ae353f8226bd4ca29805b161052f82c0170c7b50f1d99'
 CONTROLNET_CONFIG_SHA256 = 'ee789f6b46cd8c443c80ffb81e5c05e14b8b3cbec9e861829bfa3d2a6d3ee16f'
+OPENPOSE_SHA256 = 'db97becd92cd19aff71352a60e93c2508decba3dee64f01f686727b9b406a9dd'
+OPENPOSE_CONFIG_SHA256 = 'aa6fecc8745c0d0b26f0d2ca0f686600c8b33177c667d44eb41a51e56e44a697'
 
 
-def pipeline_id(config):
-    return PIPELINE if config.get('poseEstimator') == ESTIMATOR else LEGACY_PIPELINE
+def pipeline_id(config, pose_id=None):
+    if config.get('poseEstimator') != ESTIMATOR:
+        return LEGACY_PIPELINE
+    if pose_id is None or any(pair['id'] == pose_id for pair in catalog()['items']):
+        return PIPELINE
+    return LEGACY_PIPELINE
+
+
+def model_config(config, pipeline):
+    """Select only the weights belonging to this job from the trusted server config."""
+    if pipeline == LEGACY_PIPELINE and config.get('poseEstimator') == ESTIMATOR:
+        skeleton = config.get('openpose')
+        if not isinstance(skeleton, dict) or not all(skeleton.get(key) for key in ('controlnet', 'controlnetConfig')):
+            raise PipelineError('MODEL_NOT_READY', '本机尚未配置姿势骨架模型')
+        return {**config, 'poseEstimator': 'dwpose-full-image', 'controlnet': skeleton['controlnet'],
+                'controlnetConfig': skeleton['controlnetConfig']}
+    return config
 
 
 def catalog():

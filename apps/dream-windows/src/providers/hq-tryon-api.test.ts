@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultHQParameters, hqExecutionBasis, validHQParameters } from "../domain/hq-tryon";
+import { defaultHQParameters, hqExecutionBasis, hqOpenPoseBasis, validHQParameters } from "../domain/hq-tryon";
 import type { HQJob } from "../domain/hq-tryon";
 import { hqApi, hqJobFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, reserveHQRetry, saveHQOperation, writeHQDraft } from "./hq-tryon-api";
 
@@ -17,6 +17,16 @@ beforeEach(() => { vi.stubGlobal("sessionStorage", new MemoryStorage()); vi.stub
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("local HQ API boundary", () => {
+  it("recovers skeleton receipts without reusing them for the same pose on the depth route", () => {
+    const skeletonJob = { ...job, pipeline: hqOpenPoseBasis, parameters: body.parameters,
+      idempotencyKey: "hq-skeleton-verified", requestedInputIds: {person: body.personId, garment: body.garmentId, pose: body.poseId} };
+    const replay = reserveHQOperation(body, [skeletonJob], hqOpenPoseBasis);
+    expect(replay.jobId).toBe(skeletonJob.id);
+    const depth = reserveHQOperation(body, [skeletonJob], hqExecutionBasis);
+    expect(depth.jobId).toBeUndefined();
+    expect(depth.fingerprint).not.toBe(replay.fingerprint);
+    expect(hqJobFingerprint({...skeletonJob, audit:{pipeline:hqExecutionBasis}})).toBeNull();
+  });
   it("advances only an authoritative terminal retry to a uniquely newer job with the same execution basis and settings", () => {
     const b: HQJob = { ...job, id: "hq-b", state: "failed", idempotencyKey: "hq-attempt-b", createdAt: "2026-11-02T03:00:00.123455+00:00", parameters: body.parameters,
       requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId } };

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HQTryOnPage } from "./HQTryOnPage";
 import type { HQJob, HQRole } from "../../domain/hq-tryon";
-import { defaultHQParameters, hqExecutionBasis } from "../../domain/hq-tryon";
+import { defaultHQParameters, hqExecutionBasis, hqOpenPoseBasis } from "../../domain/hq-tryon";
 import { hqApi, hqFingerprint, readHQDraft, readHQOperations, saveHQOperation, writeHQDraft } from "../../providers/hq-tryon-api";
 import { identityApi } from "../../providers/identity-api";
 import { refinementApi } from "../../providers/refinement-api";
@@ -53,6 +53,21 @@ async function chooseThree() {
 function saveSelection() { writeHQDraft({ selection: { person: asset("person"), garment: asset("garment"), pose: asset("pose") }, parameters: defaultHQParameters }); }
 
 describe("HQ local workflow", () => {
+  it("submits a saved unpaired pose through the skeleton route", async () => {
+    vi.mocked(hqApi.status).mockResolvedValue({ ...ready, pairedDepthPoseIds: ["a-different-depth-pose"],
+      posePipelineReady: { [hqExecutionBasis]: false, [hqOpenPoseBasis]: true } });
+    saveSelection();
+    const pending = deferred<HQJob>(); vi.mocked(hqApi.create).mockReturnValue(pending.promise);
+    render(<HQTryOnPage />);
+    expect(await screen.findByText("所选姿势使用OpenPose 骨架。")).toBeVisible();
+    const generate = screen.getByRole("button", { name: "本机生成" });
+    await waitFor(() => expect(generate).toBeEnabled());
+    fireEvent.click(generate);
+    await waitFor(() => expect(hqApi.create).toHaveBeenCalledTimes(1));
+    const sent = vi.mocked(hqApi.create).mock.calls[0][0];
+    expect(sent.poseId).toBe(ids.pose); expect(sent.idempotencyKey).toContain(hqOpenPoseBasis);
+    await act(async () => pending.resolve(createJob({ pipeline: hqOpenPoseBasis, idempotencyKey: sent.idempotencyKey })));
+  });
   it.each([true, false])("adopts another browser's successful successor on refresh, following only the superseded selection (viewing B=%s)", async viewingB => {
     const a = createJob({ id: "hq-attempt-a", state: "failed", phase: "failed", pipeline: hqExecutionBasis, identityJobId: "identity-a", idempotencyKey: "hq-key-attempt-a", createdAt: "2026-11-02T01:00:00+00:00" });
     const b = { ...a, id: "hq-attempt-b", identityJobId: "identity-b", idempotencyKey: "hq-key-attempt-b", createdAt: "2026-11-02T02:00:00+00:00" };

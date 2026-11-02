@@ -1,5 +1,5 @@
-import type { HQAsset, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQRole, HQStatus } from "../domain/hq-tryon";
-import { defaultHQParameters, hqActive, hqError, hqExecutionBasis, validHQParameters } from "../domain/hq-tryon";
+import type { HQAsset, HQBasis, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQRole, HQStatus } from "../domain/hq-tryon";
+import { defaultHQParameters, hqActive, hqError, hqExecutionBasis, isHQBasis, validHQParameters } from "../domain/hq-tryon";
 
 const root = "/api/hq";
 const validId = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id);
@@ -66,7 +66,7 @@ export interface HQDraft extends HQIdentityOptions { selection: Partial<Record<H
 // Unqualified v1 receipts belong to the earlier execution basis. Never upgrade
 // them by filling defaults; verified current server jobs can restore their keys.
 const operationsKey = "dream.hq.operations.v2", draftKey = "dream.hq.draft.v1";
-export const hqFingerprint = (body: Omit<HQCreateRequest, "idempotencyKey">) => JSON.stringify([hqExecutionBasis, body.personId, body.garmentId, body.poseId, body.parameters.seed, body.parameters.width, body.parameters.height, body.parameters.steps, body.profileId || null, body.facePolish ?? false, body.faceRestoreStrength ?? 0.35]);
+export const hqFingerprint = (body: Omit<HQCreateRequest, "idempotencyKey">, basis: HQBasis = hqExecutionBasis) => JSON.stringify([basis, body.personId, body.garmentId, body.poseId, body.parameters.seed, body.parameters.width, body.parameters.height, body.parameters.steps, body.profileId || null, body.facePolish ?? false, body.faceRestoreStrength ?? 0.35]);
 function cleanIdentity(value: HQIdentityOptions): HQIdentityOptions {
   return { profileId: validId(value.profileId) ? value.profileId : null, facePolish: value.facePolish === true,
     faceRestoreStrength: typeof value.faceRestoreStrength === "number" && Number.isFinite(value.faceRestoreStrength) && value.faceRestoreStrength >= 0 && value.faceRestoreStrength <= 1 ? value.faceRestoreStrength : 0.35 };
@@ -76,7 +76,7 @@ function validFingerprint(value: unknown): value is string {
   if (typeof value !== "string" || value.length >= 768) return false;
   try {
     const fields = JSON.parse(value);
-    return Array.isArray(fields) && fields.length === 11 && fields[0] === hqExecutionBasis && fields.slice(1, 4).every(validId)
+    return Array.isArray(fields) && fields.length === 11 && isHQBasis(fields[0]) && fields.slice(1, 4).every(validId)
       && validHQParameters({ seed: fields[4], width: fields[5], height: fields[6], steps: fields[7] })
       && (fields[8] === null || validId(fields[8])) && typeof fields[9] === "boolean"
       && typeof fields[10] === "number" && fields[10] >= 0 && fields[10] <= 1;
@@ -102,19 +102,22 @@ function persistHQOperation(operation: HQOperation, expectedKey: string) {
 }
 export const saveHQOperation = (operation: HQOperation) => persistHQOperation(operation, operation.idempotencyKey);
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-function hasCurrentBasis(job: HQJob) {
+function jobBasis(job: HQJob): HQBasis | undefined {
   const evidence = [job.pipeline, record(job.audit).pipeline, record(job.localAudit).pipeline,
     ...[job.result?.metadata, job.output?.metadata, job.identityResult?.metadata].map(metadata => record(record(metadata).hq).pipeline)]
     .filter(value => value !== undefined && value !== null);
-  return evidence.length > 0 && evidence.every(value => value === hqExecutionBasis);
+  const basis = evidence[0];
+  return isHQBasis(basis) && evidence.every(value => value === basis) ? basis : undefined;
 }
+const hasCurrentBasis = (job: HQJob) => jobBasis(job) !== undefined;
 const currentExecution = (job: HQJob) => validId(job.identityJobId) && hasCurrentBasis(job);
 function jobSettingsFingerprint(job: HQJob): string | null {
   if (!job.parameters || !validHQParameters(job.parameters)) return null;
   const personId = job.requestedInputIds?.person || job.inputs.find(input => input.role === "person")?.id;
   const garmentId = job.requestedInputIds?.garment || job.inputs.find(input => input.role === "garment")?.id;
   const poseId = job.requestedInputIds?.pose || job.inputs.find(input => input.role === "pose")?.id;
-  return validId(personId) && validId(garmentId) && validId(poseId) ? hqFingerprint({ personId, garmentId, poseId, parameters: job.parameters, ...cleanIdentity(job) }) : null;
+  const basis = jobBasis(job);
+  return basis && validId(personId) && validId(garmentId) && validId(poseId) ? hqFingerprint({ personId, garmentId, poseId, parameters: job.parameters, ...cleanIdentity(job) }, basis) : null;
 }
 export const hqJobFingerprint = (job: HQJob): string | null => currentExecution(job) ? jobSettingsFingerprint(job) : null;
 
@@ -176,12 +179,12 @@ export function reconcileHQOperations(jobs: HQJob[], onSuccessor?: (previousId: 
   localStorage.setItem(operationsKey, JSON.stringify(receipts));
   return receipts;
 }
-export function reserveHQOperation(body: Omit<HQCreateRequest, "idempotencyKey">, jobs: HQJob[]) {
-  const receipts = reconcileHQOperations(jobs), fingerprint = hqFingerprint(body), previous = receipts.find(r => r.fingerprint === fingerprint);
+export function reserveHQOperation(body: Omit<HQCreateRequest, "idempotencyKey">, jobs: HQJob[], basis: HQBasis = hqExecutionBasis) {
+  const receipts = reconcileHQOperations(jobs), fingerprint = hqFingerprint(body, basis), previous = receipts.find(r => r.fingerprint === fingerprint);
   if (!previous && jobs.some(job => currentExecution(job) && hqActive(job) && !hqJobFingerprint(job) && !receipts.some(row => row.idempotencyKey === job.idempotencyKey))) {
     throw new Error("已有下载中任务尚未返回完整三图编号，请先刷新核对，暂不创建新请求");
   }
-  const operation: HQOperation = previous || { fingerprint, idempotencyKey: `hq-local-${hqExecutionBasis}-${crypto.randomUUID()}`, delivery: "prepared" };
+  const operation: HQOperation = previous || { fingerprint, idempotencyKey: `hq-local-${basis}-${crypto.randomUUID()}`, delivery: "prepared" };
   // If browser storage fails, fail before POST, so an uncertain request remains recoverable.
   saveHQOperation(operation);
   return operation;
@@ -202,15 +205,15 @@ export function retryableHQJob(operation: HQOperation | undefined, jobs: HQJob[]
 }
 // Only the explicit terminal-retry UI calls this. Ordinary create/refresh always
 // reserves the current attempt through reserveHQOperation instead.
-export async function reserveHQRetry(body: Omit<HQCreateRequest, "idempotencyKey">, jobs: HQJob[], expectedKey: string): Promise<HQOperation> {
-  const previous = reconcileHQOperations(jobs).find(row => row.fingerprint === hqFingerprint(body));
+export async function reserveHQRetry(body: Omit<HQCreateRequest, "idempotencyKey">, jobs: HQJob[], expectedKey: string, basis: HQBasis = hqExecutionBasis): Promise<HQOperation> {
+  const previous = reconcileHQOperations(jobs).find(row => row.fingerprint === hqFingerprint(body, basis));
   if (!previous || previous.idempotencyKey !== expectedKey) throw new Error("请求回执已更新，请先刷新核对当前尝试");
   const terminal = retryableHQJob(previous, jobs);
   if (!terminal) throw new Error("仅服务确认失败或已取消且没有同组运行任务时，可按相同设置新建重试");
   // One successor per terminal attempt, even if two tabs confirm concurrently.
   // A later failed successor has a different job ID and gets its own fresh key.
-  const successor = await sha256Hex(new TextEncoder().encode(JSON.stringify([hqExecutionBasis, terminal.id, expectedKey])));
-  const next: HQOperation = { fingerprint: previous.fingerprint, idempotencyKey: `hq-local-${hqExecutionBasis}-retry-${successor}`, retryOf: terminal.id, delivery: "prepared" };
+  const successor = await sha256Hex(new TextEncoder().encode(JSON.stringify([basis, terminal.id, expectedKey])));
+  const next: HQOperation = { fingerprint: previous.fingerprint, idempotencyKey: `hq-local-${basis}-retry-${successor}`, retryOf: terminal.id, delivery: "prepared" };
   persistHQOperation(next, previous.idempotencyKey);
   return next;
 }

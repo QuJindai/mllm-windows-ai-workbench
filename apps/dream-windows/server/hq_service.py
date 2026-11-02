@@ -307,21 +307,23 @@ class HQService:
             self._auth_cache = (fingerprint, time.monotonic() + 15)
         return fingerprint
 
-    def _ready(self, settings: dict) -> bool:
+    def _ready(self, settings: dict, pipeline=None) -> bool:
         if not Path(settings['python']).is_file():
             return False
         try:
             from hq_tryon_pipeline import readiness
             from identity_worker import load_config
             resolved = load_config({'configPath': str(self.identity.config_path), 'modelId': 'realistic-vision-v5.1-faceid'})
-            return readiness(settings['pipelineConfig'], resolved).get('ready') is True
+            return readiness(settings['pipelineConfig'], resolved, pipeline=pipeline).get('ready') is True
         except (ImportError, OSError, ValueError, TypeError):
             return False
 
     @staticmethod
-    def _pipeline(settings):
+    def _pipeline(settings, pose_id=None):
         try:
-            return paired_depth.pipeline_id(read_json(Path(settings['pipelineConfig']), 64 * 1024))
+            return paired_depth.pipeline_id(read_json(Path(settings['pipelineConfig']), 64 * 1024), pose_id)
+        except paired_depth.PipelineError as exc:
+            _fail(exc.code, str(exc))
         except (OSError, ValueError, TypeError):
             _fail('MODEL_NOT_READY', '无法读取本机 HQ 管线配置')
 
@@ -333,16 +335,19 @@ class HQService:
                 settings = self._settings()
                 result['configured'] = True
                 result['pipeline'] = self._pipeline(settings)
+                ready = {result['pipeline']: self._ready(settings, result['pipeline'])}
                 if result['pipeline'] == paired_depth.PIPELINE:
-                    result['supportedPoseIds'] = [item['id'] for item in paired_depth.catalog()['items']]
-                result['modelReady'] = self._ready(settings)
+                    result['pairedDepthPoseIds'] = [item['id'] for item in paired_depth.catalog()['items']]
+                    ready[PIPELINE] = self._ready(settings, PIPELINE)
+                result['posePipelineReady'] = ready
+                result['modelReady'] = any(ready.values())
                 result['pipelineFilesPresent'] = result['modelReady']
                 result['readiness'] = 'files-present' if result['modelReady'] else 'missing-files'
                 if result['modelReady']:
                     configuration_hash = _sha(Path(settings['pipelineConfig']).read_bytes())
                     with self._lock:
                         result['executionValidated'] = any(
-                            row['state'] == 'succeeded' and (row.get('audit') or {}).get('pipeline') == result['pipeline']
+                            row['state'] == 'succeeded' and ready.get((row.get('audit') or {}).get('pipeline'))
                             and (row.get('audit') or {}).get('configuration', {}).get('sha256') == configuration_hash
                             for row in self._jobs.values())
                 self._authorized(settings)
@@ -351,6 +356,8 @@ class HQService:
                     result['error'] = {'code': 'MODEL_NOT_READY', 'message': '本机 HQ 推理管线或模型文件尚未齐备'}
             except DreamApiError as exc:
                 result['error'] = _error({'code': exc.code, 'message': exc.message})
+            except paired_depth.PipelineError as exc:
+                result['error'] = _error({'code': exc.code, 'message': str(exc)})
             with self._lock:
                 result['gpuReleaseBlocked'] = self.identity.gpu_release_blocked
                 if result['gpuReleaseBlocked']:
@@ -367,6 +374,8 @@ class HQService:
         for key in ('label', 'name', 'category', 'sha256', 'fullSha256', 'thumbSha256'):
             if isinstance(row.get(key), str):
                 item[key] = row[key][:160]
+        if kind == 'pose' and isinstance(row.get('view'), str) and row['view']:
+            item['label'] = f"{item.get('label') or identifier} · {row['view'][:40]}"
         item['imageUrl'] = '/api/hq/asset?' + urlencode({'kind': kind, 'id': identifier})
         item['thumbnailUrl'] = item['imageUrl'] + '&thumbnail=1'
         return item
@@ -379,17 +388,6 @@ class HQService:
             if not isinstance(q, str) or len(q) > 100 or not isinstance(category, str) or len(category) > 160:
                 _fail('REQUEST_INVALID', '图库筛选参数无效', 422)
             if kind != 'person':
-                if kind == 'pose' and self._pipeline(settings) == paired_depth.PIPELINE:
-                    manifest = paired_depth.catalog()
-                    needle = unicodedata.normalize('NFKC', q).casefold()
-                    poses = manifest['items']
-                    matched = [item for item in poses if (not category or category == item['category']) and
-                               needle in unicodedata.normalize('NFKC', item['id'] + ' ' + item['label']).casefold()]
-                    start = page * limit
-                    return {'kind': kind, 'items': [self._item(item, kind) for item in matched[start:start + limit]],
-                            'total': len(matched), 'hasMore': start + limit < len(matched), 'page': page,
-                            'limit': limit, 'categories': sorted({item['category'] for item in poses}),
-                            'sourceMode': 'owned-r2-paired-depth', 'release': manifest['release']}
                 result = self._json_get('/api/catalog?' + urlencode(dict(kind=kind, q=q, category=category, page=page, limit=limit)))
                 if (not isinstance(result.get('items'), list) or len(result['items']) > 48
                         or type(result.get('total')) is not int or type(result.get('hasMore')) is not bool):
@@ -509,13 +507,11 @@ class HQService:
                     return self._view(prior), True
             settings = self._settings()
             self._session(settings)
-            pipeline = self._pipeline(settings)
-            if pipeline == paired_depth.PIPELINE and not any(item['id'] == payload.poseId for item in paired_depth.catalog()['items']):
-                _fail('HQ_DEPTH_UNAVAILABLE', '请在姿势页选择已有配对深度图的姿势', 422)
+            pipeline = self._pipeline(settings, payload.poseId)
             job_id = ids[pipeline]
             digest = _sha(_canonical({'pipeline': pipeline, 'request': values}))
-            if not self._ready(settings):
-                _fail('MODEL_NOT_READY', '本机 HQ 人物条件模型尚未齐备')
+            if not self._ready(settings, pipeline):
+                _fail('MODEL_NOT_READY', '本机尚未备齐所选姿势需要的模型文件')
             folder = self._folder(job_id)
             if folder.exists():
                 _fail('HQ_STORAGE_INCOMPLETE', '此任务已有保留目录，禁止自动重试推理', 409)

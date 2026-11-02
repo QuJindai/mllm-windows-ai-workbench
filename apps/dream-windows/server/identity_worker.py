@@ -60,12 +60,18 @@ def main():
         # expiry. Avoid interpreter-finalization races; serve closed its session
         # and flushed each response. OS process exit is the CUDA release barrier.
         os._exit(code)
-    if args.ownership_handshake:
-        parser.error('--ownership-handshake requires --persistent')
     if not args.operation or args.request is None or args.result is None:
         parser.error('--operation, --request and --result are required')
+    request = None
     try:
         request = json.loads(args.request.read_text(encoding='utf-8-sig'))
+        if args.ownership_handshake:
+            if args.operation != 'generate' or 'hqConditioning' not in request:
+                parser.error('one-shot --ownership-handshake requires trusted HQ generation')
+            print(json.dumps({'workerReady': True, 'pid': os.getpid()}), flush=True)
+            continuation = json.loads(sys.stdin.readline())
+            if not isinstance(continuation, dict) or continuation.get('workerContinue') is not True:
+                raise ValueError('HQ worker ownership continuation rejected')
         config = load_config(request, operation=args.operation)
         if args.operation not in ('refine', 'fusion'):
             from identity_pipeline import generate, inspect_reference, registered_loras, prepare, generate_batch
@@ -107,11 +113,19 @@ def main():
         code = 0
     except Exception as exc:
         message = str(exc) if isinstance(exc, ValueError) and '配置' in str(exc) else '人物处理失败，请查看本地任务日志'
-        print(f'{type(exc).__name__}: {exc}', file=sys.stderr)
+        if isinstance(request, dict) and 'hqConditioning' in request:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print(f'{type(exc).__name__}: {exc}', file=sys.stderr)
         if args.operation == 'status':
             result = {'ready': False, 'modelName': 'Realistic Vision V5.1 + FaceID Plus V2', 'message': message, 'loras': []}
         else:
             result = {'ok': False, 'code': 'IDENTITY_WORKER_FAILED', 'message': message}
+            if isinstance(request, dict) and 'hqConditioning' in request:
+                from hq_tryon_conditioning import error_record
+                error = error_record(exc)
+                result.update(code=error['code'], message=error['message'], error=error)
         code = 1
     args.result.parent.mkdir(parents=True, exist_ok=True)
     temp = args.result.with_suffix('.tmp')

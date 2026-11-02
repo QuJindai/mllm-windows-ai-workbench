@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -294,8 +294,22 @@ def visual_reference_schedule(pipe, item, steps=None):
                 processor.scale = original
 
 
+def _audit_hq_errors(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except Exception as exc:
+            conditioning = getattr(self, '_hq_conditioning', None)
+            if conditioning is not None:
+                conditioning.fail(exc)
+            raise
+    return guarded
+
+
 class IdentitySession:
     """One pipeline per batch. CUDA lifetime remains bounded by the worker process."""
+    @_audit_hq_errors
     def __init__(self, config, first, emit):
         import torch
         from safetensors.torch import load_file
@@ -307,6 +321,11 @@ class IdentitySession:
         params = IdentityGenerateRequest.model_validate({k: v for k, v in first.items() if k in IdentityGenerateRequest.model_fields})
         self.architecture = config.get('architecture', 'SD1.5')
         visual = is_visual_model_id(params.modelId)
+        self._hq_conditioning = None
+        if 'hqConditioning' in first:
+            from hq_tryon_conditioning import IdentityHQConditioning
+            self._hq_conditioning = IdentityHQConditioning(config, first, params, emit)
+        hq = self._hq_conditioning
         if visual:
             self.visual_reference = (params.referenceId, params.faceIndex)
         configure_cuda()
@@ -320,6 +339,8 @@ class IdentitySession:
             features, self.feature_info = reference_features(config, first, extract_reference_features)
         fingerprints = FingerprintCache(Path(first['dreamRoot']) / 'data' / 'identity' / 'fingerprints.json')
         self.hashes = dict(self.feature_info['assetHashes'])
+        if hq is not None:
+            hq.prepare(features, self.feature_info)
         for key in (('checkpoint', 'adapter') if visual else ('checkpoint', 'adapter', 'faceLora')):
             self.hashes[key] = fingerprints.digest(config[key], force=bool(first.get('forceFingerprint', False)))
         self.initial_stages.append({'name': '参考人脸与特征缓存', 'durationMs': round((time.perf_counter() - point) * 1000), 'truth': 'observed'})
@@ -327,7 +348,10 @@ class IdentitySession:
         emit({'type': 'stage', 'stage': f'加载 {self.architecture} 与身份条件'})
         pipe = load_identity_pipe(config)
         pipe.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config, use_karras_sigmas=False)
-        if visual:
+        if hq is not None:
+            pipe = hq.wrap_pipe(pipe)
+            hq.load_adapters(pipe)
+        elif visual:
             adapter_path = Path(config['adapter'])
             pipe.load_ip_adapter(str(adapter_path.parent), subfolder='', weight_name=adapter_path.name,
                                  image_encoder_folder=None, local_files_only=True)
@@ -355,7 +379,7 @@ class IdentitySession:
             del style
         if names:
             pipe.set_adapters(names, adapter_weights=scales)
-        pipe.set_ip_adapter_scale(params.identityStrength)
+        pipe.set_ip_adapter_scale([params.identityStrength, hq.config['garmentScale']] if hq is not None else params.identityStrength)
         if visual:
             # Retain the native Plus Face patch projection used by the accepted A/B route.
             self.projected = torch.cat([features['negative_clip'], features['clip']]).unsqueeze(1).to(dtype=torch.float16)
@@ -369,42 +393,60 @@ class IdentitySession:
                 self.projected = projection(face_embeddings).unsqueeze(1)
                 if params.facePolish and params.animeProfileId:
                     self.project_anime(projection, first, config)
-            pipe.unet.encoder_hid_proj = MultiIPAdapterImageProjection([torch.nn.Identity()])
+            if hq is not None:
+                projection.clip_embeds = None
+                projection.to('cpu')
+                self.projected = self.projected.cpu()
+                hq.finish_projection(pipe, self.projected)
+            else:
+                pipe.unet.encoder_hid_proj = MultiIPAdapterImageProjection([torch.nn.Identity()])
             del projection, face_embeddings
         del features
         gc.collect()
         torch.cuda.empty_cache()
         pipe.vae.enable_slicing()
         pipe.vae.enable_tiling()
-        place_identity_pipe(pipe, self.architecture)
+        if hq is not None:
+            hq.place(pipe)
+        else:
+            place_identity_pipe(pipe, self.architecture)
         self.pipe = pipe
         self.config = config
         self.initial_stages.append({'name': f'{self.architecture} 与身份条件加载', 'durationMs': round((time.perf_counter() - point) * 1000), 'truth': 'observed'})
 
+    @_audit_hq_errors
     def render(self, item, item_index, emit, preview_dir, preview_every):
         import torch
         from PIL import ImageStat
         from identity_contract import IdentityGenerateRequest
         from identity_research import IdentityResearch
         params = IdentityGenerateRequest.model_validate({k: v for k, v in item.items() if k in IdentityGenerateRequest.model_fields})
+        hq = getattr(self, '_hq_conditioning', None)
         point = time.perf_counter()
-        if getattr(self, 'architecture', 'SD1.5') != 'SDXL':
+        if hq is not None:
+            hq.place(self.pipe)
+        elif getattr(self, 'architecture', 'SD1.5') != 'SDXL':
             self.pipe.to('cuda')
         emit({'type': 'stage', 'stage': '采样', 'itemIndex': item_index})
-        with visual_reference_schedule(self.pipe, params.model_dump()) as advance, torch.inference_mode(), capture_denoised_preview(self.pipe.scheduler, bool(preview_every)) as denoised, IdentityResearch(self.pipe, item, params) as research:
+        conditioning = hq.sampling(self.pipe, self.projected, item) if hq is not None else nullcontext({})
+        with visual_reference_schedule(self.pipe, params.model_dump()) as advance, torch.inference_mode(), capture_denoised_preview(self.pipe.scheduler, bool(preview_every)) as denoised, IdentityResearch(self.pipe, item, params) as research, conditioning as conditioning_kwargs:
             progress = sampling_callback(item['jobId'], item_index, params.steps, emit, preview_dir, preview_every, point, denoised, research)
             def callback(pipe, index, timestep, values):
+                if hq is not None:
+                    hq.on_step(index, timestep)
                 values = progress(pipe, index, timestep, values)
                 advance(index + 1)
                 return values
             result = self.pipe(prompt=params.prompt, negative_prompt=params.negativePrompt, width=params.width, height=params.height,
                                num_inference_steps=params.steps, guidance_scale=params.cfg,
-                               generator=torch.Generator(device='cpu').manual_seed(params.seed), ip_adapter_image_embeds=[self.projected],
-                               callback_on_step_end=callback, callback_on_step_end_tensor_inputs=['latents']).images[0]
+                               generator=torch.Generator(device='cpu').manual_seed(params.seed), ip_adapter_image_embeds=hq.image_embeds(self.projected) if hq is not None else [self.projected],
+                               callback_on_step_end=callback, callback_on_step_end_tensor_inputs=['latents'], **conditioning_kwargs).images[0]
         stages = list(self.initial_stages if item_index == 0 else [])
         stages.append({'name': '采样与 VAE 解码', 'durationMs': round((time.perf_counter() - point) * 1000), 'truth': 'observed'})
         if max(ImageStat.Stat(result.convert('RGB')).stddev) < 2:
             raise RuntimeError('生成结果近乎纯色，未通过图像检查')
+        if hq is not None:
+            hq.base_image(result)
         from identity_face_polish import optional_face_polish
         result, polish = optional_face_polish(result, params, item, lambda: self.face_polisher(item),
                                               lambda stage: emit({'type': 'stage', 'stage': stage, 'itemIndex': item_index}))
@@ -443,6 +485,8 @@ class IdentitySession:
                 'message': '研究产物发布失败，已保留生成图片和历史记录；本次研究结果不可用',
             }
         metadata_path = Path(item['metadataPath'])
+        if hq is not None:
+            metadata['hq'] = hq.complete(metadata)
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         temp = metadata_path.with_suffix('.tmp')
         temp.write_text(json.dumps(metadata, ensure_ascii=False, allow_nan=False, indent=2), encoding='utf-8')
@@ -480,7 +524,10 @@ class IdentitySession:
         from identity_face_polish import FacePolisher
         # Retain warm CPU models between batch items; never overlap generation and
         # FP32 face restoration on a 6 GB device.
-        if getattr(self, 'architecture', 'SD1.5') != 'SDXL':
+        hq = getattr(self, '_hq_conditioning', None)
+        if hq is not None:
+            hq.release_for_polish(self.pipe)
+        elif getattr(self, 'architecture', 'SD1.5') != 'SDXL':
             self.pipe.to('cpu')
         torch.cuda.empty_cache()
         if not hasattr(self, '_face_polisher'):
@@ -492,6 +539,8 @@ def validate_batch_items(items):
     from identity_contract import IdentityGenerateRequest
     if not isinstance(items, list) or not 1 <= len(items) <= 16:
         raise ValueError('人物批次数量必须在 1 到 16 之间')
+    if len(items) != 1 and any('hqConditioning' in item for item in items):
+        raise ValueError('HQ 条件仅绑定单个身份子任务，请使用独立工作进程')
     fixed = ('modelId', 'referenceId', 'faceIndex', 'width', 'height', 'cfg', 'identityStrength', 'referenceStart', 'referenceEnd', 'structureStrength', 'faceLoraStrength', 'loraId', 'loraStrength', 'facePolish', 'animeProfileId',
              'visualPolishMode', 'visualAnchorStrength', 'visualPolishPasses')
     signatures, paths = [], set()

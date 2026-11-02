@@ -41,6 +41,10 @@ The [2026-10-29 creative upgrade guide and acceptance record](docs/dream-windows
 covers independent refinement, explicit scene recipes, controlled GPU fusion and
 microscope comparisons, with current limitations and pending main-release/CI status.
 
+The [HQ local try-on guide](docs/dream-windows/HQ_LOCAL_TRYON.md) describes
+using the owner's R2 originals directly in the browser through the existing
+Dream identity, optional face-polish and refinement workflow.
+
 ## Architecture
 
 ```text

@@ -7,6 +7,7 @@ import { isIdentityModelId } from "../domain/identity";
 import { useDreamProvider } from "./providers";
 import { GeneratePage } from "./pages/GeneratePage";
 import { IdentityPage } from "./pages/IdentityPage";
+import { HQTryOnPage } from "./pages/HQTryOnPage";
 import type { IdentityReplay } from "./pages/IdentityPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { HistoryPage } from "./pages/HistoryPage";
@@ -19,11 +20,12 @@ import "./shell.css";
 import "./workstation.css";
 import { useUiPreferences } from "./ui-preferences";
 
-export type Route = "generate" | "identity" | "models" | "history" | "lab" | "microscope" | "settings";
+export type Route = "generate" | "identity" | "hq-tryon" | "models" | "history" | "lab" | "microscope" | "settings";
 
 const navigation: Array<{ id: Route; label: string; icon: string; hint: string }> = [
   { id: "generate", label: "生成", icon: "▧", hint: "使用本地模型创建图像" },
   { id: "identity", label: "人物创作", icon: "◉", hint: "参考人物 · 场景创作 · 结果对照" },
+  { id: "hq-tryon", label: "HQ 试衣", icon: "▤", hint: "HQ 三图原图 · 本机生成 · 输入与成片" },
   { id: "models", label: "模型", icon: "◇", hint: "管理本地模型" },
   { id: "history", label: "历史", icon: "◷", hint: "浏览已生成的图像" },
   { id: "lab", label: "实验室", icon: "♧", hint: "进行可控对比实验" },
@@ -39,7 +41,10 @@ export function App() {
     document.documentElement.dataset.reduceMotion = String(preferences.reduceMotion);
   }, [preferences]);
   const provider = useDreamProvider();
-  const [route, setRoute] = useState<Route>(() => new URLSearchParams(window.location.search).get("view") === "microscope" ? "microscope" : "generate");
+  const [route, setRoute] = useState<Route>(() => {
+    const view = new URLSearchParams(window.location.search).get("view");
+    return view === "microscope" || view === "hq-tryon" ? view : "generate";
+  });
   const [hardware, setHardware] = useState<HardwareSnapshot | null>(null);
   const [hardwareError, setHardwareError] = useState<string | null>(null);
   const [hardwareLoading, setHardwareLoading] = useState(true);
@@ -161,6 +166,7 @@ function RoutePage({ route, hardware, hardwareError, generationPrefill, identity
       <IdentityPage replay={identityReplay} />
     </div>}
     {route === "models" && <ModelsPage />}
+    {route === "hq-tryon" && <HQTryOnPage />}
     {route === "history" && <HistoryPage onRerun={onRerun} />}
     {route === "lab" && <LabPage onPromote={onPromoteExperiment} />}
     {route === "microscope" && <MicroscopePage />}

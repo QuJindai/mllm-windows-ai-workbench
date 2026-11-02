@@ -71,7 +71,7 @@ function FacePolishPreview({ job }: { job: IdentityJob & { result: NonNullable<I
   </section>;
 }
 
-function JobResultPreview({ job }: { job: IdentityJob }) {
+export function JobResultPreview({ job }: { job: IdentityJob }) {
   if (!job.result) return null;
   const research = job.result.metadata.research;
   const researchFailed = !!research && typeof research === "object" && "status" in research && research.status === "failed";

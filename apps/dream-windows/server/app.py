@@ -14,6 +14,8 @@ from config import DreamServerConfig
 from errors import DreamApiError
 from identity_routes import create_identity_router, require_local_origin
 from identity_service import IdentityService
+from hq_routes import create_hq_router, HQPrivateAliasesMiddleware
+from hq_service import HQService
 from job_runner import JobRunner
 from models import ExperimentRequest, FavoriteRequest, GenerateRequest, SettingsUpdateRequest, WorkspaceOpenRequest
 from operations import ensure_generation_capacity, get_operations
@@ -26,6 +28,8 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
     resolved_runtime = runtime or DreamRuntime(resolved_config)
     app = FastAPI(title="Dream Windows Web", version="0.2.0")
     app.include_router(create_research_experiment_router(resolved_runtime))
+
+    app.add_middleware(HQPrivateAliasesMiddleware, config=resolved_config)
 
     @app.exception_handler(DreamApiError)
     async def dream_error_handler(_: Request, exc: DreamApiError) -> JSONResponse:
@@ -40,6 +44,9 @@ def create_app(config: DreamServerConfig | None = None, runtime: DreamRuntime | 
     if isinstance(identity_runner, JobRunner):
         identity_service = IdentityService(resolved_config, identity_runner)
         app.include_router(create_identity_router(resolved_config, identity_runner, service=identity_service))
+        hq_service = HQService(resolved_config, identity_runner, identity_service=identity_service)
+        app.state.hq_service = hq_service
+        app.include_router(create_hq_router(resolved_config, hq_service))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

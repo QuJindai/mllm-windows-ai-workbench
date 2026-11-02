@@ -3,9 +3,9 @@ import { validAnimeStrength, validFaceRestoreStrength } from "../../../domain/id
 import type { AnimeProfile, IdentityRequest, IdentityStatus } from "../../../domain/identity";
 
 type Options = Pick<IdentityRequest, "facePolish" | "faceRestoreStrength" | "animeProfileId" | "animeDenoiseStrength">;
-export function FacePolishControls({ value, capability, animeCapability, animeProfiles = [], allowAnime = false, onChange }: {
+export function FacePolishControls({ value, capability, animeCapability, animeProfiles = [], allowAnime = false, defaultStrength = 1, onChange }: {
   value: Options; capability: IdentityStatus["facePolish"]; onChange: (value: Options) => void;
-  animeCapability?: IdentityStatus["animePolish"]; animeProfiles?: AnimeProfile[]; allowAnime?: boolean;
+  animeCapability?: IdentityStatus["animePolish"]; animeProfiles?: AnimeProfile[]; allowAnime?: boolean; defaultStrength?: number;
 }) {
   const hint = useId(), availability = useId();
   const anime = animeProfiles.find(p => p.id === value.animeProfileId && p.state === "ready");
@@ -41,7 +41,7 @@ export function FacePolishControls({ value, capability, animeCapability, animePr
       <label>面部细节修复强度<input type="number" min={0} max={1} step={0.01}
         disabled={!ready} value={Number.isFinite(value.faceRestoreStrength) ? value.faceRestoreStrength : ""}
         onChange={(event) => onChange({ ...value, faceRestoreStrength: event.target.value === "" ? NaN : Number(event.target.value) })} /></label>
-      <p className="identity-note">0–1，默认 1。控制面部细节修复程度；身份回贴仍会执行。</p>
+      <p className="identity-note">0–1，默认 {defaultStrength}。控制面部细节修复程度；身份回贴仍会执行。</p>
       {!validFaceRestoreStrength(value.faceRestoreStrength) && <p className="identity-error">面部细节修复强度必须为 0–1。</p>}
     </>}
   </section>;

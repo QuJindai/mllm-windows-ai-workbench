@@ -34,6 +34,29 @@ const postCalls = () => fetchMock.mock.calls.filter(([, init]) => init?.method =
 const tick = async (ms = 1600) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 
 describe("RefinementWorkspace HTTP workflow", () => {
+  it("downloads the selected readable native version and follows a confirmed parent selection", async () => {
+    const nativeVersions = [version("result", "complete", { imageUrl: "/api/history/identity-source/image" }),
+      version("refine-one", "complete", { imageUrl: "/api/identity/refinements/refine-one/image" })];
+    fetchMock.mockImplementation(async (_url, init) => response(snapshot({ versions: nativeVersions, selectedVersionId: init?.method === "POST" ? "refine-one" : "result" })));
+    open(); await ready();
+    let download = screen.getByRole("link", { name: "下载当前版本" });
+    expect(download).toHaveAttribute("href", window.location.origin + "/api/history/identity-source/image");
+    expect(download).toHaveAttribute("download", "identity-source-result.png");
+    expect(postCalls()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "选择精修 1" }));
+    await waitFor(() => expect(screen.getByRole("link", { name: "下载当前版本" })).toHaveAttribute("download", "identity-source-refine-one.png"));
+    download = screen.getByRole("link", { name: "下载当前版本" });
+    expect(download).toHaveAttribute("href", window.location.origin + "/api/identity/refinements/refine-one/image");
+    fireEvent.error(screen.getByRole("img", { name: "当前精修图像" }));
+    expect(screen.queryByRole("link", { name: "下载当前版本" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/SHA-256.*已校验/)).not.toBeInTheDocument();
+  });
+
+  it.each(["https://external.invalid/result.png", "data:image/png;base64,aA=="])("does not offer native downloads for a foreign image: %s", async imageUrl => {
+    fetchMock.mockResolvedValue(response(snapshot({ versions: [version("result", "complete", { imageUrl })] })));
+    open(); await ready(); expect(screen.queryByRole("link", { name: "下载当前版本" })).not.toBeInTheDocument();
+  });
+
   it("loads server modes and submits exactly one round using the selected parent and exact payload", async () => {
     const gate = deferred<Response>();
     fetchMock.mockImplementation(async (_url, init) => init?.method === "POST" ? gate.promise : response(snapshot({

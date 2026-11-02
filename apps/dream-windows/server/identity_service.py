@@ -4,9 +4,11 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import hashlib
 import io
 import json
 import os
+import queue
 import re
 import secrets
 import subprocess
@@ -69,6 +71,18 @@ class Face(BaseModel):
 
 class WorkerCancelled(Exception):
     pass
+
+
+def hq_pixel_fingerprint(path: Path) -> str:
+    """Exact EXIF-oriented RGB pixels and dimensions; no recognition or model load."""
+    with Image.open(path) as source:
+        if source.width * source.height > MAX_IMAGE_PIXELS:
+            raise DreamApiError('HQ_PERSON_MISMATCH', 'HQ 人物图超过像素限制', status_code=422)
+        source.load()
+        image = ImageOps.exif_transpose(source).convert('RGB')
+        digest = hashlib.sha256(f'{image.width}x{image.height}:RGB\0'.encode('ascii'))
+        digest.update(image.tobytes())
+        return digest.hexdigest()
 
 
 class AnimeBinding(BaseModel):
@@ -475,6 +489,7 @@ class IdentityService:
         self._persistent_lock = threading.RLock()
         self._persistent_worker = None
         self._persistent_settings = None
+        self._pending_release: set[int] = set()
         self._persistent_log = None
         self._has_native_barrier = hasattr(job_runner, "add_before_run")
         if self._has_native_barrier:
@@ -923,7 +938,12 @@ class IdentityService:
                     continue
                 if record.get("request"):
                     record["request"] = IdentityGenerateRequest.model_validate(record["request"]).model_dump()
-                if record["state"] not in TERMINAL and path.stem not in (batch_members or set()):
+                if record.get('hqBinding') and record['state'] not in TERMINAL:
+                    # HQ owns one durable attempt. Keep its files for audit; never regenerate or clean them on restart.
+                    record.update(state='failed', progress=0, message='HQ 人物任务被服务重启中断',
+                                  error='EXECUTOR_INTERRUPTED', errorCode='EXECUTOR_INTERRUPTED', result=None)
+                    atomic_json(path, record)
+                elif record["state"] not in TERMINAL and path.stem not in (batch_members or set()):
                     # Only opaque IDs discovered in this service's job store
                     # can identify incomplete output; never trust saved paths.
                     output_root = self._safe(self.config.dream_root / "outputs")
@@ -932,11 +952,21 @@ class IdentityService:
                     error = "；".join(filter(None, ("人物任务被服务重启中断，请重新提交", cleanup_error)))
                     record.update(state="failed", progress=0, message="任务被服务重启中断", error=error, result=None)
                     atomic_json(path, record)
-                elif record["state"] in {"failed", "cancelled"}:
+                elif record["state"] in {"failed", "cancelled"} and not record.get('hqBinding'):
                     cleanup_error = self._cleanup_incomplete(path.stem)
                     if cleanup_error and cleanup_error not in (record.get("error") or ""):
                         record["error"] = "；".join(filter(None, (record.get("error"), cleanup_error)))
                         atomic_json(path, record)
+                if record.get('hqBinding'):
+                    if record['state'] != 'complete':
+                        self._quarantine_hq_outputs(record)
+                    elif record['id'] not in committed_history_deletions(self.config.dream_root):
+                        try:
+                            self._recover_hq_publication(record)
+                        except (OSError, ValueError, KeyError) as exc:
+                            self._quarantine_hq_outputs(record)
+                            record.update(state='failed', result=None, error='HQ_OUTPUT_INVALID', errorCode='HQ_OUTPUT_INVALID')
+                            atomic_json(path, record)
                 self._jobs[path.stem] = record
             except (OSError, ValueError):
                 continue
@@ -956,6 +986,46 @@ class IdentityService:
             self._jobs[job_id] = updated
             return copy.deepcopy(updated)
 
+    def _hq_unpublished(self, record):
+        hq_id = record['hqBinding']['hqJobId']
+        if self.hq_child_id(hq_id) != record['id']:
+            raise DreamApiError('HQ_BINDING_INVALID', 'HQ 子任务归属无效')
+        folder = self.config.dream_root / 'data' / 'hq' / 'jobs' / hq_id / 'unpublished'
+        return validate_history_path(self.config.dream_root, folder / '.boundary').parent
+
+    def _quarantine_hq_outputs(self, record):
+        """Keep failed/interrupted files, but outside Runtime.history's scan roots."""
+        folder = self._hq_unpublished(record)
+        folder.mkdir(parents=True, exist_ok=True)
+        output_root = self.config.dream_root / 'outputs'
+        for source in output_root.glob(f"*/{record['id']}.*"):
+            if source.suffix not in {'.png', '.json'} or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', source.parent.name):
+                continue
+            source = validate_history_path(self.config.dream_root, source)
+            target = validate_history_path(self.config.dream_root, folder / source.name)
+            if target.exists():
+                target = validate_history_path(self.config.dream_root, folder / (source.parent.name + '-' + source.name))
+                if target.exists():
+                    raise DreamApiError('HQ_ARTIFACT_CONFLICT', '已有未发布产物重名，保留现场并停止恢复')
+            try:
+                os.replace(source, target)
+            except OSError as exc:
+                raise DreamApiError('HQ_QUARANTINE_FAILED', '无法隔离未发布的 HQ 产物，停止恢复以保护历史一致性') from exc
+
+    def _recover_hq_publication(self, record):
+        """Finish only an already-committed publication; never invoke a worker."""
+        metadata = record['result']['metadata']
+        output = validate_history_path(self.config.dream_root, Path(metadata['output']))
+        relative = output.relative_to(self.config.dream_root.resolve())
+        if (len(relative.parts) != 3 or relative.parts[0] != 'outputs'
+                or output.name != record['id'] + '.png' or not output.is_file()
+                or output.stat().st_size > 32 * 1024 * 1024
+                or hashlib.sha256(output.read_bytes()).hexdigest() != metadata['hq']['output']['sha256']):
+            raise ValueError('HQ committed output is missing or changed')
+        sidecar = validate_history_path(self.config.dream_root, output.with_suffix('.json'))
+        if not sidecar.exists():
+            atomic_json(sidecar, metadata)
+
     @staticmethod
     def _stop_owned(process: subprocess.Popen) -> None:
         if process.poll() is None:
@@ -965,6 +1035,61 @@ class IdentityService:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+
+    @property
+    def gpu_release_blocked(self) -> bool:
+        with self._lock:
+            return bool(self._pending_release)
+
+    def _wait_owned_release(self, process, lifetime) -> None:
+        """Never release the current shared GPU queue slot without verified exit."""
+        while True:
+            try:
+                # The venv launcher may exit before its real child. Confirm the whole owned job first.
+                if lifetime is not None:
+                    lifetime.close()
+                self._stop_owned(process)
+                if process.poll() is None:
+                    raise RuntimeError('Owned worker still alive')
+            except Exception:
+                with self._lock:
+                    self._pending_release.add(id(process))
+                time.sleep(.25)
+                continue
+            with self._lock:
+                self._pending_release.discard(id(process))
+            return
+
+    @staticmethod
+    def _hq_worker_handshake(process, lifetime, cancelled):
+        hello = queue.Queue(maxsize=1)
+        def receive():
+            try:
+                hello.put(process.stdout.readline(4097))
+            except Exception:
+                hello.put(b'')
+        threading.Thread(target=receive, daemon=True).start()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if cancelled.is_set():
+                raise WorkerCancelled()
+            try:
+                line = hello.get(timeout=.05)
+            except queue.Empty:
+                if process.poll() is not None:
+                    break
+                continue
+            try:
+                message = json.loads(line)
+                if len(line) > 4096 or message.get('workerReady') is not True:
+                    raise ValueError()
+                lifetime.confirm_worker(message['pid'])
+                process.stdin.write(b'{"workerContinue":true}\n')
+                process.stdin.flush()
+                return
+            except (ValueError, TypeError, KeyError):
+                break
+        raise DreamApiError('HQ_WORKER_HANDSHAKE', 'HQ 人物子进程所有权确认失败')
 
     def _worker(self, operation: str, payload: dict[str, Any], cancelled: threading.Event | None = None) -> dict[str, Any]:
         cancelled = cancelled if cancelled is not None else threading.Event()
@@ -1008,7 +1133,7 @@ class IdentityService:
                 raise ValueError("人物运行配置中的 python 必须是解释器路径")
             # Explicit deployment opt-in until real CUDA performance acceptance.
             # Both dispatch modes use the same serialized queue and journal.
-            if operation in {"generate", "batch"} and settings.get("persistentWorker") is True:
+            if operation in {"generate", "batch"} and settings.get("persistentWorker") is True and not payload.get('hqConditioning'):
                 batch = payload if operation == "batch" else {
                     "items": [payload], "configPath": str(self.config_path),
                     "dreamRoot": str(self.config.dream_root), "previewEvery": 0,
@@ -1036,6 +1161,9 @@ class IdentityService:
                 request_path, result_path = folder / "request.json", folder / "result.json"
                 atomic_json(request_path, payload)
                 command = [python, str(Path(__file__).with_name("identity_worker.py")), "--operation", operation, "--request", str(request_path), "--result", str(result_path)]
+                trusted_hq = operation == 'generate' and bool(payload.get('hqConditioning'))
+                if trusted_hq:
+                    command.append('--ownership-handshake')
                 env = os.environ.copy()
                 env["DREAM_IDENTITY_CONFIG"] = str(self.config_path)
                 env["PYTHONIOENCODING"] = "utf-8"
@@ -1054,8 +1182,13 @@ class IdentityService:
                 logs.mkdir(parents=True, exist_ok=True)
                 with (logs / f"{folder.name}.err.log").open("w+b") as error_log:
                     try:
-                        process = subprocess.Popen(command, cwd=str(self.config.dream_root), env=env, stdout=subprocess.DEVNULL, stderr=error_log, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                        lifetime = WorkerLifetime(process)
+                        process = subprocess.Popen(command, cwd=str(self.config.dream_root), env=env,
+                                                   stdin=subprocess.PIPE if trusted_hq else None,
+                                                   stdout=subprocess.PIPE if trusted_hq else subprocess.DEVNULL,
+                                                   stderr=error_log, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                        lifetime = WorkerLifetime(process, awaiting_worker=True) if trusted_hq else WorkerLifetime(process)
+                        if trusted_hq:
+                            self._hq_worker_handshake(process, lifetime, cancelled)
                         deadline = time.monotonic() + (900 * len(payload["items"]) if operation == "batch" else 900 if operation in {"generate", "refine", "fusion"} else 120)
                         while True:
                             consume_events()
@@ -1072,11 +1205,18 @@ class IdentityService:
                         if cancelled is not None and cancelled.is_set():
                             raise WorkerCancelled()
                         if process.returncode != 0:
+                            failure = {}
                             try:
                                 failure = read_json(result_path)
                                 detail = failure.get("message") or failure.get("error")
                             except (OSError, ValueError):
                                 detail = None
+                            if trusted_hq:
+                                problem = failure.get('error') if isinstance(failure.get('error'), dict) else failure
+                                code = problem.get('code', 'IDENTITY_WORKER_FAILED')
+                                if not isinstance(code, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{1,63}', code):
+                                    code = 'IDENTITY_WORKER_FAILED'
+                                raise DreamApiError(code, str(problem.get('message') or 'HQ 人物生成失败')[:600])
                             error_log.seek(0, 2)
                             error_log.seek(max(0, error_log.tell() - 8192))
                             raise RuntimeError(str(detail or error_log.read().decode("utf-8", errors="replace") or "人物工作进程运行失败"))
@@ -1084,13 +1224,15 @@ class IdentityService:
                     finally:
                         try:
                             if process is not None:
-                                self._stop_owned(process)
+                                self._wait_owned_release(process, lifetime)
                             # The child may finish one atomic output just before
                             # cancellation; consume its completion before cleanup.
                             consume_events(drain=True)
                         finally:
-                            if lifetime is not None:
-                                lifetime.close()
+                            if process is not None:
+                                for stream in (getattr(process, 'stdin', None), getattr(process, 'stdout', None)):
+                                    if stream is not None:
+                                        stream.close()
         except PersistentWorkerCancelled as exc:
             raise WorkerCancelled() from exc
         except WorkerCancelled:
@@ -1246,6 +1388,89 @@ class IdentityService:
             atomic_json(self._job_path(job_id), record)
             self._jobs[job_id] = record
             atomic_json(self._safe(self.root / "jobs" / "index.json"), {"ids": list(self._jobs)})
+            self._cancel[job_id] = threading.Event()
+            self._futures[job_id] = self.job_runner.submit_serial(self._execute, job_id)
+            return copy.deepcopy(record)
+
+    @staticmethod
+    def hq_child_id(hq_job_id: str) -> str:
+        if not isinstance(hq_job_id, str) or re.fullmatch(r'hq-[a-f0-9]{64}', hq_job_id) is None:
+            raise DreamApiError('HQ_JOB_INVALID', 'HQ 任务编号无效', status_code=422)
+        return 'identity-' + hashlib.sha256(('hq-identity-v1\0' + hq_job_id).encode()).hexdigest()[:24]
+
+    def _validate_hq_binding(self, hq_job_id, request, conditioning, request_digest, *, original_record=None):
+        """Trusted server-only input, still bound to the HQ owner's durable original copies."""
+        folder = self.config.dream_root / 'data' / 'hq' / 'jobs' / hq_job_id
+        record = original_record if original_record is not None else read_json(
+            validate_history_path(self.config.dream_root, folder / 'record.json'))
+        if record.get('id') != hq_job_id or record.get('requestDigest') != request_digest:
+            raise DreamApiError('HQ_BINDING_INVALID', 'HQ 任务归属不匹配', status_code=409)
+        if request.modelId != 'realistic-vision-v5.1-faceid' or request.animeProfileId:
+            raise DreamApiError('HQ_MODEL_UNSUPPORTED', 'HQ 换装仅支持现有 RV FaceID 人物管线', status_code=422)
+        if not isinstance(conditioning, dict) or set(conditioning.get('inputs', {})) != {'person', 'garment', 'pose'}:
+            raise DreamApiError('HQ_BINDING_INVALID', 'HQ 必须绑定三张角色明确的原图', status_code=422)
+        for role, item in conditioning['inputs'].items():
+            saved = next((row for row in record['inputs'] if row['role'] == role), None)
+            if not saved or item.get('id') != saved['id'] or item.get('sha256') != saved['sha256']:
+                raise DreamApiError('HQ_BINDING_INVALID', 'HQ 原图编号或哈希与任务不匹配', status_code=409)
+            suffix = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}.get(saved['mime'])
+            expected = folder / 'inputs' / (role + (suffix or '.invalid'))
+            path = validate_history_path(self.config.dream_root, Path(item.get('path', '')))
+            if path.resolve() != expected.resolve() or not path.is_file() or not 0 < path.stat().st_size <= 8 * 1024 * 1024:
+                raise DreamApiError('HQ_BINDING_INVALID', 'HQ 原图路径无效', status_code=422)
+            if hashlib.sha256(path.read_bytes()).hexdigest() != saved['sha256']:
+                raise DreamApiError('HQ_HASH_MISMATCH', 'HQ 本地原图哈希已改变', status_code=422)
+        for field, filename in (('auditPath', 'audit.json'), ('eventPath', 'events.jsonl'), ('cancelPath', 'cancel.flag')):
+            path = validate_history_path(self.config.dream_root, Path(conditioning.get(field, '')))
+            if path.resolve() != (folder / filename).resolve():
+                raise DreamApiError('HQ_BINDING_INVALID', 'HQ 审计或进度路径无效', status_code=422)
+        settings = read_json(self.config.dream_root / 'data' / 'hq' / 'config.json', 16384)
+        if Path(conditioning.get('configPath', '')).resolve() != Path(settings['pipelineConfig']).resolve():
+            raise DreamApiError('HQ_BINDING_INVALID', 'HQ 模型配置路径无效', status_code=422)
+        original = Path(conditioning['inputs']['person']['path'])
+        reference = self.reference_image(request.referenceId)
+        if hq_pixel_fingerprint(original) != hq_pixel_fingerprint(reference):
+            raise DreamApiError('HQ_PERSON_MISMATCH', 'R2 人物原图与档案参考图像素不一致，未切换人物', status_code=409)
+        return record
+
+    @owned_operation
+    def submit_hq(self, *, hq_job_id: str, request_digest: str, request: IdentityGenerateRequest,
+                  conditioning: dict[str, Any]) -> dict[str, Any]:
+        """No HTTP route accepts conditioning paths. Exactly one deterministic identity child."""
+        self._ensure_recovered()  # Also enforced by owned_operation; make the durable replay boundary explicit.
+        request = IdentityGenerateRequest.model_validate(request)
+        job_id = self.hq_child_id(hq_job_id)
+        data = request.model_dump()
+        if data['seed'] == 'random':
+            raise DreamApiError('HQ_BINDING_INVALID', 'HQ 任务必须冻结明确种子', status_code=422)
+        binding = {'hqJobId': hq_job_id, 'requestDigest': request_digest}
+        with self._lock:
+            self._require_open()
+            prior = self._jobs.get(job_id)
+            if prior is not None:
+                if prior.get('hqBinding') != binding or prior.get('request') != data or prior.get('hqConditioning') != conditioning:
+                    raise DreamApiError('IDEMPOTENCY_CONFLICT', 'HQ 子任务已绑定另一组参数或素材', status_code=409)
+                return copy.deepcopy(prior)
+            if self._job_path(job_id).exists():
+                # Recovery may reject a malformed journal. Its existence still
+                # proves a prior attempt; never overwrite it to run inference.
+                raise DreamApiError('HQ_CHILD_RECORD_INVALID', '已有 HQ 人物子任务记录无法恢复，禁止自动重新推理', status_code=409)
+            original_record = self._validate_hq_binding(hq_job_id, request, conditioning, request_digest)
+            self._require_model_enabled(request.modelId)
+            self._validate_face(request.referenceId, request.faceIndex, 'faceid')
+            self._require_visual_polish_ready(data)
+            self.anime_profiles.resolve_request(data)
+            record = {'id': job_id, 'state': 'queued', 'progress': 0, 'message': '等待本地人物生成队列',
+                      'request': data, 'result': None, 'error': None, 'hqBinding': binding,
+                      'hqConditioning': copy.deepcopy(conditioning),
+                      # Freeze the verified receipt before dispatch. Re-reading HQ's
+                      # mutable progress journal races os.replace on Windows.
+                      'hqInputSnapshot': {key: copy.deepcopy(original_record[key])
+                                          for key in ('id', 'requestDigest', 'inputs')}}
+            # Journal child identity BEFORE dispatch. Recovery never resubmits it.
+            atomic_json(self._job_path(job_id), record)
+            self._jobs[job_id] = record
+            atomic_json(self._safe(self.root / 'jobs' / 'index.json'), {'ids': list(self._jobs)})
             self._cancel[job_id] = threading.Event()
             self._futures[job_id] = self.job_runner.submit_serial(self._execute, job_id)
             return copy.deepcopy(record)
@@ -1424,6 +1649,7 @@ class IdentityService:
 
     def _execute(self, job_id: str) -> None:
         output = metadata = None
+        hq_event_path = None
         cancelled = self._cancel[job_id]
         try:
             if cancelled.is_set():
@@ -1432,13 +1658,24 @@ class IdentityService:
             self.job_runner.release_native_for_identity()
             if cancelled.is_set():
                 raise WorkerCancelled()
-            folder = self._safe(self.config.dream_root / "outputs" / date.today().isoformat())
+            binding = self._jobs[job_id].get('hqBinding')
+            folder = (self._hq_unpublished(self._jobs[job_id]) if binding else
+                      self._safe(self.config.dream_root / "outputs" / date.today().isoformat()))
             output = self._safe(folder / f"{job_id}.png")
             metadata = self._safe(folder / f"{job_id}.json")
             folder.mkdir(parents=True, exist_ok=True)
             payload = {**request, "imagePath": str(self.reference_image(request["referenceId"])), "outputPath": str(output), "metadataPath": str(metadata), "jobId": job_id, "dreamRoot": str(self.config.dream_root), "configPath": str(self.config_path)}
             payload.update(self.anime_profiles.resolve_request(request))
             self.bind_anime_dispatch(job_id,payload)
+            if binding:
+                conditioning = copy.deepcopy(self._jobs[job_id]['hqConditioning'])
+                self._validate_hq_binding(binding['hqJobId'], IdentityGenerateRequest.model_validate(request),
+                                          conditioning, binding['requestDigest'],
+                                          original_record=self._jobs[job_id]['hqInputSnapshot'])
+                payload['hqConditioning'] = conditioning
+                hq_event_path = conditioning['eventPath']
+                payload['eventPath'] = hq_event_path
+                self._event_callbacks[hq_event_path] = lambda event: self._hq_progress(job_id, event)
             self._update(job_id, state="sampling", progress=20, message="正在运行人物工作进程")
             self._worker("generate", payload, cancelled)
             with Image.open(output) as image:
@@ -1447,14 +1684,79 @@ class IdentityService:
                 image.verify()
             value = read_json(metadata)
             self._validate_face_polish(job_id, request, value)
+            if binding:
+                self._validate_hq_output(job_id, request, value, output)
             value.update({"id": job_id, "model_id": request.get('modelId', 'realistic-vision-v5.1-faceid'), "identity": request, "output": str(output), "prompt": request["prompt"], "negative_prompt": request["negativePrompt"], "seed": request["seed"], "width": request["width"], "height": request["height"], "steps": request["steps"], "cfg": request["cfg"], "generated_at": datetime.now().astimezone().isoformat()})
             with self._lock:
                 if cancelled.is_set():
                     raise WorkerCancelled()
+                if binding:
+                    # The worker writes only in private staging. Publish history's
+                    # metadata last, after validation, process exit and a durable
+                    # complete ledger, so its independent scanner cannot invent success.
+                    destination = validate_history_path(self.config.dream_root,
+                        self.config.dream_root / 'outputs' / date.today().isoformat() / f'{job_id}.png')
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    sidecar = validate_history_path(self.config.dream_root, destination.with_suffix('.json'))
+                    if destination.exists() or sidecar.exists():
+                        raise DreamApiError('HQ_OUTPUT_EXISTS', '已有作品同名，禁止覆盖')
+                    value['hq']['publication'] = {'workerOutputPath': str(output), 'outputPath': str(destination)}
+                    value['hq']['output']['path'] = str(destination)
+                    value['output'] = str(destination)
+                    atomic_json(Path(self._jobs[job_id]['hqConditioning']['auditPath']), value['hq'])
+                    atomic_json(metadata, value)
+                    os.replace(output, destination)
+                    self._update(job_id, state='complete', progress=100, message='生成完成',
+                                 result={'imageUrl': f'/api/history/{job_id}/image', 'metadata': value})
+                    os.replace(metadata, sidecar)
+                    return
                 atomic_json(metadata, value)
                 self._update(job_id, state="complete", progress=100, message="生成完成", result={"imageUrl": f"/api/history/{job_id}/image", "metadata": value})
         except Exception as exc:
-            cleanup_error = self._cleanup_incomplete(job_id, metadata, output)
+            if self._jobs[job_id].get('hqBinding'):
+                self._quarantine_hq_outputs(self._jobs[job_id])
+                cleanup_error = None
+            else:
+                cleanup_error = self._cleanup_incomplete(job_id, metadata, output)
             is_cancelled = cancelled.is_set() or isinstance(exc, WorkerCancelled)
             error = "；".join(filter(None, (None if is_cancelled else f"人物生成失败：{exc}", cleanup_error))) or None
-            self._update(job_id, state="cancelled" if is_cancelled else "failed", progress=0, message="已取消生成" if is_cancelled else "人物生成失败", result=None, error=error)
+            self._update(job_id, state="cancelled" if is_cancelled else "failed", progress=0, message="已取消生成" if is_cancelled else "人物生成失败", result=None, error=error,
+                         errorCode='CANCELLED' if is_cancelled else getattr(exc, 'code', 'IDENTITY_WORKER_FAILED'))
+        finally:
+            if hq_event_path:
+                self._event_callbacks.pop(hq_event_path, None)
+
+    def _hq_progress(self, job_id, event):
+        if event.get('jobId') != job_id or self._cancel[job_id].is_set():
+            return
+        changes = {}
+        if isinstance(event.get('stage'), str):
+            changes['message'] = event['stage'][:160]
+        step, total = event.get('step'), self._jobs[job_id]['request']['steps']
+        if type(step) is int and 0 <= step <= total:
+            changes['progress'] = min(95, 20 + 75 * step / total)
+        if changes:
+            self._update(job_id, **changes)
+
+    def _validate_hq_output(self, job_id, request, metadata, output):
+        audit = metadata.get('hq')
+        if (not isinstance(audit, dict) or audit.get('schemaVersion') != 2
+                or audit.get('pipeline') != 'identity-session-hq-sd15-v1'
+                or audit.get('status') != 'completed' or audit.get('jobId') != job_id):
+            raise DreamApiError('HQ_AUDIT_INVALID', 'HQ 人物管线未返回完整三图绑定审计')
+        expected = self._jobs[job_id]['hqConditioning']
+        for role, item in expected['inputs'].items():
+            bound = audit.get('inputs', {}).get(role, {})
+            actual = audit.get('conditioning', {}).get(role, {}).get('actualConditioning', {})
+            if (bound.get('id') != item['id'] or bound.get('sha256') != item['sha256']
+                    or actual.get('observed') is not True or type(actual.get('forwardCalls')) is not int
+                    or actual['forwardCalls'] != request['steps']
+                    or re.fullmatch(r'[a-f0-9]{64}', str(actual.get('sha256', ''))) is None):
+                raise DreamApiError('HQ_AUDIT_INVALID', 'HQ 三图角色或真实采样绑定与请求不匹配')
+        digest = hashlib.sha256(output.read_bytes()).hexdigest()
+        if (audit.get('output', {}).get('sha256') != digest
+                or any(audit['output'].get(key) != request[key] for key in ('width', 'height'))):
+            raise DreamApiError('HQ_HASH_MISMATCH', 'HQ 成片哈希或尺寸与审计不匹配')
+        independent = read_json(Path(expected['auditPath']))
+        if independent != audit:
+            raise DreamApiError('HQ_AUDIT_INVALID', 'HQ 独立审计与人物结果元数据不一致')

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -76,8 +77,8 @@ class FakeRuntime:
         return {"id": experiment_id, "kind": "fusion", "seed": 42, "lockedFields": ["seed", "modelId"], "variants": [], "status": "running"}
 
 
-def test_dream_api_exposes_browser_contract():
-    config = DreamServerConfig.for_testing()
+def test_dream_api_exposes_browser_contract(tmp_path: Path):
+    config = replace(DreamServerConfig.for_testing(), dream_root=tmp_path / "Dream")
     client = TestClient(create_app(config=config, runtime=FakeRuntime()))
 
     assert client.get("/api/health").json()["service"] == "dream-web"

@@ -2,6 +2,8 @@
   "schemaVersion": 1,
   "powershell7": [
     "scripts/diagnose_dream_web.ps1",
-    "scripts/start_dream_web_background.ps1"
+    "scripts/start_dream_web_background.ps1",
+    "scripts/stop_dream_web.ps1",
+    "scripts/tests/stop_dream_web.test.ps1"
   ]
 }

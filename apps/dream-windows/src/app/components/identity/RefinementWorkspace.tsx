@@ -161,6 +161,14 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
   const selected = versions.find(item => item.id === data?.selectedVersionId);
   const imageKey = (item: RefinementVersion) => `${item.id}:${item.imageUrl}`;
   const readable = (item: RefinementVersion) => item.state === "complete" && !!item.imageUrl && !brokenImages.has(imageKey(item));
+  let downloadUrl = "";
+  if (selected && readable(selected)) {
+    try {
+      const url = new URL(selected.imageUrl!, window.location.href);
+      if (url.origin === window.location.origin && ["http:", "https:"].includes(url.protocol) && !url.username && !url.password) downloadUrl = url.href;
+    } catch { /* Only readable same-origin images can be saved here. */ }
+  }
+  const downloadName = `${sourceJobId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100)}-${(selected?.id || "version").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100)}.png`;
   const modes = data ? availableModes(data) : [];
   const hasActive = versions.some(active);
   const edgeLighting = mode === "edge-lighting";
@@ -202,7 +210,9 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
               {selected?.imageUrl && brokenImages.has(imageKey(selected)) && <button type="button" className="secondary-button"
                 onClick={() => setBrokenImages(previous => { const next = new Set(previous); next.delete(imageKey(selected)); return next; })}>重试当前图像</button>}
             </div>}
-          <figcaption>当前父图：{versionLabel(data.selectedVersionId)} · 点击图像查看原尺寸</figcaption>
+          <figcaption>当前父图：{versionLabel(data.selectedVersionId)} · 点击图像查看原尺寸
+            {downloadUrl && <a className="secondary-button refinement-download" href={downloadUrl} download={downloadName}>下载当前版本</a>}
+          </figcaption>
         </figure>
         <form className="refinement-form" onSubmit={event => { event.preventDefault(); submit(); }}>
           <fieldset disabled={formDisabled}><legend>下一轮精修</legend>

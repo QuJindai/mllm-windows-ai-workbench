@@ -1,17 +1,24 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App";
 import { DreamProviderContext } from "./providers";
 import { MockDreamProvider } from "../providers/MockDreamProvider";
 
 describe("Dream app shell", () => {
-  it("shows the six primary navigation entries and mock hardware status", async () => {
+  it("shows navigation while hardware is pending and labels the mock status only after its response", async () => {
+    const provider = new MockDreamProvider();
+    const hardware = await provider.getHardware();
+    let releaseHardware!: () => void;
+    const pending = new Promise<void>(resolve => { releaseHardware = resolve; });
+    vi.spyOn(provider, "getHardware").mockImplementation(async () => { await pending; return hardware; });
     render(
-      <DreamProviderContext.Provider value={new MockDreamProvider()}>
+      <DreamProviderContext.Provider value={provider}>
         <App />
       </DreamProviderContext.Provider>,
     );
 
-    await waitFor(() => expect(screen.getByText("硬件状态")).toBeVisible());
+    expect(screen.getByText("硬件状态")).toBeVisible();
+    expect(screen.getByText("等待采样")).toBeVisible();
+    expect(screen.queryByText("演示 / 模拟")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "生成" })).toBeVisible();
     for (const label of ["生成", "模型", "历史", "实验室", "显微镜", "设置"]) {
       const navigationButton = screen.getByRole("button", { name: label });
@@ -19,17 +26,14 @@ describe("Dream app shell", () => {
       expect(navigationButton).toHaveAttribute("aria-label", label);
       expect(navigationButton).toHaveAttribute("title", label);
     }
+    await act(async () => releaseHardware());
     expect(screen.getByText("演示 / 模拟")).toBeVisible();
   });
 
   it("keeps the monitoring warning visible while submitting generation after a probe failure", async () => {
-    class HardwareFailureProvider extends MockDreamProvider {
-      override async getHardware(): Promise<never> {
-        throw new Error("Hardware probe failed");
-      }
-    }
-
-    const provider = new HardwareFailureProvider();
+    const provider = new MockDreamProvider();
+    let rejectHardware!: (reason: Error) => void;
+    vi.spyOn(provider, "getHardware").mockReturnValue(new Promise<never>((_resolve, reject) => { rejectHardware = reject; }));
     const generate = vi.spyOn(provider, "generate");
     render(
       <DreamProviderContext.Provider value={provider}>
@@ -37,7 +41,9 @@ describe("Dream app shell", () => {
       </DreamProviderContext.Provider>,
     );
 
-    const warning = await screen.findByRole("alert", { name: "硬件监控提示" });
+    const warning = screen.getByRole("alert", { name: "硬件监控提示" });
+    expect(warning).toHaveTextContent("尚无有效硬件采样");
+    await act(async () => rejectHardware(new Error("Hardware probe failed")));
     expect(warning).toHaveTextContent("Hardware probe failed");
     expect(screen.getByRole("button", { name: "生成图像" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "生成图像" }));

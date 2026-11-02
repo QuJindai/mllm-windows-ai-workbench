@@ -29,12 +29,15 @@ def test_worker_missing_config_has_structured_failure(tmp_path):
 def test_worker_does_not_leak_exception_paths(tmp_path):
     worker = Path(__file__).resolve().parents[1] / 'identity_worker.py'
     request, result = tmp_path / 'request.json', tmp_path / 'result.json'
-    request.write_text('{}')
+    runtime = tmp_path / 'runtime.json'
+    runtime.write_text(json.dumps({'insightfaceRoot': str(tmp_path / 'private-face-models')}))
+    request.write_text(json.dumps({'configPath': str(runtime)}))
     run = subprocess.run([sys.executable, str(worker), '--operation', 'inspect', '--request', str(request), '--result', str(result)], capture_output=True, text=True, encoding='utf-8')
     assert run.returncode != 0
     assert result.exists(), run.stderr
     body = json.loads(result.read_text(encoding='utf-8'))
     assert body['ok'] is False and body['code'] == 'IDENTITY_WORKER_FAILED'
+    assert str(tmp_path) not in body['message']
 
 
 def test_select_face_is_sorted_and_checks_range():

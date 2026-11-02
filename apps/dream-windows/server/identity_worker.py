@@ -15,6 +15,10 @@ def load_config(request, *, operation='generate'):
     config = json.loads(path.read_text(encoding='utf-8-sig'))
     if operation in ('status', 'fusion'):
         return config
+    if operation == 'refine' and request.get('editSettings', {}).get('mode') == 'upscale':
+        # The independent final enhancement consumes only its own local model.
+        # Completed images remain usable even when their base model is disabled.
+        return config
     from identity_models import DEFAULT_MODEL_ID, ILLUSTRIOUS_MODEL_ID, resolve_identity_model, validate_extraction_assets
     if operation in ('inspect', 'prepare', 'anime_prepare'):
         kind = request.get('referenceKind', 'faceid') if operation != 'anime_prepare' else 'faceid'
@@ -73,9 +77,15 @@ def main():
             if not isinstance(continuation, dict) or continuation.get('workerContinue') is not True:
                 raise ValueError('HQ worker ownership continuation rejected')
         config = load_config(request, operation=args.operation)
-        if args.operation not in ('refine', 'fusion'):
+        upscale_probe = args.operation == 'status' and request.get('capability') == 'upscale'
+        if args.operation not in ('refine', 'fusion') and not upscale_probe:
             from identity_pipeline import generate, inspect_reference, registered_loras, prepare, generate_batch
-        if args.operation == 'status':
+        if upscale_probe:
+            # Pure file/spec checks in the configured worker environment. No
+            # generation, face model, CUDA initialization, or model weights.
+            from identity_upscale import upscale_status
+            result = {'upscale': upscale_status(config)}
+        elif args.operation == 'status':
             require_dependencies()
             from identity_face_polish import face_polish_status
             from identity_models import identity_model_catalog, is_visual_model_id

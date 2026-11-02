@@ -35,10 +35,18 @@ export const hqStateLabels: Record<HQJobState, string> = {
 export const hqActive = (job: HQJob) => job.state === "queued" || job.state === "running";
 export const hqError = (error?: HQError) => typeof error === "string" ? error : [error?.code, error?.message].filter(Boolean).join(" · ");
 export const defaultHQParameters: HQParameters = { seed: 0, width: 512, height: 768, steps: 24 };
+export const hqResolutionPresets = [
+  { width: 512, height: 768, label: "标准 512×768" },
+  { width: 640, height: 960, label: "清晰 640×960" },
+  { width: 768, height: 1152, label: "高清 768×1152" },
+  { width: 768, height: 512, label: "标准横版 768×512" },
+  { width: 960, height: 640, label: "清晰横版 960×640" },
+  { width: 1152, height: 768, label: "高清横版 1152×768" },
+] as const;
 export const defaultHQIdentity = { facePolish: false, faceRestoreStrength: 0.35 };
 export const hqExecutionBasis = "identity-session-hq-sd15-v1";
 export function validHQParameters(p: HQParameters) {
   return Number.isInteger(p.seed) && p.seed >= 0 && p.seed <= 2147483647
-    && [p.width, p.height].every(n => Number.isInteger(n) && n >= 256 && n <= 768 && n % 64 === 0)
-    && p.width * p.height <= 393216 && Number.isInteger(p.steps) && p.steps >= 1 && p.steps <= 50;
+    && [p.width, p.height].every(n => Number.isInteger(n) && n >= 256 && n <= 1152 && n % 64 === 0)
+    && p.width * p.height <= 884736 && Number.isInteger(p.steps) && p.steps >= 1 && p.steps <= 50;
 }

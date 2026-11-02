@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultHQParameters, hqExecutionBasis, validHQParameters } from "../domain/hq-tryon";
 import type { HQJob } from "../domain/hq-tryon";
-import { hqApi, hqJobFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, saveHQOperation, writeHQDraft } from "./hq-tryon-api";
+import { hqApi, hqJobFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, reserveHQRetry, saveHQOperation, writeHQDraft } from "./hq-tryon-api";
 
 const bytes = Uint8Array.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63606060000000040001f61738550000000049454e44ae426082".match(/../g)!, value => parseInt(value, 16));
 const sha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), n => n.toString(16).padStart(2, "0")).join("");
@@ -17,6 +17,74 @@ beforeEach(() => { vi.stubGlobal("sessionStorage", new MemoryStorage()); vi.stub
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("local HQ API boundary", () => {
+  it("advances only an authoritative terminal retry to a uniquely newer job with the same execution basis and settings", () => {
+    const b: HQJob = { ...job, id: "hq-b", state: "failed", idempotencyKey: "hq-attempt-b", createdAt: "2026-11-02T03:00:00.123455+00:00", parameters: body.parameters,
+      requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId } };
+    const c: HQJob = { ...b, id: "hq-c", state: "succeeded", idempotencyKey: "hq-attempt-c", createdAt: "2026-11-02T04:00:00.123456+01:00" };
+    const receipt = { fingerprint: hqJobFingerprint(b)!, jobId: b.id, idempotencyKey: b.idempotencyKey!, retryOf: "hq-a", delivery: "submitted" as const };
+    const snapshots: HQJob[][] = [
+      [c], [{ ...b, state: "running" }, c], [{ ...b, createdAt: undefined }, c], [b, { ...c, createdAt: undefined }],
+      [b, { ...c, createdAt: b.createdAt }], [b, { ...c, createdAt: "2026-10-01T00:00:00Z" }], [b, { ...c, createdAt: "2027-02-30T00:00:00Z" }],
+      [b, { ...c, pipeline: "old-pipeline" }], [b, { ...c, identityJobId: null }], [b, { ...c, parameters: { ...body.parameters, seed: 1 } }],
+      [b, c, { ...c, id: "hq-d", idempotencyKey: "hq-attempt-d" }],
+    ];
+    for (const jobs of snapshots) {
+      vi.stubGlobal("localStorage", new MemoryStorage()); saveHQOperation(receipt);
+      expect(reconcileHQOperations(jobs).find(row => row.fingerprint === receipt.fingerprint)).toEqual(receipt);
+    }
+    for (const delivery of ["prepared", "unknown"] as const) {
+      const pending = { ...receipt, jobId: undefined, delivery };
+      saveHQOperation(pending);
+      expect(reconcileHQOperations([c])[0]).toEqual(pending);
+    }
+    saveHQOperation(receipt);
+    expect(reconcileHQOperations([b, c])[0]).toMatchObject({ jobId: c.id, idempotencyKey: c.idempotencyKey, retryOf: b.id });
+    expect(reconcileHQOperations([b])[0].jobId).toBe(c.id);
+    expect(() => saveHQOperation(receipt)).toThrow("请求回执已更新");
+  });
+
+  it.each(["failed", "cancelled"] as const)("fences an explicit %s retry from old reconciliation and late receipts across sessions", async state => {
+    const old: HQJob = { ...job, state, parameters: body.parameters, requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId }, idempotencyKey: "hq-original-failed-attempt" };
+    const original = reserveHQOperation(body, [old]);
+    const fresh = await reserveHQRetry(body, [old], original.idempotencyKey);
+    expect(fresh.idempotencyKey).not.toBe(original.idempotencyKey);
+    expect(fresh).toMatchObject({ fingerprint: original.fingerprint, retryOf: old.id, delivery: "prepared" });
+    expect(fresh.jobId).toBeUndefined();
+    saveHQOperation({ ...fresh, delivery: "unknown" });
+    vi.stubGlobal("sessionStorage", new MemoryStorage());
+    expect(reserveHQOperation(body, [old])).toMatchObject({ idempotencyKey: fresh.idempotencyKey, delivery: "unknown" });
+    expect(() => saveHQOperation(original)).toThrow("请求回执已更新");
+    await expect(reserveHQRetry(body, [old], original.idempotencyKey)).rejects.toThrow("请求回执已更新");
+    const created: HQJob = { ...old, id: "hq-explicit-retry", state: "queued", idempotencyKey: fresh.idempotencyKey };
+    expect(reconcileHQOperations([old, created])[0]).toMatchObject({ idempotencyKey: fresh.idempotencyKey, jobId: created.id, delivery: "submitted" });
+    expect(reconcileHQOperations([old])[0].jobId).toBe(created.id);
+    expect(old.state).toBe(state);
+    // An independent browser looking at the same terminal also submits the same successor key.
+    vi.stubGlobal("localStorage", new MemoryStorage());
+    expect((await reserveHQRetry(body, [old], original.idempotencyKey)).idempotencyKey).toBe(fresh.idempotencyKey);
+    const nextFailed = { ...created, state: "failed" as const };
+    expect((await reserveHQRetry(body, [old, nextFailed], fresh.idempotencyKey)).idempotencyKey).not.toBe(fresh.idempotencyKey);
+  });
+
+  it.each(["queued", "running", "succeeded"] as const)("cannot allocate an explicit retry for a %s job", async state => {
+    const current: HQJob = { ...job, state, cancellationRequested: state === "running", parameters: body.parameters,
+      requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId }, idempotencyKey: "hq-original-live-attempt" };
+    const receipt = reserveHQOperation(body, [current]);
+    const digest = vi.spyOn(crypto.subtle, "digest");
+    await expect(reserveHQRetry(body, [current], receipt.idempotencyKey)).rejects.toThrow("失败或已取消");
+    expect(digest).not.toHaveBeenCalled();
+    expect(readHQOperations()).toEqual([receipt]);
+  });
+
+  it("requires matching settings and refuses retry when another matching attempt is still active", async () => {
+    const old: HQJob = { ...job, state: "failed", parameters: body.parameters,
+      requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId }, idempotencyKey: "hq-original-failed-attempt" };
+    const receipt = reserveHQOperation(body, [old]);
+    await expect(reserveHQRetry({ ...body, parameters: { ...body.parameters, seed: 1 } }, [old], receipt.idempotencyKey)).rejects.toThrow();
+    await expect(reserveHQRetry(body, [old, { ...old, id: "hq-another-active", state: "running", idempotencyKey: "hq-another-active-key" }], receipt.idempotencyKey)).rejects.toThrow("失败或已取消");
+    expect(readHQOperations()).toEqual([receipt]);
+  });
+
   it("uses local paths, same-origin authentication and exactly the three input IDs without cloud grants", async () => {
     const fetch = vi.fn(async () => Response.json(job)); vi.stubGlobal("fetch", fetch);
     await hqApi.create({ ...body, idempotencyKey: "hq-local-example" });
@@ -79,6 +147,14 @@ describe("local HQ API boundary", () => {
     vi.stubGlobal("sessionStorage", new MemoryStorage());
     const restored = reserveHQOperation(body, []);
     expect(restored.idempotencyKey).toBe(first.idempotencyKey); expect(restored.delivery).toBe("unknown");
+  });
+
+  it("still reconciles an ordinary unsent reservation with a matching server job discovered on refresh", () => {
+    const unsent = reserveHQOperation(body, []);
+    const existing: HQJob = { ...job, state: "running", parameters: body.parameters, requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId },
+      idempotencyKey: "hq-existing-active-attempt" };
+    expect(unsent.idempotencyKey).not.toBe(existing.idempotencyKey);
+    expect(reserveHQOperation(body, [existing])).toMatchObject({ jobId: existing.id, idempotencyKey: existing.idempotencyKey, delivery: "submitted" });
   });
 
   it.each([[7, "local"], [7, "session"], [10, "local"], [10, "session"]] as const)("never promotes an unqualified %i-field %s receipt into the current execution basis", (length, storage) => {
@@ -149,7 +225,15 @@ describe("local HQ API boundary", () => {
     expect(reserveHQOperation(request, [downloading]).idempotencyKey).toBe(restored.idempotencyKey);
   });
 
-  it.each([{ width: 768, height: 768 }, { steps: 51 }, { width: 1024 }, { seed: -1 }, { seed: 2147483648 }, { height: 257 }])("enforces real local pipeline limits: %j", invalid => {
+  it.each([[512, 768], [640, 960], [768, 1152], [768, 512], [960, 640], [1152, 768]])("accepts native preset %s x %s while retaining the standard default", (width, height) => {
+    expect(validHQParameters({ ...defaultHQParameters, width, height })).toBe(true);
+    expect(defaultHQParameters).toMatchObject({ width: 512, height: 768 });
+    const request = { ...body, parameters: { ...defaultHQParameters, width, height } };
+    const receipt = reserveHQOperation(request, []);
+    expect(reserveHQOperation(request, []).idempotencyKey).toBe(receipt.idempotencyKey);
+  });
+
+  it.each([{ width: 1152, height: 832 }, { steps: 51 }, { width: 1216 }, { seed: -1 }, { seed: 2147483648 }, { height: 257 }])("enforces real local pipeline limits: %j", invalid => {
     expect(validHQParameters({ ...defaultHQParameters, ...invalid })).toBe(false);
     expect(validHQParameters(defaultHQParameters)).toBe(true);
   });

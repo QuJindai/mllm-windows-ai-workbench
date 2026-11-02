@@ -11,8 +11,8 @@ class IdentityGenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
     negativePrompt: str = Field(default='', max_length=2000)
     seed: int | Literal['random'] = 'random'
-    width: int = Field(default=512, ge=256, le=768)
-    height: int = Field(default=768, ge=256, le=768)
+    width: int = Field(default=512, ge=256, le=1152)
+    height: int = Field(default=768, ge=256, le=1152)
     steps: int = Field(default=28, ge=1, le=50)
     cfg: float = Field(default=5.5, ge=1.01, le=15)
     identityStrength: float = Field(default=.82, ge=0, le=1.5)
@@ -36,6 +36,13 @@ class IdentityGenerateRequest(BaseModel):
 
     @model_validator(mode='after')
     def bounded_research(self):
+        if self.width * self.height > 768 * 1152:
+            raise ValueError('高清生成最多 768×1152 像素，请降低尺寸')
+        if max(self.width, self.height) > 768 and (
+            self.modelId != 'realistic-vision-v5.1-faceid' or self.traceLevel != 'off'
+            or self.animeProfileId
+        ):
+            raise ValueError('超过768边长的高清尺寸仅支持关闭研究采集的 Realistic Vision FaceID')
         if self.referenceStart >= self.referenceEnd:
             raise ValueError('参考采样区间起点必须小于终点')
         if not is_visual_model_id(self.modelId) and (self.referenceStart, self.referenceEnd) != (0., 1.):

@@ -1,0 +1,8 @@
+.image-inspection { min-width: 0; }
+.image-inspection-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; }
+.image-inspection-controls > :is(button, a) { display: inline-block; padding: 8px 12px; font-size: 12px; text-decoration: none; }
+.image-inspection-controls button[aria-pressed="true"] { border-color: var(--cyan, #32c7ff); }
+.image-inspection-note { margin: 0; padding: 0 10px 12px; color: var(--text-2, #aaa); font-size: 12px; line-height: 1.6; }
+.image-inspection-viewport { max-height: 75vh; overflow: auto; background: var(--bg-0, #181a20); }
+.image-inspection-viewport > a { display: block; }
+.image-inspection :focus-visible { outline: 2px solid var(--cyan, #32c7ff); outline-offset: -2px; }

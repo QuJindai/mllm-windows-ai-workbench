@@ -1,4 +1,4 @@
-export type RefinementMode = "restore" | "redraw" | "reference-anchor" | "edge-lighting";
+export type RefinementMode = "restore" | "redraw" | "reference-anchor" | "edge-lighting" | "upscale";
 export type RefinementVersion = {
   id: string;
   state: "queued" | "running" | "complete" | "failed" | "cancelled";
@@ -9,6 +9,9 @@ export type RefinementVersion = {
   parentVersionId: string | null;
   settings: Record<string, unknown>;
   metrics?: Record<string, unknown>;
+  width?: number;
+  height?: number;
+  canRefine?: boolean;
 };
 export type RefinementSnapshot = {
   sourceJobId: string;
@@ -73,7 +76,9 @@ function version(value: unknown): RefinementVersion {
     || typeof item.message !== "string" || typeof item.createdAt !== "string"
     || !(item.parentVersionId === null || typeof item.parentVersionId === "string")
     || !item.settings || typeof item.settings !== "object" || Array.isArray(item.settings)
-    || !(item.imageUrl == null || typeof item.imageUrl === "string")) throw new Error("精修服务返回的版本记录无效");
+    || !(item.imageUrl == null || typeof item.imageUrl === "string")
+    || [item.width, item.height].some(size => size !== undefined && (!Number.isSafeInteger(size) || size! <= 0))
+    || item.canRefine !== undefined && typeof item.canRefine !== "boolean") throw new Error("精修服务返回的版本记录无效");
   return item as RefinementVersion;
 }
 

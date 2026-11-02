@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HQTryOnPage } from "./HQTryOnPage";
 import type { HQJob, HQRole } from "../../domain/hq-tryon";
 import { defaultHQParameters, hqExecutionBasis } from "../../domain/hq-tryon";
-import { hqApi, readHQOperations, writeHQDraft } from "../../providers/hq-tryon-api";
+import { hqApi, hqFingerprint, readHQDraft, readHQOperations, saveHQOperation, writeHQDraft } from "../../providers/hq-tryon-api";
 import { identityApi } from "../../providers/identity-api";
 import { refinementApi } from "../../providers/refinement-api";
 import { identityDefaults } from "../../domain/identity";
 import type { IdentityJob, IdentityProfile } from "../../domain/identity";
 import { announceImageDeleted } from "../image-deletion";
 
+const { webcrypto } = await vi.importActual<{ webcrypto: Crypto }>("node:crypto");
 const ids = { person: "a".repeat(64), garment: "SPR-0087", pose: "P001" };
 const ready = { configured: true, authorized: true, modelReady: true, pipeline: hqExecutionBasis };
 const asset = (role: HQRole) => ({ id: ids[role], label: `${role}-original` });
@@ -23,10 +24,13 @@ const deferred = <T,>() => { let resolve!: (value: T) => void, reject!: (reason:
 
 beforeEach(() => {
   sessionStorage.clear(); localStorage.clear();
+  vi.stubGlobal("crypto", webcrypto);
   vi.spyOn(identityApi, "profiles").mockResolvedValue([]);
   vi.spyOn(identityApi, "profile").mockResolvedValue(personProfile);
   vi.spyOn(identityApi, "status").mockResolvedValue({ ready: true, modelName: "Realistic Vision", message: "就绪", loras: [], facePolish: { ready: true, message: "可选修脸可用" } });
   vi.spyOn(identityApi, "job").mockResolvedValue(matureJob());
+  vi.spyOn(refinementApi, "list").mockResolvedValue({ sourceJobId: "identity-hq-test", selectedVersionId: "result", modes: ["restore"],
+    versions: [{ id: "result", state: "complete", message: "完成", createdAt: "2026-11-02", parentVersionId: null, settings: {}, imageUrl: "/api/history/identity-hq-test/image" }] });
   vi.spyOn(hqApi, "status").mockResolvedValue(ready);
   vi.spyOn(hqApi, "jobs").mockResolvedValue([]);
   vi.spyOn(hqApi, "job").mockImplementation(async id => createJob({ id }));
@@ -37,7 +41,7 @@ beforeEach(() => {
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:hq-verified") });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function chooseThree() {
   fireEvent.click(await screen.findByRole("button", { name: "选择人物 person-original" }));
@@ -49,6 +53,169 @@ async function chooseThree() {
 function saveSelection() { writeHQDraft({ selection: { person: asset("person"), garment: asset("garment"), pose: asset("pose") }, parameters: defaultHQParameters }); }
 
 describe("HQ local workflow", () => {
+  it.each([true, false])("adopts another browser's successful successor on refresh, following only the superseded selection (viewing B=%s)", async viewingB => {
+    const a = createJob({ id: "hq-attempt-a", state: "failed", phase: "failed", pipeline: hqExecutionBasis, identityJobId: "identity-a", idempotencyKey: "hq-key-attempt-a", createdAt: "2026-11-02T01:00:00+00:00" });
+    const b = { ...a, id: "hq-attempt-b", identityJobId: "identity-b", idempotencyKey: "hq-key-attempt-b", createdAt: "2026-11-02T02:00:00+00:00" };
+    const c = { ...b, id: "hq-attempt-c", state: "succeeded" as const, phase: "complete", identityJobId: "identity-hq-test", idempotencyKey: "hq-key-attempt-c", createdAt: "2026-11-02T03:00:00.123456+00:00", result: { sha256: "c".repeat(64) } };
+    const selection = { person: asset("person"), garment: asset("garment"), pose: asset("pose") };
+    const fingerprint = hqFingerprint({ personId: ids.person, garmentId: ids.garment, poseId: ids.pose, parameters: defaultHQParameters });
+    saveHQOperation({ fingerprint, delivery: "submitted", jobId: b.id, idempotencyKey: b.idempotencyKey, retryOf: a.id });
+    writeHQDraft({ selection, parameters: defaultHQParameters, activeJobId: viewingB ? b.id : a.id });
+    vi.mocked(hqApi.jobs).mockResolvedValue([a, b]);
+    vi.mocked(hqApi.job).mockImplementation(async id => [a, b, c].find(item => item.id === id)!);
+    render(<HQTryOnPage />);
+    await screen.findByRole("heading", { name: `任务 ${viewingB ? b.id : a.id}` });
+    if (viewingB) expect(await screen.findByRole("button", { name: "按相同设置新建重试" })).toBeEnabled();
+
+    // A second browser completed C. The list can put the matching old B before C.
+    vi.mocked(hqApi.jobs).mockResolvedValue([b, a, c]);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "刷新任务" })));
+    expect(readHQOperations().find(row => row.fingerprint === fingerprint)).toMatchObject({ jobId: c.id, idempotencyKey: c.idempotencyKey, delivery: "submitted" });
+    expect(await screen.findByRole("heading", { name: `任务 ${viewingB ? c.id : a.id}` })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "按相同设置新建重试" })).not.toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "查看本组已有任务" })));
+    expect(await screen.findByRole("heading", { name: `任务 ${c.id}` })).toBeVisible();
+    expect(readHQDraft()).toMatchObject({ selection, parameters: defaultHQParameters });
+    expect(hqApi.create).not.toHaveBeenCalled(); expect(hqApi.cancel).not.toHaveBeenCalled();
+  });
+
+  it.each(["failed", "cancelled"] as const)("creates one new attempt for explicitly retried %s settings while preserving the old job", async state => {
+    const parameters = { width: 768, height: 1152, seed: 20261104, steps: 30 };
+    const options = { profileId: personProfile.id, facePolish: true, faceRestoreStrength: .4 };
+    const old = createJob({ state, phase: state, pipeline: hqExecutionBasis, identityJobId: "identity-old", idempotencyKey: "hq-old-terminal-key", parameters, ...options });
+    writeHQDraft({ selection: { person: asset("person"), garment: asset("garment"), pose: asset("pose") }, activeJobId: old.id, parameters, ...options });
+    const gate = deferred<HQJob>();
+    vi.mocked(hqApi.jobs).mockResolvedValue([old]); vi.mocked(hqApi.job).mockResolvedValue(old); vi.mocked(hqApi.create).mockReturnValue(gate.promise);
+    render(<HQTryOnPage />);
+    await screen.findByRole("button", { name: "按相同设置新建重试" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "查看本组已有任务" })));
+    expect(hqApi.create).not.toHaveBeenCalled();
+    const retry = await screen.findByRole("button", { name: "按相同设置新建重试" });
+    fireEvent.click(retry); fireEvent.click(retry);
+    await waitFor(() => expect(hqApi.create).toHaveBeenCalledTimes(1));
+    const sent = vi.mocked(hqApi.create).mock.calls[0][0];
+    expect(sent.idempotencyKey).not.toBe(old.idempotencyKey);
+    expect(sent).toMatchObject({ personId: ids.person, garmentId: ids.garment, poseId: ids.pose, parameters, ...options });
+    expect(readHQDraft()).toMatchObject({ parameters, ...options });
+    const created = { ...old, id: "hq-retry-new", state: "queued" as const, phase: "queued", idempotencyKey: sent.idempotencyKey };
+    vi.mocked(hqApi.jobs).mockResolvedValue([old, created]); vi.mocked(hqApi.job).mockImplementation(async id => id === old.id ? old : created);
+    await act(async () => gate.resolve(created));
+    expect(await screen.findByRole("heading", { name: "任务 hq-retry-new" })).toBeVisible();
+    expect(screen.getByRole("button", { name: new RegExp(`${state === "failed" ? "失败" : "已取消"} ${old.id}`) })).toBeVisible();
+    expect(readHQOperations()[0]).toMatchObject({ idempotencyKey: sent.idempotencyKey, jobId: created.id });
+    expect(hqApi.cancel).not.toHaveBeenCalled();
+  });
+
+  it("keeps the explicit retry key after a lost POST, old-job refresh and remount; only resends on a human click", async () => {
+    saveSelection();
+    const old = createJob({ state: "failed", phase: "failed", pipeline: hqExecutionBasis, identityJobId: "identity-old", idempotencyKey: "hq-old-failed-key" });
+    vi.mocked(hqApi.jobs).mockResolvedValue([old]); vi.mocked(hqApi.job).mockResolvedValue(old);
+    vi.mocked(hqApi.create).mockRejectedValueOnce(new Error("response lost")).mockImplementationOnce(async body => createJob({ id: "hq-recovered-retry", idempotencyKey: body.idempotencyKey }));
+    const view = render(<HQTryOnPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "按相同设置新建重试" }));
+    await screen.findByText(/提交未确认：response lost/);
+    const key = vi.mocked(hqApi.create).mock.calls[0][0].idempotencyKey;
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "刷新任务" })));
+    expect(screen.queryByRole("button", { name: "按相同设置新建重试" })).not.toBeInTheDocument();
+    view.unmount(); render(<HQTryOnPage />);
+    const resend = await screen.findByRole("button", { name: "重发同一请求" });
+    await waitFor(() => expect(resend).toBeEnabled());
+    expect(hqApi.create).toHaveBeenCalledTimes(1);
+    expect(readHQOperations()[0]).toMatchObject({ idempotencyKey: key, delivery: "unknown" });
+    await act(async () => { fireEvent.click(resend); fireEvent.click(resend); });
+    expect(hqApi.create).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(hqApi.create).mock.calls[1][0].idempotencyKey).toBe(key);
+  });
+
+  it("waits for authoritative terminal detail and hides explicit retry during refresh or after a settings change", async () => {
+    saveSelection();
+    const old = createJob({ state: "failed", phase: "failed", pipeline: hqExecutionBasis, identityJobId: "identity-old", idempotencyKey: "hq-old-failed-key" });
+    const initial = deferred<HQJob>(), refreshed = deferred<HQJob>();
+    vi.mocked(hqApi.jobs).mockResolvedValue([old]); vi.mocked(hqApi.job).mockReturnValueOnce(initial.promise).mockReturnValueOnce(refreshed.promise);
+    render(<HQTryOnPage />); await screen.findByRole("button", { name: "查看本组已有任务" });
+    expect(screen.queryByRole("button", { name: "按相同设置新建重试" })).not.toBeInTheDocument();
+    await act(async () => initial.resolve(old));
+    expect(await screen.findByRole("button", { name: "按相同设置新建重试" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "刷新任务" }));
+    expect(screen.queryByRole("button", { name: "按相同设置新建重试" })).not.toBeInTheDocument();
+    await act(async () => refreshed.resolve(old));
+    await screen.findByRole("button", { name: "按相同设置新建重试" });
+    fireEvent.change(screen.getByLabelText("种子"), { target: { value: "1" } });
+    expect(screen.queryByRole("button", { name: "按相同设置新建重试" })).not.toBeInTheDocument();
+    expect(hqApi.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["queued", "running", "succeeded"] as const)("never offers a new retry for authoritative %s, including unconfirmed cancellation", async state => {
+    saveSelection();
+    const existing = createJob({ state, phase: state, pipeline: hqExecutionBasis, identityJobId: "identity-hq-test", idempotencyKey: "hq-existing-key", cancellationRequested: state === "running" });
+    vi.mocked(hqApi.jobs).mockResolvedValue([existing]); vi.mocked(hqApi.job).mockResolvedValue(existing);
+    render(<HQTryOnPage />); await screen.findByRole("heading", { name: `任务 ${existing.id}` });
+    expect(screen.queryByRole("button", { name: "按相同设置新建重试" })).not.toBeInTheDocument();
+    expect(hqApi.create).not.toHaveBeenCalled();
+  });
+
+  it("offers the HQ upscale shortcut only after capability confirmation and opens the same workspace without generating", async () => {
+    const completed = createJob({ state: "succeeded", identityJobId: "identity-hq-test", result: { sha256: "c".repeat(64) } });
+    vi.mocked(hqApi.jobs).mockResolvedValue([completed]); vi.mocked(hqApi.job).mockResolvedValue(completed);
+    const gate = deferred<Awaited<ReturnType<typeof refinementApi.list>>>();
+    vi.mocked(refinementApi.list).mockReturnValue(gate.promise);
+    const create = vi.spyOn(refinementApi, "create");
+    render(<HQTryOnPage />); await screen.findByRole("button", { name: "独立精修与版本对比" });
+    expect(screen.queryByRole("button", { name: "2倍清晰增强" })).not.toBeInTheDocument();
+    await act(async () => gate.resolve({ sourceJobId: "identity-hq-test", selectedVersionId: "result", modes: ["restore", "upscale"], defaultMode: "restore",
+      versions: [{ id: "result", state: "complete", message: "完成", createdAt: "2026-11-02", parentVersionId: null, settings: {}, imageUrl: "/api/history/identity-hq-test/image", width: 512, height: 768 }] }));
+    fireEvent.click(await screen.findByRole("button", { name: "2倍清晰增强" }));
+    expect(await screen.findByRole("button", { name: "开始2倍清晰增强" })).toBeEnabled();
+    expect(screen.getByLabelText("精修模式")).toHaveValue("upscale");
+    expect(screen.getAllByRole("region", { name: "独立精修工作区" })).toHaveLength(1);
+    expect(create).not.toHaveBeenCalled(); expect(hqApi.create).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "下载成片原图" })).toHaveAttribute("href", "blob:hq-verified");
+    expect(screen.getByRole("link", { name: "修脸结果：打开原图 / 放大查看" })).toHaveAttribute("href", expect.stringMatching(/^\/api\/history\/identity-hq-test\/image/));
+  });
+
+  it.each([[], ["restore"], undefined])("keeps HQ upscale hidden when the service does not advertise it: %s", async modes => {
+    const completed = createJob({ state: "succeeded", identityJobId: "identity-hq-test", result: { sha256: "c".repeat(64) } });
+    vi.mocked(hqApi.jobs).mockResolvedValue([completed]); vi.mocked(hqApi.job).mockResolvedValue(completed);
+    vi.mocked(refinementApi.list).mockResolvedValue({ sourceJobId: "identity-hq-test", selectedVersionId: "result", modes, versions: [] });
+    render(<HQTryOnPage />); await screen.findByRole("button", { name: "独立精修与版本对比" });
+    await waitFor(() => expect(refinementApi.list).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "2倍清晰增强" })).not.toBeInTheDocument();
+  });
+
+  it("keeps standard defaults and changes only dimensions when a resolution preset is explicitly chosen", async () => {
+    saveSelection(); render(<HQTryOnPage />);
+    const preset = await screen.findByRole("combobox", { name: "尺寸预设" });
+    expect(preset).toHaveValue("512x768");
+    fireEvent.change(screen.getByLabelText("种子"), { target: { value: "20261102" } });
+    fireEvent.change(screen.getByLabelText("步数"), { target: { value: "30" } });
+    fireEvent.change(preset, { target: { value: "768x1152" } });
+    expect(screen.getByLabelText("宽度")).toHaveValue(768);
+    expect(screen.getByLabelText("高度")).toHaveValue(1152);
+    expect(screen.getByText(/高清生成更慢，显存占用更高/)).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "本机生成" })).toBeEnabled());
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "本机生成" })));
+    expect(vi.mocked(hqApi.create).mock.calls[0][0].parameters).toEqual({ seed: 20261102, steps: 30, width: 768, height: 1152 });
+  });
+
+  it("retains a custom draft across role switches and remounts, including the new landscape presets", async () => {
+    writeHQDraft({ selection: { person: asset("person") }, parameters: { seed: 42, steps: 30, width: 704, height: 896 } });
+    const view = render(<HQTryOnPage />);
+    expect(await screen.findByLabelText("尺寸预设")).toHaveValue("custom");
+    expect(screen.getByLabelText("宽度")).toHaveValue(704);
+    fireEvent.click(screen.getByRole("tab", { name: "服装" }));
+    await screen.findByRole("button", { name: "选择服装 garment-original" });
+    expect(screen.getByLabelText("高度")).toHaveValue(896);
+    fireEvent.change(screen.getByLabelText("尺寸预设"), { target: { value: "960x640" } });
+    view.unmount(); render(<HQTryOnPage />);
+    expect(await screen.findByLabelText("尺寸预设")).toHaveValue("960x640");
+    expect(screen.getByLabelText("宽度")).toHaveValue(960);
+    expect(screen.getByLabelText("高度")).toHaveValue(640);
+    expect(screen.getByLabelText("种子")).toHaveValue(42);
+    expect(screen.getByLabelText("步数")).toHaveValue(30);
+    expect(screen.getByRole("img", { name: "已选人物原图" })).toHaveAttribute("src", hqApi.assetUrl("person", ids.person));
+    expect(hqApi.create).not.toHaveBeenCalled();
+  });
+
   it("keeps profile optional and face polish off, then sends explicit profile/face choices without replacing the R2 person", async () => {
     saveSelection(); vi.mocked(identityApi.profiles).mockResolvedValue([personProfile, { ...personProfile, id: "visual-profile", name: "视觉档案", referenceKind: "visual" }]);
     render(<HQTryOnPage />);
@@ -416,8 +583,9 @@ describe("HQ local workflow", () => {
   it("rejects oversized local parameters before POST and reports local service failures", async () => {
     saveSelection(); render(<HQTryOnPage />);
     await waitFor(() => expect(screen.getByRole("button", { name: "本机生成" })).toBeEnabled());
-    fireEvent.change(screen.getByRole("spinbutton", { name: "宽度" }), { target: { value: "768" } });
-    expect(screen.getByRole("button", { name: "本机生成" })).toBeDisabled(); expect(screen.getByText(/总像素不超过 393216/)).toBeVisible();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "宽度" }), { target: { value: "1152" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "高度" }), { target: { value: "832" } });
+    expect(screen.getByRole("button", { name: "本机生成" })).toBeDisabled(); expect(screen.getByText(/总像素不超过 884736/)).toBeVisible();
     vi.mocked(hqApi.status).mockRejectedValue(new Error("offline")); fireEvent.click(screen.getByRole("button", { name: "刷新任务" }));
     expect(await screen.findByText("本地服务不可用：offline")).toBeVisible(); expect(hqApi.create).not.toHaveBeenCalled();
   });

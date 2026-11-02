@@ -5,12 +5,13 @@ import { identityApi } from "../../../providers/identity-api";
 import { DeleteImageButton } from "../DeleteImageButton";
 import { useDeletedImageIds } from "../../image-deletion";
 import { RefinementWorkspace } from "./RefinementWorkspace";
+import { ImageInspection } from "./ImageInspection";
 
 export function ResultPreview({ imageUrl, label = "生成结果" }: { imageUrl: string; label?: string }) {
   const [unavailable, setUnavailable] = useState(false);
   return <figure>
     {unavailable ? <div className="identity-empty" role="status">结果文件已删除或不可用</div>
-      : <a href={imageUrl} target="_blank" rel="noreferrer"><img src={imageUrl} alt={label} onError={() => setUnavailable(true)} /></a>}
+      : <ImageInspection src={imageUrl} alt={label} onError={() => setUnavailable(true)} />}
     <figcaption>{unavailable ? label : `${label} · 点击查看完整图像`}</figcaption>
   </figure>;
 }

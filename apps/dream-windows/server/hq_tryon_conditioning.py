@@ -143,6 +143,11 @@ class ConditioningObserver:
 
 
 
+_DWPOSE_LIMB_NAMES = ('left-shoulder', 'right-shoulder', 'left-elbow', 'right-elbow',
+                      'left-wrist', 'right-wrist', 'left-hip', 'right-hip',
+                      'left-knee', 'right-knee', 'left-ankle', 'right-ankle')
+
+
 def dwpose_body_keypoints(points, scores, width, height):
     """COCO -> OpenPose order, using the same neck construction as DWPose."""
     import numpy as np
@@ -150,9 +155,13 @@ def dwpose_body_keypoints(points, scores, width, height):
         raise PipelineError('MODEL_NOT_READY', 'Expected DWPose 133-keypoint whole-body output')
     # Require both shoulder/elbow/wrist/hip/knee/ankle chains. Do not publish a
     # plausible-looking partial skeleton after a low-confidence model response.
-    if not np.isfinite(points).all() or not np.isfinite(scores).all() or np.any(scores[0, 5:17] < .3):
+    if not np.isfinite(points).all() or not np.isfinite(scores).all():
+        raise PipelineError('POSE_LOW_CONFIDENCE', 'DWPose returned non-finite keypoints or scores')
+    if np.any(scores[0, 5:17] < .3):
         raise PipelineError('POSE_LOW_CONFIDENCE', 'DWPose could not resolve all major limb joints',
-                            limbScores=scores[0, 5:17].tolist(), requiredScore=.3)
+                            limbScores=scores[0, 5:17].tolist(), requiredScore=.3,
+                            weakJoints=[{'joint': name, 'score': float(score)}
+                                        for name, score in zip(_DWPOSE_LIMB_NAMES, scores[0, 5:17]) if score < .3])
     coco = np.concatenate([points[0, :17], scores[0, :17, None]], axis=-1)
     neck = np.array([*coco[[5, 6], :2].mean(axis=0), min(coco[5, 2], coco[6, 2])])
     all_points = np.vstack([coco, neck])
@@ -164,6 +173,99 @@ def dwpose_body_keypoints(points, scores, width, height):
     if np.any(body[1:14, :2] < 0) or np.any(body[1:14, :2] > 1):
         raise PipelineError('POSE_LOW_CONFIDENCE', 'Predicted body joints extend outside the reference image')
     return body
+
+
+def dwpose_white_context(image):
+    """Extend a near-white image boundary; retain every original pixel and bbox."""
+    import math
+    import numpy as np
+    from PIL import ImageOps
+    rgb = image.convert('RGB')
+    pixels = np.asarray(rgb)
+    edge = max(1, min(16, min(rgb.size) // 100))
+    border = np.concatenate([pixels[:edge].reshape(-1, 3), pixels[-edge:].reshape(-1, 3),
+                             pixels[:, :edge].reshape(-1, 3), pixels[:, -edge:].reshape(-1, 3)])
+    fraction = float(np.mean(np.min(border, axis=1) >= 250))
+    if fraction < .995 or not np.any(pixels.min(axis=2) < 230):
+        return None
+    # DWPose expands its bbox by 1.25, then fits the 288:384 model aspect.
+    # Supply enough white context for that entire affine footprint, rather than
+    # allowing cv2.warpAffine's default black border to surround a white drawing.
+    width, height = rgb.size
+    scale_width = max(width * 1.25, height * 1.25 * .75)
+    scale_height = max(height * 1.25, width * 1.25 / .75)
+    left = max(math.ceil(width / 4), math.ceil((scale_width - width) / 2) + 2)
+    top = max(math.ceil(height / 4), math.ceil((scale_height - height) / 2) + 2)
+    padded = ImageOps.expand(rgb, border=(left, top, left, top), fill='white')
+    return padded, [left, top, left + width, top + height], {
+        'offset': [left, top], 'borderWhiteFraction': fraction, 'edgeWidth': edge,
+        'transform': 'white-context-outside-original-frame-no-crop',
+    }
+
+
+def estimate_dwpose_body(image, infer, run):
+    """One unchanged native attempt, then at most one justified border retry."""
+    import numpy as np
+    record = {'inputRole': 'pose', 'estimationStatus': 'estimating', 'attempts': [],
+              'requiredLimbScore': .3, 'scoresAreCalibratedProbabilities': False}
+    run.audit['conditioning']['pose'] = record
+
+    def attempt(source, bbox, offset, method, image_info):
+        run.check_cancel()
+        points, scores = infer(np.asarray(source), bbox)
+        points = points - np.asarray(offset)
+        row = {'method': method, 'image': image_info, 'bbox': bbox, 'coordinateOffset': list(offset),
+               'pointsShape': list(points.shape), 'scoresShape': list(scores.shape)}
+        record['attempts'].append(row)
+        if points.shape == (1, 133, 2) and scores.shape == (1, 133) and np.isfinite(points).all() and np.isfinite(scores).all():
+            row.update(bodyPoints=points[0, :17].tolist(), bodyScores=scores[0, :17].tolist(),
+                       limbScores=scores[0, 5:17].tolist(), minimumLimbScore=float(scores[0, 5:17].min()),
+                       coordinates='original-preprocessed-image-pixels')
+        try:
+            body = dwpose_body_keypoints(points, scores, image.width, image.height)
+        except PipelineError as exc:
+            row.update(accepted=False, error=error_record(exc))
+            return points, scores, None, exc
+        row['accepted'] = True
+        return points, scores, body, None
+
+    original_info = run.audit.get('preprocessing', {}).get('pose')
+    points, scores, body, failure = attempt(image, [], (0, 0), 'full-image-default-border', original_info)
+    if failure is None:
+        record.update(estimationStatus='accepted', selectedAttempt=0)
+        return body, points, scores
+    record['estimationStatus'] = 'rejected'
+    if failure.code != 'POSE_LOW_CONFIDENCE' or not np.isfinite(points).all() or not np.isfinite(scores).all():
+        raise failure
+    trusted = scores[0, 5:17] >= .3
+    if trusted.sum() < 6:
+        record['retrySkippedReason'] = 'fewer-than-six-native-limb-anchors'
+        raise failure
+    context = dwpose_white_context(image)
+    if context is None:
+        record['retrySkippedReason'] = 'boundary-not-uniform-white-or-empty-image'
+        raise failure
+    padded, bbox, transform = context
+    run.check_cancel()
+    info = run.save_image('pose-white-context', padded, transform['transform'])
+    record['borderRetry'] = {**transform, 'image': info, 'reason': 'native-low-confidence'}
+    new_points, new_scores, body, retry_failure = attempt(padded, [bbox], transform['offset'],
+                                                        'full-image-white-context', info)
+    if retry_failure is not None:
+        raise retry_failure
+    # A border change must not select a different pose. Compare only native
+    # joints which already cleared the unchanged score gate; never interpolate
+    # missing joints or mix coordinates from the two model executions.
+    distances = np.linalg.norm(new_points[0, 5:17][trusted] - points[0, 5:17][trusted], axis=1)
+    displacement = float(distances.max() / np.hypot(image.width, image.height))
+    record['borderRetry']['agreement'] = {'nativeAnchorCount': int(trusted.sum()),
+        'maximumDisplacementImageDiagonal': displacement, 'allowedDisplacementImageDiagonal': .05}
+    if displacement > .05:
+        record['attempts'][-1]['accepted'] = False
+        raise PipelineError('POSE_LOW_CONFIDENCE', 'White-context pose disagrees with reliable native joints',
+                            maximumDisplacementImageDiagonal=displacement, allowedDisplacementImageDiagonal=.05)
+    record.update(estimationStatus='accepted', selectedAttempt=1)
+    return body, new_points, new_scores
 
 
 def extract_pose(config, image, run):
@@ -192,8 +294,8 @@ def extract_pose(config, image, run):
     # Official estimator supports an empty bbox list as explicit full-image
     # top-down inference. It is appropriate for these single-person references;
     # no failed object detector is silently replaced with invented coordinates.
-    points, scores = inference_pose(detector, [], np.array(image), (288, 384))
-    body = dwpose_body_keypoints(points, scores, image.width, image.height)
+    body, points, scores = estimate_dwpose_body(image,
+        lambda pixels, bbox: inference_pose(detector, bbox, pixels, (288, 384)), run)
     keypoints = [Keypoint(float(x), float(y), float(score), i) if score >= .3 else None
                  for i, (x, y, score) in enumerate(body)]
     poses = [PoseResult(BodyResult(keypoints, float(body[:, 2].sum()), sum(p is not None for p in keypoints)), None, None, None)]
@@ -206,14 +308,14 @@ def extract_pose(config, image, run):
     skeleton = ImageOps.pad(native, (params['width'], params['height']), method=Image.Resampling.BILINEAR, color='black')
     pose_info = run.save_image('pose-openpose', skeleton, 'skeleton-contain-letterbox-to-output-size')
     keypoints = [[p.x, p.y, p.score] if p is not None else None for p in poses[0].body.keypoints]
-    run.audit['conditioning']['pose'] = {
+    run.audit['conditioning']['pose'].update({
         'inputRole': 'pose', 'method': 'DWPose-body-to-OpenPose-ControlNet', 'skeleton': pose_info,
         'nativeSkeleton': native_info, 'keypoints': keypoints, 'keypointCoordinates': 'normalized-to-native-skeleton',
         'detectorDevice': 'cpu', 'providers': detector.get_providers(), 'singleSubjectAssumption': True,
         'estimatorInputSize': [288, 384], 'limbScores': scores[0, 5:17].tolist(),
         'minimumLimbScore': float(scores[0, 5:17].min()), 'requiredLimbScore': .3,
         'includesFace': False, 'includesHands': False, 'scoresAreCalibratedProbabilities': False,
-    }
+    })
     return skeleton
 
 

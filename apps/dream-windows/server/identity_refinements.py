@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
+import threading
 from time import perf_counter
 from typing import Literal
 
@@ -20,13 +22,14 @@ from identity_models import is_visual_model_id
 EDIT_PATTERN = r'refine-([a-f0-9]{24})-[a-f0-9]{24}'
 VERSION_PATTERN = rf'^(result|original|{EDIT_PATTERN})$'
 ACTIVE = {'queued', 'running'}
+UPSCALE_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 class RefinementRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True, allow_inf_nan=False)
     sourceJobId: str = Field(pattern=r'^identity-[a-f0-9]{24}$')
     parentVersionId: str = Field(default='result', pattern=VERSION_PATTERN)
-    mode: Literal['restore', 'redraw', 'reference-anchor', 'edge-lighting'] = 'restore'
+    mode: Literal['restore', 'redraw', 'reference-anchor', 'edge-lighting', 'upscale'] = 'restore'
     strength: float = Field(default=.3, ge=.15, le=.65)
     prompt: str = Field(default='', max_length=2000)
     negativePrompt: str = Field(default='', max_length=2000)
@@ -46,6 +49,8 @@ def problem(message, status=409):
 class IdentityRefinements:
     def __init__(self, service):
         self.service = service
+        self._upscale_capability = None
+        self._upscale_probe_lock = threading.Lock()
 
     def folder(self, source):
         self.service._validate_id(source, r'identity-[a-f0-9]{24}')
@@ -127,17 +132,86 @@ class IdentityRefinements:
             raise problem('精修图片缺失，原图仍可用', 404)
         return path
 
+    def editable_parent(self, job, output, version):
+        if version not in ('result', 'original'):
+            row = self.read(job['id'], version)
+            if row['settings']['mode'] == 'upscale' or row.get('canRefine') is False:
+                raise problem('清晰增强是最后一步，请回到增强前版本继续加工')
+        path = self.version_image(job, output, version)
+        with Image.open(path) as image:
+            if image.size != (job['request']['width'], job['request']['height']):
+                raise problem('选中版本尺寸与原任务不一致，请回到增强前版本继续加工')
+        return path
+
+    def upscale_status(self):
+        # Only callers outside service/history transactions may wait for the worker.
+        with self._upscale_probe_lock:
+            return self._cached_upscale_status()
+
+    def _cached_upscale_status(self):
+        from identity_service import read_json, WorkerCancelled
+        unavailable = {'ready': False, 'message': '本地清晰增强模型或工作环境未就绪'}
+        try:
+            config = read_json(self.service.config_path, 64 * 1024)
+            path = Path(config.get('upscaleModel') or '')
+            if not path.is_file() or path.stat().st_size <= 0:
+                self._upscale_capability = None
+                return unavailable
+            python = config.get('python') or sys.executable
+
+            def signature(filename):
+                candidate = Path(filename)
+                try:
+                    stat = candidate.stat()
+                    return str(candidate.resolve()), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+                except OSError:
+                    return str(candidate), None
+
+            key = (signature(self.service.config_path), signature(python), signature(path))
+        except (OSError, ValueError, TypeError):
+            self._upscale_capability = None
+            return unavailable
+        cached = self._upscale_capability
+        if cached is not None and cached[0] == key and perf_counter() < cached[1]:
+            return dict(cached[2])
+        result = unavailable
+        cancelled = threading.Event()
+        deadline = threading.Timer(UPSCALE_PROBE_TIMEOUT_SECONDS, cancelled.set)
+        deadline.daemon = True
+        try:
+            deadline.start()
+            reply = self.service._worker('status', {'configPath': str(self.service.config_path), 'capability': 'upscale'}, cancelled)
+            status = reply.get('upscale') if isinstance(reply, dict) else None
+            if (not cancelled.is_set() and isinstance(status, dict) and type(status.get('ready')) is bool
+                    and isinstance(status.get('message'), str)):
+                result = {'ready': status['ready'], 'message': status['message'][:300]}
+        except (WorkerCancelled, DreamApiError, OSError, ValueError, RuntimeError):
+            pass
+        finally:
+            deadline.cancel()
+        self._upscale_capability = (key, perf_counter() + (60 if result['ready'] else 10), dict(result))
+        return result
+
     def workspace(self, source):
         s = self.service
+        upscale_ready = self.upscale_status()['ready']
         with s._lock, history_mutation_lock(s.config.dream_root) as deleted:
             job, output = self.source(source, deleted)
             modes = (['redraw', 'reference-anchor'] if is_visual_model_id(job['request']['modelId']) else ['restore']) + ['edge-lighting']
+            if upscale_ready:
+                modes.append('upscale')
             versions = [{'id':'result','state':'complete','message':'生成结果','imageUrl':job['result']['imageUrl'],
                          'parentVersionId':None,'createdAt':'','settings':{}},
                         {'id':'original','state':'complete','message':'生成原图','imageUrl':(
                             f'/api/identity/jobs/{source}/original' if job['result']['metadata'].get('facePolish',{}).get('originalImageUrl')
                             else job['result']['imageUrl']), 'parentVersionId':None,'createdAt':'','settings':{}}]
             versions += self.records(source)
+            for version in versions:
+                upscale = version['settings'].get('mode') == 'upscale'
+                scale = 2 if upscale else 1
+                version.setdefault('width', job['request']['width'] * scale)
+                version.setdefault('height', job['request']['height'] * scale)
+                version['canRefine'] = not upscale and version.get('canRefine', True)
             from identity_service import read_json
             selection_path = validate_history_path(s.config.dream_root, self.folder(source) / 'selection.json')
             selected = read_json(selection_path).get('versionId', 'result') if selection_path.is_file() else 'result'
@@ -156,14 +230,18 @@ class IdentityRefinements:
         return self.workspace(source)
 
     def submit(self, payload):
+        row = self._try_submit(payload, upscale_ready=None)
+        if row is not None:
+            return row
+        # A new eligible upscale needs a worker capability check. Reopen the
+        # transaction afterwards and revalidate source, parent, replay and queue.
+        ready = self.upscale_status()['ready']
+        return self._try_submit(payload, upscale_ready=ready)
+
+    def _try_submit(self, payload, *, upscale_ready):
         s = self.service
         with s._lock, history_mutation_lock(s.config.dream_root) as deleted:
             job, output = self.source(payload.sourceJobId, deleted)
-            visual = is_visual_model_id(job['request']['modelId'])
-            if payload.mode != 'edge-lighting' and (payload.mode == 'restore') == visual:
-                raise problem('所选精修模式与底模不兼容', 422)
-            s._require_model_enabled(job['request']['modelId'])
-            self.version_image(job, output, payload.parentVersionId)
             rows = self.records(payload.sourceJobId)
             settings = payload.model_dump()
             if payload.requestId:
@@ -172,13 +250,31 @@ class IdentityRefinements:
                     if old['settings'] != settings:
                         raise problem('重试标识对应的参数已改变，请重新提交')
                     return old
+            self.editable_parent(job, output, payload.parentVersionId)
+            width, height = job['request']['width'], job['request']['height']
+            if payload.mode == 'upscale':
+                from identity_refinement_engine import upscale_size
+                try:
+                    width, height = upscale_size((width, height))
+                except ValueError as exc:
+                    raise problem(str(exc), 422) from exc
+                if upscale_ready is False:
+                    raise problem('本地清晰增强模型未就绪')
+            else:
+                visual = is_visual_model_id(job['request']['modelId'])
+                if payload.mode != 'edge-lighting' and (payload.mode == 'restore') == visual:
+                    raise problem('所选精修模式与底模不兼容', 422)
+                s._require_model_enabled(job['request']['modelId'])
             if any(r['state'] in ACTIVE for r in rows):
                 raise problem('这张原图仍在精修，请等待或取消当前任务')
             if len(rows) >= 128:
                 raise problem('单张原图最多保留128个精修版本')
+            if payload.mode == 'upscale' and upscale_ready is None:
+                return None
             version = f"refine-{payload.sourceJobId.removeprefix('identity-')}-{secrets.token_hex(12)}"
             row = {'id':version,'sourceJobId':payload.sourceJobId,'parentVersionId':payload.parentVersionId,
                    'state':'queued','message':'等待精修队列','error':None,'imageUrl':None,'settings':settings,
+                   'width':width,'height':height,'canRefine':payload.mode != 'upscale',
                    'createdAt':datetime.now(timezone.utc).isoformat()}
             self.save(row)
             def queued_cancel():
@@ -196,19 +292,25 @@ class IdentityRefinements:
             with s._lock, history_mutation_lock(s.config.dream_root) as deleted:
                 job, output=self.source(source,deleted)
                 row=self.read(source,version)
-                base=self.version_image(job,output,row['parentVersionId'])
-                scene=self.version_image(job,output,'original')
+                base=self.editable_parent(job,output,row['parentVersionId'])
+                upscale=row['settings']['mode']=='upscale'
+                expected_size=(job['request']['width'],job['request']['height'])
+                if upscale:
+                    from identity_refinement_engine import upscale_size
+                    expected_size=upscale_size(expected_size)
                 if cancelled.is_set():
                     raise problem('已取消精修')
                 row.update(state='running',message='正在处理选中版本，仅执行一轮')
                 self.save(row)
             s.job_runner.release_native_for_identity()
             payload={**job['request'], 'sourcePath':str(base),'outputPath':str(temporary),
-                     'scenePath':str(scene),
-                     'imagePath':str(s.reference_image(job['request']['referenceId'])), 'editSettings':row['settings'],
+                     'editSettings':row['settings'],
                      'jobId':'identity-'+version[-24:], 'dreamRoot':str(s.config.dream_root),
                      'configPath':str(s.config_path)}
-            if row['settings']['mode'] != 'edge-lighting':
+            if not upscale:
+                payload.update(scenePath=str(self.version_image(job,output,'original')),
+                               imagePath=str(s.reference_image(job['request']['referenceId'])))
+            if row['settings']['mode'] not in ('edge-lighting', 'upscale'):
                 # The frozen base task may have disabled optional polishing.
                 # Resolve the archive for this new edit without mutating it.
                 payload.update(s.anime_profiles.resolve_request({**job['request'], 'facePolish': True}))
@@ -218,14 +320,17 @@ class IdentityRefinements:
                 if cancelled.is_set():
                     raise problem('已取消精修')
                 with Image.open(temporary) as image:
-                    if image.format!='PNG' or image.size!=(job['request']['width'],job['request']['height']):
+                    if image.format!='PNG' or image.size!=expected_size or (upscale and image.mode!='RGB'):
                         raise ValueError('精修结果尺寸或格式不正确')
                     image.verify()
                 final=self.path(source,version,'.png')
                 os.link(temporary,final)
                 row.update(state='complete',message='精修完成，请对比后选择版本',error=None,
+                           width=expected_size[0],height=expected_size[1],canRefine=not upscale,
                            imageUrl=f'/api/identity/refinements/{version}/image',metrics=details,
                            elapsedMs=round((perf_counter()-started)*1000))
+                if upscale:
+                    row['message']='2倍清晰增强完成；如需继续加工，请回到增强前版本'
                 self.save(row)
         except Exception as exc:
             with s._lock:

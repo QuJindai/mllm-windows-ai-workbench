@@ -2,12 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { refinementApi, RefinementHttpError } from "../../../providers/refinement-api";
 import type { RefinementMode, RefinementRequest, RefinementSnapshot, RefinementVersion } from "../../../providers/refinement-api";
 import { useDeletedImageIds } from "../../image-deletion";
+import { ImageInspection } from "./ImageInspection";
+import type { ImageDimensions } from "./ImageInspection";
 import "./RefinementWorkspace.css";
 
-type Props = { sourceJobId: string; onClose: () => void };
-const modeLabels: Record<RefinementMode, string> = { restore: "人脸修复", redraw: "局部重绘", "reference-anchor": "参考脸对齐 · 保留中央五官", "edge-lighting": "边缘光照协调" };
+type Props = { sourceJobId: string; onClose: () => void; initialMode?: RefinementMode; onSnapshot?: (data: RefinementSnapshot) => void };
+const modeLabels: Record<RefinementMode, string> = { restore: "人脸修复", redraw: "局部重绘", "reference-anchor": "参考脸对齐 · 保留中央五官", "edge-lighting": "边缘光照协调", upscale: "2倍清晰增强 · 最后一步" };
 const stateLabels: Record<RefinementVersion["state"], string> = { queued: "排队中", running: "精修中", complete: "完成", failed: "失败", cancelled: "已取消" };
 const active = (item: RefinementVersion) => item.state === "queued" || item.state === "running";
+const canRefine = (item: RefinementVersion) => item.canRefine !== false && item.settings.mode !== "upscale";
 const availableModes = (data: RefinementSnapshot): RefinementMode[] => [...new Set(data.modes ?? ["restore"])].filter((mode): mode is RefinementMode => Object.hasOwn(modeLabels, mode));
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : "精修请求失败";
 
@@ -18,7 +21,8 @@ const measuredDuration = (milliseconds: number) => milliseconds >= 1000 ? `${Num
 function RefinementMeasurements({ version, label }: { version: RefinementVersion; label: string }) {
   const metrics = metricRecord(version.metrics);
   const phases = metricRecord(metrics.phasesMs);
-  const phaseLabels: Record<string, string> = { read: "读取父图", load: "加载模型", polish: "执行精修", diagnostics: "像素诊断", save: "保存图像" };
+  const upscale = version.settings.mode === "upscale";
+  const phaseLabels: Record<string, string> = { read: "读取父图", load: "加载模型", polish: upscale ? "执行清晰增强" : "执行精修", upscale: "执行清晰增强", diagnostics: "像素诊断", save: "保存图像" };
   const measuredPhases = Object.entries(phaseLabels).filter(([name]) => measuredNumber(phases[name]));
   const diagnostics = metricRecord(metrics.diagnostics);
   const retention = diagnostics.schemaVersion === 1 ? metricRecord(diagnostics.retention) : {};
@@ -32,14 +36,14 @@ function RefinementMeasurements({ version, label }: { version: RefinementVersion
   const baseline = typeof diagnostics.baselineLabel === "string" && diagnostics.baselineLabel ? diagnostics.baselineLabel : "未返回";
   const candidate = typeof diagnostics.candidateLabel === "string" && diagnostics.candidateLabel ? diagnostics.candidateLabel : "未返回";
   return <details className="refinement-measurements"><summary>{label} · 实测记录</summary>
-    <p className="refinement-note">像素变化对照，不代表人物相似度或画质评分。</p>
+    <p className="refinement-note">{upscale ? "增强前后尺寸不同，不使用逐像素保持率，也不代表画质评分。" : "像素变化对照，不代表人物相似度或画质评分。"}</p>
     {measuredNumber(metrics.durationMs) && <p>总耗时：{measuredDuration(metrics.durationMs)}</p>}
     {measuredPhases.length > 0 && <table aria-label={`${label} 阶段耗时`}><thead><tr><th>阶段</th><th>实测耗时</th></tr></thead>
       <tbody>{measuredPhases.map(([name, title]) => <tr key={name}><th scope="row">{title}</th><td>{measuredDuration(phases[name] as number)}</td></tr>)}</tbody></table>}
-    <p>比较基准：{baseline} → {candidate}</p>
+    {!upscale && <><p>比较基准：{baseline} → {candidate}</p>
     <table aria-label={`${label} 区域像素变化`}><thead><tr><th>区域</th><th>像素总数</th><th>变化像素</th></tr></thead>
       <tbody>{regions.map(region => <tr key={region.title}><th scope="row">{region.title}</th><td>{region.count ?? "未返回"}</td><td>{region.changed ?? "未返回"}</td></tr>)}</tbody></table>
-    <p className="refinement-note">区域按服务返回的掩膜统计；未返回的计数不表示零变化。</p>
+    <p className="refinement-note">区域按服务返回的掩膜统计；未返回的计数不表示零变化。</p></>}
   </details>;
 }
 
@@ -49,7 +53,7 @@ export function RefinementWorkspace(props: Props) {
   return deleted.has(props.sourceJobId) ? null : <RefinementSession key={props.sourceJobId} {...props} />;
 }
 
-function RefinementSession({ sourceJobId, onClose }: Props) {
+function RefinementSession({ sourceJobId, onClose, initialMode, onSnapshot }: Props) {
   const [data, setData] = useState<RefinementSnapshot | null>(null);
   const dataRef = useRef<RefinementSnapshot | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
@@ -64,17 +68,22 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
   const [seed, setSeed] = useState("0");
   const [retryRequest, setRetryRequest] = useState<RefinementRequest | null>(null);
   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
+  const [imageDimensions, setImageDimensions] = useState<Record<string, ImageDimensions>>({});
   const heading = useRef<HTMLHeadingElement>(null);
   const control = useRef({ mounted: false, gone: false, busy: false, sequence: 0,
     timer: undefined as number | undefined, read: null as AbortController | null, action: null as AbortController | null });
 
   const accept = useCallback((next: RefinementSnapshot) => {
+    const firstSnapshot = !dataRef.current;
     dataRef.current = next;
     setData(next); setSynced(true); setReadError(null);
     const modes = availableModes(next);
-    setMode(current => modes.includes(current as RefinementMode) ? current : modes.find(value => value === next.defaultMode) ?? modes[0] ?? "");
-    setRetryRequest(current => current && current.parentVersionId === next.selectedVersionId && modes.includes(current.mode) ? current : null);
-  }, []);
+    setMode(current => modes.includes(current as RefinementMode) ? current
+      : firstSnapshot && initialMode && modes.includes(initialMode) ? initialMode : modes.find(value => value === next.defaultMode) ?? modes[0] ?? "");
+    setRetryRequest(current => current && current.parentVersionId === next.selectedVersionId && modes.includes(current.mode)
+      && next.versions.some(item => item.id === next.selectedVersionId && canRefine(item)) ? current : null);
+    onSnapshot?.(next);
+  }, [initialMode, onSnapshot]);
 
   const refresh = useCallback(async function readVersions() {
     const state = control.current;
@@ -156,7 +165,7 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
     if (id === "result") return "生成结果";
     if (id === "original") return "生成原图";
     const index = refinements.findIndex(item => item.id === id);
-    return index >= 0 ? `精修 ${index + 1}` : id ?? "未记录";
+    return index >= 0 ? `${refinements[index].settings.mode === "upscale" ? "清晰增强" : "精修"} ${index + 1}` : id ?? "未记录";
   };
   const selected = versions.find(item => item.id === data?.selectedVersionId);
   const imageKey = (item: RefinementVersion) => `${item.id}:${item.imageUrl}`;
@@ -171,13 +180,16 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
   const downloadName = `${sourceJobId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100)}-${(selected?.id || "version").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100)}.png`;
   const modes = data ? availableModes(data) : [];
   const hasActive = versions.some(active);
+  const upscale = mode === "upscale";
+  const terminalVersion = !!selected && !canRefine(selected);
+  const selectedDimensions = selected && (imageDimensions[imageKey(selected)] ?? (selected.width && selected.height ? { width: selected.width, height: selected.height } : null));
   const edgeLighting = mode === "edge-lighting";
   // Edge lighting never diffuses, even on a diffusion-capable source. Older
   // services omit this capability; retain their inputs for the other modes.
-  const usesDiffusion = !edgeLighting && data?.usesDiffusion !== false;
+  const usesDiffusion = !edgeLighting && !upscale && data?.usesDiffusion !== false;
   const plainRestore = !usesDiffusion && mode === "restore";
-  const formDisabled = busy || hasActive || !synced || gone;
-  const valid = strength.trim() !== "" && Number(strength) >= 0.15 && Number(strength) <= 0.65
+  const formDisabled = busy || hasActive || !synced || gone || terminalVersion;
+  const valid = upscale || strength.trim() !== "" && Number(strength) >= 0.15 && Number(strength) <= 0.65
     && (!usesDiffusion || seed.trim() !== "" && Number.isInteger(Number(seed)) && Number(seed) >= 0 && Number(seed) <= 2147483647);
   const canSubmit = !formDisabled && valid && modes.includes(mode as RefinementMode) && !!selected && readable(selected);
   const edit = (setter: (value: string) => void, value: string) => { setter(value); setRetryRequest(null); };
@@ -188,7 +200,7 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
   const submit = (retry = false) => {
     if (!canSubmit || !data || !mode || control.current.busy || !retry && retryRequest) return;
     const body = retry ? retryRequest : { sourceJobId, parentVersionId: data.selectedVersionId, mode,
-      strength: Number(strength), prompt: usesDiffusion ? prompt : "", negativePrompt: usesDiffusion ? negativePrompt : "",
+      strength: upscale ? .3 : Number(strength), prompt: usesDiffusion ? prompt : "", negativePrompt: usesDiffusion ? negativePrompt : "",
       seed: usesDiffusion ? Number(seed) : 0, requestId: crypto.randomUUID() };
     if (body) void mutate(signal => refinementApi.create(body, signal), body);
   };
@@ -197,20 +209,21 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
     <header className="refinement-heading"><div><h2 ref={heading} tabIndex={-1}>独立精修</h2>
       <p>每次只修一轮。选择一个可用版本作为下一轮父图，原图和已完成版本始终保留。</p></div>
       <button type="button" className="secondary-button" onClick={onClose}>关闭精修</button></header>
-    <p className="refinement-note">人脸区域由当前参考自动定位。回到原图或结果仅切换工作区选择，不覆盖历史主图。</p>
+    <p className="refinement-note">{upscale ? "清晰增强处理整张图像，不是修脸；请完成其他精修后再执行。" : "人脸区域由当前参考自动定位。"}回到原图或结果仅切换工作区选择，不覆盖历史主图。</p>
     {readError && <div className="refinement-error" role="alert">{readError}{!gone && <button type="button" className="secondary-button" disabled={busy} onClick={() => void refresh()}>重试读取版本</button>}</div>}
     {actionError && <p className="refinement-error" role="alert">{actionError}</p>}
     {!data && !readError && <p role="status">正在读取精修版本…</p>}
     {data && <>
       <div className="refinement-body">
         <figure className="refinement-preview">
-          {selected && readable(selected) ? <a href={selected.imageUrl!} target="_blank" rel="noreferrer"><img key={imageKey(selected)} src={selected.imageUrl!} alt="当前精修图像" decoding="async"
-            onError={() => setBrokenImages(previous => new Set([...previous, imageKey(selected)]))} /></a>
+          {selected && readable(selected) ? <ImageInspection src={selected.imageUrl!} alt="当前精修图像"
+            onDimensions={dimensions => setImageDimensions(previous => ({ ...previous, [imageKey(selected)]: dimensions }))}
+            onError={() => setBrokenImages(previous => new Set([...previous, imageKey(selected)]))} />
             : <div role="status">当前版本图片不可用，请选择其他已完成版本。
               {selected?.imageUrl && brokenImages.has(imageKey(selected)) && <button type="button" className="secondary-button"
                 onClick={() => setBrokenImages(previous => { const next = new Set(previous); next.delete(imageKey(selected)); return next; })}>重试当前图像</button>}
             </div>}
-          <figcaption>当前父图：{versionLabel(data.selectedVersionId)} · 点击图像查看原尺寸
+          <figcaption>当前版本：{versionLabel(data.selectedVersionId)}{selectedDimensions && ` · ${selectedDimensions.width} × ${selectedDimensions.height}`} · 点击图像打开原文件
             {downloadUrl && <a className="secondary-button refinement-download" href={downloadUrl} download={downloadName}>下载当前版本</a>}
           </figcaption>
         </figure>
@@ -221,18 +234,23 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
               {modes.map(value => <option value={value} key={value}>{modeLabels[value]}</option>)}
             </select></label>
             {data.modes === undefined && <p className="refinement-note">服务未提供模式列表，暂用人脸修复。</p>}
-            <label>{edgeLighting ? "协调强度" : plainRestore ? "细节修复强度" : "精修强度"}<input type="number" min="0.15" max="0.65" step="0.01" value={strength} onChange={event => edit(setStrength, event.target.value)} /></label>
+            {!upscale && <label>{edgeLighting ? "协调强度" : plainRestore ? "细节修复强度" : "精修强度"}<input type="number" min="0.15" max="0.65" step="0.01" value={strength} onChange={event => edit(setStrength, event.target.value)} /></label>}
+            {upscale && <>
+              {!terminalVersion && <p className="refinement-note">{selectedDimensions ? `来源尺寸：${selectedDimensions.width} × ${selectedDimensions.height} → 目标尺寸：${selectedDimensions.width * 2} × ${selectedDimensions.height * 2}（宽高各2倍）` : "来源尺寸尚未返回；图像读取后显示实际尺寸与2倍目标。"}</p>}
+              <p className="refinement-note">2倍清晰增强是最后一步，不保证恢复原图中缺失的真实细节。原图与已有版本保留；增强后如需精修，请选择增强前版本。</p>
+            </>}
             {plainRestore && <p className="refinement-note">强度仅调节 GFPGAN 细节修复的混合比例；身份回贴始终执行。</p>}
             {edgeLighting && <p className="refinement-note">仅微调羽化皮肤边缘环的亮度，RGB 调整不超过 ±8；中央五官与环外像素保持不变。</p>}
             {usesDiffusion ? <>
               <label>精修提示词<textarea rows={3} value={prompt} onChange={event => edit(setPrompt, event.target.value)} /></label>
               <label>精修负面提示词<textarea rows={2} value={negativePrompt} onChange={event => edit(setNegativePrompt, event.target.value)} /></label>
               <label>精修种子<input type="number" min="0" max="2147483647" step="1" value={seed} onChange={event => edit(setSeed, event.target.value)} /></label>
-            </> : <p className="refinement-note">{edgeLighting ? "边缘光照协调不使用提示词和随机种子" : "身份修复不使用提示词和随机种子"}</p>}
+            </> : !upscale && <p className="refinement-note">{edgeLighting ? "边缘光照协调不使用提示词和随机种子" : "身份修复不使用提示词和随机种子"}</p>}
           </fieldset>
+          {terminalVersion && <p role="status" className="refinement-note">当前增强版本仅供查看和下载，请回到增强前版本继续加工。</p>}
           {!valid && <p className="refinement-error">强度须为 0.15–0.65{usesDiffusion ? "，种子须为 0–2147483647 的整数。" : "。"}</p>}
           {hasActive && <p role="status">有精修版本正在处理，完成或取消后可继续。</p>}
-          <button type="submit" className="primary-button" disabled={!canSubmit || !!retryRequest}>精修一轮</button>
+          <button type="submit" className="primary-button" disabled={!canSubmit || !!retryRequest}>{upscale ? "开始2倍清晰增强" : "精修一轮"}</button>
           {retryRequest && <button type="button" className="secondary-button" disabled={!canSubmit} onClick={() => submit(true)}>重试本次提交</button>}
         </form>
       </div>
@@ -240,7 +258,7 @@ function RefinementSession({ sourceJobId, onClose }: Props) {
         {versions.map(item => <article className={`refinement-version${item.id === data.selectedVersionId ? " is-selected" : ""}`} key={item.id}>
           <button type="button" className="secondary-button" aria-pressed={item.id === data.selectedVersionId} disabled={busy || !readable(item)}
             onClick={() => select(item.id)}>{item.id === "result" ? "回到生成结果" : item.id === "original" ? "回到生成原图" : `选择${versionLabel(item.id)}`}</button>
-          <span>{stateLabels[item.state]}</span>
+          <span>{item.settings.mode === "upscale" && item.state === "running" ? "清晰增强中" : stateLabels[item.state]}</span>
           {item.id !== "result" && item.id !== "original" && <small>父图：{versionLabel(item.parentVersionId)} · {item.createdAt}</small>}
           {item.message && item.message !== item.state && <p>{item.message}</p>}
           {item.error && <p className="refinement-error">{item.error}</p>}

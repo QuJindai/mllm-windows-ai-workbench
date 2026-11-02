@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { HQAsset, HQCatalog, HQJob, HQParameters, HQRole, HQStatus } from "../../domain/hq-tryon";
-import { defaultHQIdentity, defaultHQParameters, hqActive, hqError, hqExecutionBasis, hqRoleLabels, hqRoles, hqStateLabels, validHQParameters } from "../../domain/hq-tryon";
+import { defaultHQIdentity, defaultHQParameters, hqActive, hqError, hqExecutionBasis, hqResolutionPresets, hqRoleLabels, hqRoles, hqStateLabels, validHQParameters } from "../../domain/hq-tryon";
 import type { IdentityJob, IdentityProfile, IdentityStatus } from "../../domain/identity";
 import { identityStateLabels } from "../../domain/identity";
 import { identityApi } from "../../providers/identity-api";
 import { FacePolishControls } from "../components/identity/FacePolishControls";
-import { JobResultPreview } from "../components/identity/IdentityResults";
+import { JobResultPreview, ResultPreview } from "../components/identity/IdentityResults";
 import { RefinementWorkspace } from "../components/identity/RefinementWorkspace";
+import { refinementApi } from "../../providers/refinement-api";
+import type { RefinementSnapshot } from "../../providers/refinement-api";
 import { useDeletedImageIds } from "../image-deletion";
-import { hqApi, hqFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, saveHQOperation, writeHQDraft } from "../../providers/hq-tryon-api";
+import { hqApi, hqFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, reserveHQRetry, retryableHQJob, saveHQOperation, writeHQDraft } from "../../providers/hq-tryon-api";
 import type { HQOperation } from "../../providers/hq-tryon-api";
 import "./HQTryOnPage.css";
 
@@ -52,6 +54,8 @@ export function HQTryOnPage() {
   const catalog = status?.authorized && status.configured && loadedCatalog?.key === catalogKey ? loadedCatalog.data : null;
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [jobsRevision, setJobsRevision] = useState(-1);
+  const [detailRevision, setDetailRevision] = useState(-1);
   const [connectionError, setConnectionError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [notice, setNotice] = useState<HQActionNotice | null>(null);
@@ -70,6 +74,9 @@ export function HQTryOnPage() {
   const validFace = Number.isFinite(faceOptions.faceRestoreStrength) && faceOptions.faceRestoreStrength >= 0 && faceOptions.faceRestoreStrength <= 1 && (!faceOptions.facePolish || identityStatus?.facePolish?.ready === true && !identityError);
   const ready = reconciled && validProfile && validFace && status?.configured === true && status.authorized === true && status.modelReady === true && !connectionError;
   const allSelected = hqRoles.every(role => selection[role]);
+  const retryJobs = job?.id === activeId ? [job, ...jobs.filter(item => item.id !== job.id)] : jobs;
+  const retryJob = reconciled && !loading && !detailLoading && !connectionError && !detailError && jobsRevision === refresh && detailRevision === refresh
+    && job?.id === activeId && job.id === operation?.jobId ? retryableHQJob(operation, retryJobs) : undefined;
   const currentStatus = connectionError ? null : status;
   let noticeText = "";
   if (notice?.jobId === activeId) {
@@ -112,11 +119,16 @@ export function HQTryOnPage() {
     Promise.all([hqApi.status(controller.signal), hqApi.jobs(controller.signal)]).then(([nextStatus, nextJobs]) => {
       if (!alive) return;
       setStatus(nextStatus); setJobs(nextJobs);
-      reconcileHQOperations(nextJobs); setReconciled(true); setConnectionError("");
+      const successors = new Map<string, string>();
+      reconcileHQOperations(nextJobs, (previousId, nextId) => successors.set(previousId, nextId));
+      setReconciled(true); setJobsRevision(refresh); setConnectionError("");
       const pendingKey = pendingCreate.current?.idempotencyKey;
       const pendingJob = pendingKey ? nextJobs.find(item => item.idempotencyKey === pendingKey) : undefined;
       setReceiptVersion(n => n + 1);
-      setActiveId(id => pendingJob?.id || id || nextJobs[0]?.id || "");
+      setActiveId(id => {
+        const selected = pendingJob?.id || id;
+        return successors.get(selected) || selected || nextJobs[0]?.id || "";
+      });
     }).catch(e => { if (alive) { setReconciled(false); setConnectionError(describe(e)); } }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; controller.abort(); };
   }, [refresh]);
@@ -136,7 +148,7 @@ export function HQTryOnPage() {
     const controller = new AbortController(); let alive = true;
     setDetailLoading(true); setDetailError("");
     setJob(previous => previous?.id === activeId ? previous : null);
-    hqApi.job(activeId, controller.signal).then(value => { if (alive && epoch === detailEpoch.current) setJob(value); })
+    hqApi.job(activeId, controller.signal).then(value => { if (alive && epoch === detailEpoch.current) { setJob(value); setDetailRevision(refresh); } })
       .catch(e => { if (alive && epoch === detailEpoch.current) setDetailError(describe(e)); })
       .finally(() => { if (alive && epoch === detailEpoch.current) setDetailLoading(false); });
     return () => { alive = false; controller.abort(); };
@@ -184,18 +196,20 @@ export function HQTryOnPage() {
 
   function switchKind(next: HQRole) { setKind(next); setSearch(""); setFilters({ q: "", category: "", page: 0 }); }
   function searchCatalog(event: FormEvent) { event.preventDefault(); setFilters(current => ({ ...current, q: search.trim(), page: 0 })); }
-  async function generate() {
+  async function generate(newAttempt = false) {
     if (submittingRef.current || !allSelected || !ready || !validHQParameters(parameters)) return;
-    if (operation?.jobId) { setActiveId(operation.jobId); setRefresh(n => n + 1); return; }
+    if (newAttempt && (!retryJob || !operation)) return;
+    if (!newAttempt && operation?.jobId) { setActiveId(operation.jobId); setRefresh(n => n + 1); return; }
     submittingRef.current = true; setSubmitting(true); setActionError(""); setNotice(null);
     let dispatched = false;
     try {
-      const receipt = reserveHQOperation(body, jobs);
+      const receipt = newAttempt ? await reserveHQRetry(body, retryJobs, operation!.idempotencyKey) : reserveHQOperation(body, jobs);
       if (receipt.jobId) { setActiveId(receipt.jobId); setRefresh(n => n + 1); return; }
       saveHQOperation({ ...receipt, delivery: "unknown" });
       pendingCreate.current = receipt;
       dispatched = true;
       const created = await hqApi.create({ ...body, idempotencyKey: receipt.idempotencyKey });
+      if (created.id === receipt.retryOf || created.idempotencyKey && created.idempotencyKey !== receipt.idempotencyKey) throw new Error("服务回执与本次请求不匹配");
       saveHQOperation({ ...receipt, jobId: created.id, delivery: "submitted" });
       setActiveId(created.id);
       // Polling or cancellation may already have a newer state than the POST receipt.
@@ -282,15 +296,29 @@ export function HQTryOnPage() {
           <figcaption>{hqRoleLabels[role]}</figcaption>
           {selection[role] ? <><HQImage src={hqApi.assetUrl(role, selection[role]!.id)} alt={`已选${hqRoleLabels[role]}原图`} /><p>{assetName(selection[role]!)}</p><a href={hqApi.assetUrl(role, selection[role]!.id)} target="_blank" rel="noreferrer">打开{hqRoleLabels[role]}原图</a></> : <p className="hq-empty">尚未选择</p>}
         </figure>)}</div>
+        <label className="hq-resolution">尺寸预设<select
+          value={hqResolutionPresets.some(preset => preset.width === parameters.width && preset.height === parameters.height) ? `${parameters.width}x${parameters.height}` : "custom"}
+          onChange={event => {
+            const preset = hqResolutionPresets.find(item => `${item.width}x${item.height}` === event.target.value);
+            if (preset) setParameters(previous => ({ ...previous, width: preset.width, height: preset.height }));
+          }}>
+          <option value="custom">自定义尺寸</option>
+          {hqResolutionPresets.map(preset => <option key={preset.label} value={`${preset.width}x${preset.height}`}>{preset.label}</option>)}
+        </select></label>
+        <p className="hq-hint">全身成片建议选高清 768×1152，标准 512×768 适合快速预览。高清生成更慢，显存占用更高；已有草稿只在你选择预设时更改宽高。</p>
         <div className="hq-parameters">{([
-          ["seed", "种子", 0, 2147483647, 1], ["width", "宽度", 256, 768, 64], ["height", "高度", 256, 768, 64], ["steps", "步数", 1, 50, 1],
+          ["seed", "种子", 0, 2147483647, 1], ["width", "宽度", 256, 1152, 64], ["height", "高度", 256, 1152, 64], ["steps", "步数", 1, 50, 1],
         ] as const).map(([key, label, min, max, step]) => <label key={key}>{label}<input type="number" min={min} max={max} step={step} value={parameters[key]} onChange={e => setParameters(previous => ({ ...previous, [key]: Number(e.target.value) }))} /></label>)}</div>
-        {!validHQParameters(parameters) && <p className="hq-error">种子需为 0–2147483647 的整数；宽高需为 256–768 间 64 的倍数，总像素不超过 393216；步数为 1–50。</p>}
+        {!validHQParameters(parameters) && <p className="hq-error">种子需为 0–2147483647 的整数；宽高需为 256–1152 间 64 的倍数，总像素不超过 884736；步数为 1–50。</p>}
         <FacePolishControls value={faceOptions} capability={identityStatus?.facePolish} defaultStrength={defaultHQIdentity.faceRestoreStrength} onChange={value => setFaceOptions({ facePolish: value.facePolish, faceRestoreStrength: value.faceRestoreStrength })} />
         <p className="hq-hint">同一组三图、人物档案和处理参数会复用请求编号。更换素材或种子可创建新任务。</p>
-        <button className="primary-button hq-generate" disabled={submitting || !ready || !allSelected || !validHQParameters(parameters)} onClick={generate}>
+        <button className="primary-button hq-generate" disabled={submitting || !ready || !allSelected || !validHQParameters(parameters)} onClick={() => void generate()}>
           {submitting ? "正在提交…" : operation?.jobId ? "查看本组已有任务" : operation?.delivery === "unknown" ? "重发同一请求" : "本机生成"}
         </button>
+        {retryJob && <div className="hq-result-actions"><button type="button" className="secondary-button"
+          disabled={submitting || !ready || !allSelected || !validHQParameters(parameters)} onClick={() => void generate(true)}>按相同设置新建重试</button>
+          <p className="hq-hint">服务已确认本组任务{hqStateLabels[retryJob.state]}。点击会以当前三图、人物选项和参数新建一次尝试，旧任务保留。</p>
+        </div>}
         {operation?.delivery === "unknown" && !operation.jobId && <p className="hq-hint">上次提交尚未确认。刷新只查询已有任务，不会自动重复生成。</p>}
         {noticeText && <p role="status" className="hq-hint">{noticeText}</p>}{actionError && <p role="alert" className="hq-error">{actionError}</p>}
       </section>
@@ -312,6 +340,7 @@ export function HQTryOnPage() {
           {typeof job.progress === "number" && Number.isFinite(job.progress) && <progress aria-label="本机任务进度" max={100} value={Math.min(100, Math.max(0, job.progress))} />}
           {job.state === "queued" && <p className="hq-hint">等待本机生成资源。其他 Dream 任务占用 GPU 时，本任务保持排队。</p>}
           {hqError(job.error) && <p role="alert" className="hq-error">{hqError(job.error)}</p>}
+          {typeof job.error === "object" && job.error?.code === "HQ_PERSON_MISMATCH" && <p className="hq-hint">要使用新选的照片，请把“固定人物档案”改为“使用所选 R2 人物图”；要保留档案，请选择该档案的建档原图。修改后再提交。</p>}
           <div className="hq-input-grid">{hqRoles.map(role => {
             const input = job.inputs.find(item => item.role === role), width = input?.width ?? input?.dimensions?.width, height = input?.height ?? input?.dimensions?.height;
             return <figure key={role}><figcaption>{hqRoleLabels[role]}输入</figcaption>{input ? <>
@@ -326,7 +355,7 @@ export function HQTryOnPage() {
           {job.state === "succeeded" && !resultDeleted && <div className="hq-result">
             <h3>实际成片</h3>
             {job.identityJobId && <HQIdentityResult key={job.identityJobId} identity={linkedIdentity?.id === job.identityJobId ? linkedIdentity : null} unavailable={!!linkedIdentityError} refinementsAvailable={job.refinementsAvailable !== false} />}
-            {resultUrl ? <>{!job.identityJobId && <img src={resultUrl} alt="HQ 本机试衣成片" />}<a className="primary-button" href={resultUrl} download={`${job.id}.png`}>下载成片原图</a><p className="hq-hint">本次任务成片 SHA-256 已校验。精修版本使用各自的下载入口。</p><small>任务成片 SHA-256：{resultSha}</small></> : resultError ? <p className="hq-error" role="alert">{resultError}</p> : <p role="status">正在读取并校验成片…</p>}
+            {resultUrl ? <>{!job.identityJobId && <ResultPreview key={resultUrl} imageUrl={resultUrl} label="HQ 本机试衣成片" />}<a className="secondary-button" href={resultUrl} target="_blank" rel="noreferrer">打开成片原文件 / 放大查看</a><a className="primary-button" href={resultUrl} download={`${job.id}.png`}>下载成片原图</a><p className="hq-hint">本次任务成片 SHA-256 已校验。精修版本使用各自的下载入口。</p><small>任务成片 SHA-256：{resultSha}</small></> : resultError ? <p className="hq-error" role="alert">{resultError}</p> : <p role="status">正在读取并校验成片…</p>}
           </div>}
           <details className="hq-audit"><summary>输入绑定与本地审计</summary><pre>{job.localAudit || job.audit ? JSON.stringify(job.localAudit || job.audit, null, 2) : "尚无审计记录。任务提交或模型就绪不代表图片已生成，也不代表三图绑定已通过验证。"}</pre></details>
         </> : <p>{detailLoading ? "正在读取任务…" : "选择一个任务查看输入、进度和成片。"}</p>}
@@ -336,12 +365,27 @@ export function HQTryOnPage() {
 }
 
 function HQIdentityResult({ identity, unavailable, refinementsAvailable }: { identity: IdentityJob | null; unavailable: boolean; refinementsAvailable: boolean }) {
-  const [refining, setRefining] = useState(false);
+  const [refining, setRefining] = useState<"default" | "upscale" | null>(null);
+  const [refinements, setRefinements] = useState<RefinementSnapshot | null>(null);
+  const sourceId = !unavailable && identity?.state === "complete" && identity.result ? identity.id : null;
+  useEffect(() => {
+    if (!sourceId || !refinementsAvailable || refining) return;
+    const request = new AbortController();
+    setRefinements(null);
+    void refinementApi.list(sourceId, request.signal).then(data => {
+      if (!request.signal.aborted) setRefinements(data);
+    }).catch(() => { if (!request.signal.aborted) setRefinements(null); });
+    return () => request.abort();
+  }, [sourceId, refinementsAvailable, refining]);
   return <div className="hq-identity-result">
     {!unavailable && identity?.state === "complete" && identity.result ? <>
       <JobResultPreview job={identity} />
-      {refinementsAvailable && <button className="secondary-button" onClick={() => setRefining(true)}>独立精修与版本对比</button>}
-      {refining && refinementsAvailable && <RefinementWorkspace sourceJobId={identity.id} onClose={() => setRefining(false)} />}
+      {refinementsAvailable && <div className="hq-result-actions">
+        <button className="secondary-button" disabled={!!refining} onClick={() => setRefining("default")}>独立精修与版本对比</button>
+        {refinements?.sourceJobId === identity.id && refinements.modes?.includes("upscale") && <button className="primary-button" disabled={!!refining} onClick={() => setRefining("upscale")}>2倍清晰增强</button>}
+      </div>}
+      {refining && refinementsAvailable && <RefinementWorkspace sourceJobId={identity.id} initialMode={refining === "upscale" ? "upscale" : undefined}
+        onSnapshot={setRefinements} onClose={() => setRefining(null)} />}
     </> : !unavailable && <p role="status">正在核对人物底图与可选换脸结果…</p>}
   </div>;
 }

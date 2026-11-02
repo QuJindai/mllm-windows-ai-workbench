@@ -1,8 +1,11 @@
 """Independent one-pass edits; plain restoration never loads a generation session."""
 from __future__ import annotations
 
+import hashlib
 import os
+import math
 from pathlib import Path
+import re
 import sys
 import tempfile
 from time import perf_counter
@@ -20,11 +23,31 @@ class _EditSettings(BaseModel):
     # The service also sends version/request identifiers, which are not inference
     # options. Only these fields may override the validated generation request.
     model_config = ConfigDict(strict=True, allow_inf_nan=False)
-    mode: Literal['restore', 'redraw', 'reference-anchor', 'edge-lighting']
+    mode: Literal['restore', 'redraw', 'reference-anchor', 'edge-lighting', 'upscale']
     strength: float = Field(ge=.15, le=.65)
     prompt: str = Field(default='', max_length=2000)
     negativePrompt: str = Field(default='', max_length=2000)
     seed: int = Field(ge=0, le=2147483647)
+
+
+def upscale_size(size):
+    width, height = size
+    if (any(type(value) is not int or not 0 < value <= 1152 for value in size)
+            or width * height > 884736):
+        raise ValueError('清晰增强源图每边不得超过1152、总像素不得超过884736')
+    return width * 2, height * 2
+
+
+def _validate_upscale_audit(details, source_size, output_size):
+    if (not isinstance(details, dict)
+            or not isinstance(details.get('modelSha256'), str)
+            or re.fullmatch(r'[a-fA-F0-9]{64}', details['modelSha256']) is None
+            or (details.get('inputWidth'), details.get('inputHeight')) != source_size
+            or (details.get('outputWidth'), details.get('outputHeight')) != output_size
+            or type(details.get('durationMs')) not in (int, float)
+            or not math.isfinite(details['durationMs']) or details['durationMs'] < 0
+            or details.get('tileSize') != 128):
+        raise ValueError('清晰增强模型指纹、尺寸或耗时审计不完整')
 
 
 def _publish_image(image, output):
@@ -53,29 +76,36 @@ def refine(config, request, *, restore_factory=None):
     settings = _EditSettings.model_validate(request['editSettings'])
     visual = is_visual_model_id(request.get('modelId'))
     edge_lighting = settings.mode == 'edge-lighting'
-    if not edge_lighting and (settings.mode == 'restore') == visual:
+    upscale = settings.mode == 'upscale'
+    if not (edge_lighting or upscale) and (settings.mode == 'restore') == visual:
         raise ValueError('精修模式与人物模型不兼容')
     source, output = Path(request['sourcePath']), Path(request['outputPath'])
     if output.exists() or output.is_symlink():
         raise FileExistsError('精修输出已存在，未覆盖')
-    if output.resolve() in (source.resolve(), Path(request['imagePath']).resolve()):
+    if (output.resolve() == source.resolve()
+            or request.get('imagePath') and output.resolve() == Path(request['imagePath']).resolve()):
         raise ValueError('精修输出不能覆盖原图或参考照')
 
     point = perf_counter()
-    with Image.open(source) as opened:
-        if opened.size != (request['width'], request['height']):
-            raise ValueError('精修源图尺寸与原任务不一致')
-        baseline = opened.convert('RGB')
+    with source.open('rb') as stream:
+        if upscale:
+            source_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            stream.seek(0)
+        with Image.open(stream) as opened:
+            if opened.size != (request['width'], request['height']):
+                raise ValueError('精修源图尺寸与原任务不一致')
+            baseline = opened.convert('RGB')
     phases['read'] = (perf_counter() - point) * 1000
+    output_size = upscale_size(baseline.size) if upscale else baseline.size
 
     item = {**request, 'seed': settings.seed}
-    if not edge_lighting:
+    if not (edge_lighting or upscale):
         item.update(facePolish=True, faceRestoreStrength=settings.strength,
                     animeDenoiseStrength=settings.strength, visualPolishPasses=1)
-    if visual and not edge_lighting:
+    if visual and not (edge_lighting or upscale):
         item.update(visualPolishMode=settings.mode, visualPolishPrompt=settings.prompt,
                     visualPolishNegativePrompt=settings.negativePrompt)
-    elif item.get('animeProfileId') and not edge_lighting:
+    elif item.get('animeProfileId') and not (edge_lighting or upscale):
         # The session must initialize anime_projected even when the source was
         # generated with optional polishing disabled. Empty text keeps the scene
         # prompt needed by the existing anime polisher/identity request contract.
@@ -90,7 +120,7 @@ def refine(config, request, *, restore_factory=None):
 
     owned_stages = False
     try:
-        if visual and not edge_lighting:
+        if visual and not (edge_lighting or upscale):
             from identity_stage_artifacts import visual_stage_path
             # A fresh parent-issued jobId owns this directory. Refuse collisions
             # before creating a polisher that could clean up pre-existing stages.
@@ -99,7 +129,9 @@ def refine(config, request, *, restore_factory=None):
             owned_stages = True
             visual_stage_path(item, 'anchor')
         point = perf_counter()
-        if edge_lighting:
+        if upscale:
+            from identity_upscale import enhance
+        elif edge_lighting:
             from identity_edge_lighting import improve_edge_lighting
         elif not visual and not item.get('animeProfileId'):
             from identity_pipeline import configure_cuda
@@ -114,13 +146,18 @@ def refine(config, request, *, restore_factory=None):
         point = perf_counter()
         # Do not use optional_face_polish: its fallback is appropriate for base
         # generation, but would turn a failed independent edit into fake success.
-        if edge_lighting:
+        if upscale:
+            # The helper owns model loading and its fixed tile=128 default.
+            candidate, details = enhance(config, baseline.copy(), stage)
+        elif edge_lighting:
             candidate, details = improve_edge_lighting(config, item, baseline.copy(), settings.strength, stage)
         else:
             candidate, details = processor.apply(baseline.copy(), item, settings.strength, stage)
         phases['polish'] = (perf_counter() - point) * 1000
-        if candidate.size != baseline.size or candidate.mode != 'RGB':
+        if candidate.size != output_size or candidate.mode != 'RGB':
             raise ValueError('精修输出尺寸或颜色格式异常')
+        if upscale:
+            _validate_upscale_audit(details, baseline.size, output_size)
         if details.get('status') in ('failed', 'disabled') or details.get('enabled') is False:
             raise ValueError('精修处理未成功，未发布回退图像')
     finally:
@@ -138,9 +175,14 @@ def refine(config, request, *, restore_factory=None):
 
     point = perf_counter()
     diagnostics = details.get('diagnostics')
+    if upscale:
+        diagnostics = {'available': False, 'reason': '清晰增强改变图像尺寸，不计算跨尺寸像素保持率',
+                       'inputSize': list(baseline.size), 'outputSize': list(output_size)}
     if edge_lighting and not isinstance(diagnostics, dict):
         raise ValueError('edge-lighting helper must return diagnostics from its actual masks')
-    if diagnostics is None:
+    if upscale:
+        unchanged = False  # A double-size output has no registered same-size pixel baseline.
+    elif diagnostics is None:
         diagnostics = compare_images(baseline, candidate, baseline_label='selected-source', candidate_label='refinement')
         unchanged = diagnostics['retention']['whole']['changedPixels'] == 0
     else:
@@ -154,6 +196,10 @@ def refine(config, request, *, restore_factory=None):
     phases['diagnostics'] = (perf_counter() - point) * 1000
     point = perf_counter()
     _publish_image(candidate, output)
+    if upscale:
+        with output.open('rb') as stream:
+            details = {**details, 'sourceSha256': source_digest,
+                       'outputSha256': hashlib.file_digest(stream, 'sha256').hexdigest()}
     phases['save'] = (perf_counter() - point) * 1000
     # Those stage images were private scratch, not readable history versions.
     polish = {key: value for key, value in details.items() if key not in ('snapshots', 'diagnostics')}

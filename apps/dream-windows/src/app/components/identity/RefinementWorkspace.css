@@ -11,7 +11,7 @@
 .refinement-preview { margin: 0; min-width: 0; text-align: center; border-radius: 12px; overflow: hidden; background: var(--bg-surface, #181a20); }
 .refinement-preview a { display: block; }
 .refinement-preview img { display: block; width: 100%; max-height: 640px; object-fit: contain; }
-.refinement-preview > div { padding: 64px 20px; }
+.refinement-preview > div[role="status"] { padding: 64px 20px; }
 .refinement-preview figcaption { padding: 12px; font-size: 13px; line-height: 1.6; }
 .refinement-preview a.refinement-download { display: inline-block; margin: 8px; padding: 8px 14px; text-decoration: none; }
 .refinement-form { display: grid; gap: 12px; }

@@ -4,6 +4,7 @@ import { hqActive, hqError, hqExecutionBasis, validHQParameters } from "../domai
 const root = "/api/hq";
 const validId = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id);
 const cleanParameters = (p: HQParameters): HQParameters => ({ seed: p.seed, width: p.width, height: p.height, steps: p.steps });
+const sha256Hex = async (bytes: BufferSource) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), n => n.toString(16).padStart(2, "0")).join("");
 function identifier(id: string) { if (!validId(id)) throw new Error("HQ 编号无效"); return encodeURIComponent(id); }
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(root + path, { ...init, credentials: "same-origin", redirect: "error", cache: "no-store",
@@ -53,14 +54,14 @@ export const hqApi = {
     if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || header && header !== expected) throw new Error("成片校验信息不一致");
     const blob = await response.blob();
     if (!blob.size || blob.size > 32 * 1024 * 1024) throw new Error("成片大小无效");
-    const actual = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())), n => n.toString(16).padStart(2, "0")).join("");
+    const actual = await sha256Hex(await blob.arrayBuffer());
     if (actual !== expected) throw new Error("成片 SHA-256 校验失败，已阻止预览和下载");
     return blob;
   },
 };
 
 // Only selection IDs, parameters and receipts are persisted. No pixels or authorization material.
-export interface HQOperation { fingerprint: string; idempotencyKey: string; jobId?: string; delivery: "prepared" | "unknown" | "submitted" }
+export interface HQOperation { fingerprint: string; idempotencyKey: string; jobId?: string; retryOf?: string; delivery: "prepared" | "unknown" | "submitted" }
 export interface HQDraft extends HQIdentityOptions { selection: Partial<Record<HQRole, HQAsset>>; parameters: HQParameters; activeJobId?: string }
 // Unqualified v1 receipts belong to the earlier execution basis. Never upgrade
 // them by filling defaults; verified current server jobs can restore their keys.
@@ -85,42 +86,90 @@ function storedOperations(storage: Storage): HQOperation[] {
   const values: unknown = JSON.parse(storage.getItem(operationsKey) || "[]");
   if (!Array.isArray(values)) return [];
   return values.filter(r => r && validFingerprint(r.fingerprint) && validKey(r.idempotencyKey)
-    && (!r.jobId || validId(r.jobId)) && ["prepared", "unknown", "submitted"].includes(r.delivery))
-    .map(({ fingerprint, idempotencyKey, jobId, delivery }) => ({ fingerprint: JSON.stringify(JSON.parse(fingerprint)), idempotencyKey, jobId, delivery }));
+    && (!r.jobId || validId(r.jobId)) && (r.retryOf === undefined || validId(r.retryOf)) && ["prepared", "unknown", "submitted"].includes(r.delivery))
+    .map(({ fingerprint, idempotencyKey, jobId, retryOf, delivery }) => ({ fingerprint: JSON.stringify(JSON.parse(fingerprint)), idempotencyKey, jobId, retryOf, delivery }));
 }
 export function readHQOperations(): HQOperation[] {
   try { return storedOperations(localStorage); } catch { return []; /* Writes still fail closed before POST. */ }
 }
-export function saveHQOperation(operation: HQOperation) {
-  const values = readHQOperations().filter(value => value.fingerprint !== operation.fingerprint);
-  const { fingerprint, idempotencyKey, jobId, delivery } = operation;
-  if (!validFingerprint(fingerprint) || !validKey(idempotencyKey) || jobId && !validId(jobId)) throw new Error("HQ 请求回执无效");
-  localStorage.setItem(operationsKey, JSON.stringify([...values, { fingerprint, idempotencyKey, jobId, delivery }]));
+function persistHQOperation(operation: HQOperation, expectedKey: string) {
+  const receipts = storedOperations(localStorage), previous = receipts.find(value => value.fingerprint === operation.fingerprint);
+  if (previous ? previous.idempotencyKey !== expectedKey : expectedKey !== operation.idempotencyKey) throw new Error("请求回执已更新，请先刷新核对当前尝试");
+  const values = receipts.filter(value => value.fingerprint !== operation.fingerprint);
+  const { fingerprint, idempotencyKey, jobId, retryOf, delivery } = operation;
+  if (!validFingerprint(fingerprint) || !validKey(idempotencyKey) || jobId && !validId(jobId) || retryOf !== undefined && !validId(retryOf)) throw new Error("HQ 请求回执无效");
+  localStorage.setItem(operationsKey, JSON.stringify([...values, { fingerprint, idempotencyKey, jobId, retryOf, delivery }]));
 }
+export const saveHQOperation = (operation: HQOperation) => persistHQOperation(operation, operation.idempotencyKey);
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-function currentExecution(job: HQJob) {
+function hasCurrentBasis(job: HQJob) {
   const evidence = [job.pipeline, record(job.audit).pipeline, record(job.localAudit).pipeline,
     ...[job.result?.metadata, job.output?.metadata, job.identityResult?.metadata].map(metadata => record(record(metadata).hq).pipeline)]
     .filter(value => value !== undefined && value !== null);
-  return validId(job.identityJobId) && evidence.length > 0 && evidence.every(value => value === hqExecutionBasis);
+  return evidence.length > 0 && evidence.every(value => value === hqExecutionBasis);
 }
-export function hqJobFingerprint(job: HQJob): string | null {
-  if (!currentExecution(job) || !job.parameters || !validHQParameters(job.parameters)) return null;
+const currentExecution = (job: HQJob) => validId(job.identityJobId) && hasCurrentBasis(job);
+function jobSettingsFingerprint(job: HQJob): string | null {
+  if (!job.parameters || !validHQParameters(job.parameters)) return null;
   const personId = job.requestedInputIds?.person || job.inputs.find(input => input.role === "person")?.id;
   const garmentId = job.requestedInputIds?.garment || job.inputs.find(input => input.role === "garment")?.id;
   const poseId = job.requestedInputIds?.pose || job.inputs.find(input => input.role === "pose")?.id;
   return validId(personId) && validId(garmentId) && validId(poseId) ? hqFingerprint({ personId, garmentId, poseId, parameters: job.parameters, ...cleanIdentity(job) }) : null;
 }
-export function reconcileHQOperations(jobs: HQJob[]): HQOperation[] {
-  const receipts = readHQOperations(), matched = new Set<string>();
+export const hqJobFingerprint = (job: HQJob): string | null => currentExecution(job) ? jobSettingsFingerprint(job) : null;
+
+// The service emits ISO timestamps with an explicit offset and up to six fractional digits.
+function createdMicros(job: HQJob): number {
+  const parts = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/.exec(job.createdAt ?? "");
+  if (!parts) return NaN;
+  const [, clock, fraction = "", zone] = parts;
+  const calendar = Date.parse(clock + "Z");
+  if (!Number.isFinite(calendar) || new Date(calendar).toISOString().slice(0, 19) !== clock) return NaN;
+  const micros = Date.parse(clock + zone) * 1000 + Number(fraction.padEnd(6, "0"));
+  return Number.isSafeInteger(micros) ? micros : NaN;
+}
+
+function confirmedSuccessor(receipt: HQOperation, jobs: HQJob[]) {
+  if (!receipt.retryOf || receipt.delivery !== "submitted" || !receipt.jobId) return;
+  const current = jobs.find(job => job.id === receipt.jobId && job.idempotencyKey === receipt.idempotencyKey);
+  if (!current || hqActive(current) || hqJobFingerprint(current) !== receipt.fingerprint) return;
+  const currentTime = createdMicros(current);
+  if (!Number.isFinite(currentTime)) return;
+
+  let latestTime = currentTime;
+  let latest: HQJob | undefined;
+  for (const job of jobs) {
+    if (job.id === current.id || job.id === receipt.retryOf || job.idempotencyKey === receipt.idempotencyKey || !validKey(job.idempotencyKey)) continue;
+    if (hqJobFingerprint(job) !== receipt.fingerprint) continue;
+    const time = createdMicros(job);
+    if (time > latestTime) { latest = job; latestTime = time; }
+    else if (time === latestTime && latest?.id !== job.id) latest = undefined;
+  }
+  return latest;
+}
+
+export function reconcileHQOperations(jobs: HQJob[], onSuccessor?: (previousId: string, nextId: string) => void): HQOperation[] {
+  const receipts = storedOperations(localStorage), matched = new Set<string>();
+  // Resolve a completed attempt before scanning the list, regardless of response order.
+  for (const receipt of receipts) {
+    const next = confirmedSuccessor(receipt, jobs);
+    if (!next?.idempotencyKey || !receipt.jobId) continue;
+    onSuccessor?.(receipt.jobId, next.id);
+    receipt.retryOf = receipt.jobId;
+    receipt.jobId = next.id;
+    receipt.idempotencyKey = next.idempotencyKey;
+  }
   for (const job of jobs) {
     if (!currentExecution(job) || !validKey(job.idempotencyKey)) continue;
     const prior = receipts.find(row => row.idempotencyKey === job.idempotencyKey);
     const fingerprint = hqJobFingerprint(job) || prior?.fingerprint;
-    if (!fingerprint || matched.has(fingerprint)) continue;
-    matched.add(fingerprint);
+    if (!fingerprint || matched.has(fingerprint) || prior && (prior.fingerprint !== fingerprint || prior.retryOf === job.id)) continue;
     const found = receipts.findIndex(row => row.fingerprint === fingerprint);
-    const receipt: HQOperation = { fingerprint, idempotencyKey: job.idempotencyKey, jobId: job.id, delivery: "submitted" };
+    // A human may have reserved another attempt with the same settings. An old
+    // list response must never replace that attempt, including an uncertain POST.
+    if (found >= 0 && receipts[found].retryOf && receipts[found].idempotencyKey !== job.idempotencyKey) continue;
+    matched.add(fingerprint);
+    const receipt: HQOperation = { fingerprint, idempotencyKey: job.idempotencyKey, jobId: job.id, retryOf: prior?.retryOf, delivery: "submitted" };
     if (found < 0) receipts.push(receipt); else receipts[found] = receipt;
   }
   // Persist only receipts qualified for this execution basis before enabling creation.
@@ -136,6 +185,34 @@ export function reserveHQOperation(body: Omit<HQCreateRequest, "idempotencyKey">
   // If browser storage fails, fail before POST, so an uncertain request remains recoverable.
   saveHQOperation(operation);
   return operation;
+}
+export function retryableHQJob(operation: HQOperation | undefined, jobs: HQJob[]): HQJob | undefined {
+  if (!operation?.jobId || operation.delivery !== "submitted") return;
+  const job = jobs.find(item => item.id === operation.jobId);
+  if (!job || !["failed", "cancelled"].includes(job.state) || job.idempotencyKey !== operation.idempotencyKey || !hasCurrentBasis(job)) return;
+  const fingerprint = jobSettingsFingerprint(job);
+  // An owned preparation failure can precede creation of the identity child.
+  if (fingerprint && fingerprint !== operation.fingerprint) return;
+  if (jobs.some(item => {
+    if (!hqActive(item) || !hasCurrentBasis(item)) return false;
+    const other = jobSettingsFingerprint(item);
+    return !other || other === operation.fingerprint;
+  })) return;
+  return job;
+}
+// Only the explicit terminal-retry UI calls this. Ordinary create/refresh always
+// reserves the current attempt through reserveHQOperation instead.
+export async function reserveHQRetry(body: Omit<HQCreateRequest, "idempotencyKey">, jobs: HQJob[], expectedKey: string): Promise<HQOperation> {
+  const previous = reconcileHQOperations(jobs).find(row => row.fingerprint === hqFingerprint(body));
+  if (!previous || previous.idempotencyKey !== expectedKey) throw new Error("请求回执已更新，请先刷新核对当前尝试");
+  const terminal = retryableHQJob(previous, jobs);
+  if (!terminal) throw new Error("仅服务确认失败或已取消且没有同组运行任务时，可按相同设置新建重试");
+  // One successor per terminal attempt, even if two tabs confirm concurrently.
+  // A later failed successor has a different job ID and gets its own fresh key.
+  const successor = await sha256Hex(new TextEncoder().encode(JSON.stringify([hqExecutionBasis, terminal.id, expectedKey])));
+  const next: HQOperation = { fingerprint: previous.fingerprint, idempotencyKey: `hq-local-${hqExecutionBasis}-retry-${successor}`, retryOf: terminal.id, delivery: "prepared" };
+  persistHQOperation(next, previous.idempotencyKey);
+  return next;
 }
 export function writeHQDraft(draft: HQDraft) {
   const selection: HQDraft["selection"] = {};

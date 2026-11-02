@@ -64,7 +64,7 @@ def test_loopback_create_read_result_hash_attachment_and_native_queue_binding(cl
 
 @pytest.mark.parametrize('change', [
     {'personId': '../credentials/vault-session.json'}, {'python': 'evil.exe'},
-    {'parameters': {'width': 768, 'height': 768}}, {'parameters': {'steps': 51}},
+    {'parameters': {'width': 1024, 'height': 1024}}, {'parameters': {'steps': 51}},
     {'parameters': {'width': '512'}}, {'parameters': {'seed': True}},
 ])
 def test_strict_post_rejects_paths_commands_extras_and_invalid_parameters(client, hq, change):

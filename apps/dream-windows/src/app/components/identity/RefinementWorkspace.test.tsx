@@ -34,6 +34,119 @@ const postCalls = () => fetchMock.mock.calls.filter(([, init]) => init?.method =
 const tick = async (ms = 1600) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 
 describe("RefinementWorkspace HTTP workflow", () => {
+  it("opens an advertised upscale mode without submitting, shows the real 2x target and sends fixed settings", async () => {
+    fetchMock.mockImplementation(async (_url, init) => init?.method === "POST" ? response(version("enhanced", "queued", { settings: { mode: "upscale" } }))
+      : response(snapshot({ modes: ["restore", "upscale"], defaultMode: "restore", usesDiffusion: true,
+        versions: [version("result", "complete", { width: 768, height: 1152 })] })));
+    render(<RefinementWorkspace sourceJobId="identity-source" initialMode="upscale" onClose={vi.fn()} />);
+    const enhance = await screen.findByRole("button", { name: "开始2倍清晰增强" });
+    expect(screen.getByLabelText("精修模式")).toHaveValue("upscale");
+    expect(screen.getByText(/来源尺寸：768 × 1152.*目标尺寸：1536 × 2304/)).toBeVisible();
+    expect(screen.getByText(/不保证恢复原图中缺失的真实细节/)).toBeVisible();
+    expect(screen.queryByLabelText("精修强度")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("精修提示词")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("精修负面提示词")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("精修种子")).not.toBeInTheDocument();
+    expect(postCalls()).toHaveLength(0);
+    fireEvent.click(enhance); fireEvent.click(enhance);
+    expect(postCalls()).toHaveLength(1);
+    expect(JSON.parse(postCalls()[0][1]!.body as string)).toEqual({ sourceJobId: "identity-source", parentVersionId: "result", mode: "upscale",
+      strength: .3, seed: 0, prompt: "", negativePrompt: "", requestId: expect.any(String) });
+    expect(await screen.findByRole("button", { name: "取消清晰增强 1" })).toBeEnabled();
+    expect(enhance).toBeDisabled();
+  });
+
+  it.each([undefined, ["restore"], []])("does not invent upscale capability for initialMode (modes=%s)", async modes => {
+    fetchMock.mockImplementation(async () => response(snapshot({ modes })));
+    render(<RefinementWorkspace sourceJobId="identity-source" initialMode="upscale" onClose={vi.fn()} />);
+    await ready();
+    expect(screen.queryByRole("option", { name: /2倍清晰增强/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始2倍清晰增强" })).not.toBeInTheDocument();
+    expect(postCalls()).toHaveLength(0);
+  });
+
+  it("ignores hidden invalid diffusion inputs and preserves the UUID on explicit upscale retry", async () => {
+    fetchMock.mockImplementation(async (_url, init) => init?.method === "POST" ? response({ detail: "响应丢失" }, 503)
+      : response(snapshot({ modes: ["restore", "upscale"], defaultMode: "restore" })));
+    open(); await ready();
+    fireEvent.change(screen.getByLabelText("精修强度"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("精修种子"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("精修提示词"), { target: { value: "旧修脸提示" } });
+    fireEvent.change(screen.getByLabelText("精修模式"), { target: { value: "upscale" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始2倍清晰增强" }));
+    const retry = await screen.findByRole("button", { name: "重试本次提交" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    const first = JSON.parse(postCalls()[0][1]!.body as string);
+    expect(first).toMatchObject({ mode: "upscale", strength: .3, seed: 0, prompt: "", negativePrompt: "" });
+    expect(postCalls()).toHaveLength(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(postCalls()).toHaveLength(2));
+    expect(JSON.parse(postCalls()[1][1]!.body as string)).toEqual(first);
+  });
+
+  it("keeps an enhanced version viewable and downloadable but requires selecting a pre-enhancement parent to edit", async () => {
+    let selectedVersionId = "enhanced";
+    fetchMock.mockImplementation(async (_url, init) => {
+      if (init?.method === "POST") selectedVersionId = JSON.parse(init.body as string).versionId;
+      return response(snapshot({ selectedVersionId, modes: ["restore", "upscale"], versions: [version("result"), version("enhanced", "complete", {
+        width: 1024, height: 1536, canRefine: false, settings: { mode: "upscale" }, metrics: { durationMs: 1000 },
+      })] }));
+    });
+    open(); await ready();
+    expect(screen.getByText(/请回到增强前版本继续加工/)).toBeVisible();
+    expect(screen.getByLabelText("精修模式")).toBeDisabled();
+    expect(await ready()).toBeDisabled();
+    expect(screen.getByRole("link", { name: "下载当前版本" })).toHaveAttribute("download", "identity-source-enhanced.png");
+    expect(screen.queryByRole("table", { name: /区域像素变化/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/1024 × 1536/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "回到生成结果" }));
+    await waitFor(() => expect(screen.getByLabelText("精修模式")).toBeEnabled());
+    expect(await ready()).toBeEnabled(); // Legacy undefined canRefine remains compatible.
+    expect(screen.queryByText(/请回到增强前版本继续加工/)).not.toBeInTheDocument();
+  });
+
+  it("cancels upscale through the existing endpoint and fences a stale running poll", async () => {
+    vi.useFakeTimers();
+    const running = snapshot({ modes: ["restore", "upscale"], versions: [version("result"), version("enhanced", "running", { settings: { mode: "upscale" } })] });
+    const gate = deferred<Response>();
+    fetchMock.mockResolvedValueOnce(response(running)).mockImplementationOnce(() => gate.promise)
+      .mockResolvedValueOnce(response(version("enhanced", "cancelled", { settings: { mode: "upscale" } })));
+    render(<RefinementWorkspace sourceJobId="identity-source" initialMode="upscale" onClose={vi.fn()} />);
+    await tick(0); await tick();
+    fireEvent.click(screen.getByRole("button", { name: "取消清晰增强 1" })); await tick(0);
+    expect(postCalls()[0][0]).toBe("/api/identity/refinements/enhanced/cancel");
+    await act(async () => gate.resolve(response(running)));
+    expect(screen.getByText("已取消")).toBeVisible();
+    expect(screen.getByRole("button", { name: "开始2倍清晰增强" })).toBeEnabled();
+  });
+
+  it("offers original-pixel and display-only zoom for the same image, resetting on version selection", async () => {
+    fetchMock.mockImplementation(async (_url, init) => response(snapshot({ modes: ["upscale"], selectedVersionId: init?.method === "POST" ? "original" : "result" })));
+    open(); await screen.findByRole("button", { name: "开始2倍清晰增强" });
+    expect(screen.getByText(/来源尺寸尚未返回/)).toBeVisible();
+    let img = screen.getByRole("img", { name: "当前精修图像" });
+    Object.defineProperties(img, { naturalWidth: { value: 512 }, naturalHeight: { value: 768 } });
+    fireEvent.load(img);
+    expect(screen.getByText(/来源尺寸：512 × 768.*目标尺寸：1024 × 1536/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "100% 原始尺寸" }));
+    expect(img).toHaveStyle({ width: "512px", height: "auto", maxWidth: "none", maxHeight: "none" });
+    fireEvent.click(screen.getByRole("button", { name: "200% 放大查看" }));
+    expect(img).toHaveStyle({ width: "1024px" });
+    expect(img).toHaveAttribute("src", "/images/result.png");
+    expect(screen.getByText(/仅放大显示，不增加图像细节/)).toBeVisible();
+    expect(postCalls()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "回到生成原图" }));
+    await waitFor(() => expect(screen.getByRole("img", { name: "当前精修图像" })).toHaveAttribute("src", "/images/original.png"));
+    expect(screen.getByRole("button", { name: "适应窗口" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "200% 放大查看" })).toBeDisabled();
+  });
+
+  it.each([{ width: 0 }, { height: -2 }, { width: 512.5 }, { canRefine: "false" }])("rejects malformed dimensions or refine capability: %j", async extra => {
+    fetchMock.mockImplementation(async () => response(snapshot({ versions: [version("result", "complete", extra)] })));
+    open(); expect(await screen.findByRole("alert")).toHaveTextContent("版本记录无效");
+    expect(screen.queryByRole("button", { name: "精修一轮" })).not.toBeInTheDocument();
+  });
+
   it("downloads the selected readable native version and follows a confirmed parent selection", async () => {
     const nativeVersions = [version("result", "complete", { imageUrl: "/api/history/identity-source/image" }),
       version("refine-one", "complete", { imageUrl: "/api/identity/refinements/refine-one/image" })];

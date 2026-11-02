@@ -48,14 +48,14 @@ PIPELINE = 'identity-session-hq-sd15-v1'
 class HQParameters(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True, allow_inf_nan=False)
     seed: int = Field(default=0, ge=0, le=2147483647)
-    width: int = Field(default=512, ge=256, le=768, multiple_of=64)
-    height: int = Field(default=768, ge=256, le=768, multiple_of=64)
+    width: int = Field(default=512, ge=256, le=1152, multiple_of=64)
+    height: int = Field(default=768, ge=256, le=1152, multiple_of=64)
     steps: int = Field(default=24, ge=1, le=50)
 
     @model_validator(mode='after')
     def pixel_budget(self):
-        if self.width * self.height > 512 * 768:
-            raise ValueError('At most 393216 pixels are supported')
+        if self.width * self.height > 768 * 1152:
+            raise ValueError('HQ 高清生成最多 768×1152 像素')
         return self
 
 

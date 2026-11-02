@@ -1,5 +1,5 @@
 import type { HQAsset, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQRole, HQStatus } from "../domain/hq-tryon";
-import { hqActive, hqError, hqExecutionBasis, validHQParameters } from "../domain/hq-tryon";
+import { defaultHQParameters, hqActive, hqError, hqExecutionBasis, validHQParameters } from "../domain/hq-tryon";
 
 const root = "/api/hq";
 const validId = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id);
@@ -220,7 +220,7 @@ export function writeHQDraft(draft: HQDraft) {
     const item = draft.selection[role];
     if (item && validId(item.id)) selection[role] = { id: item.id, label: item.label || item.name || item.id };
   }
-  try { sessionStorage.setItem(draftKey, JSON.stringify({ selection, parameters: cleanParameters(draft.parameters), ...cleanIdentity(draft), activeJobId: validId(draft.activeJobId) ? draft.activeJobId : undefined })); } catch { /* Receipt storage is checked separately before creating a job. */ }
+  try { sessionStorage.setItem(draftKey, JSON.stringify({ selection, basis: hqExecutionBasis, parameters: cleanParameters(draft.parameters), ...cleanIdentity(draft), activeJobId: validId(draft.activeJobId) ? draft.activeJobId : undefined })); } catch { /* Receipt storage is checked separately before creating a job. */ }
 }
 export function readHQDraft(): HQDraft | null {
   try {
@@ -228,6 +228,8 @@ export function readHQDraft(): HQDraft | null {
     if (!data?.selection || !validHQParameters(data.parameters)) return null;
     const selection: HQDraft["selection"] = {};
     for (const role of ["person", "garment", "pose"] as const) if (validId(data.selection[role]?.id)) selection[role] = { id: data.selection[role].id, label: String(data.selection[role].label || data.selection[role].id) };
-    return { selection, parameters: cleanParameters(data.parameters), ...cleanIdentity(data), activeJobId: validId(data.activeJobId) ? data.activeJobId : undefined };
+    const p = data.parameters;
+    const oldDefaults = !data.basis && p.seed === 0 && p.width === 512 && p.height === 768 && p.steps === 24;
+    return { selection, parameters: cleanParameters(oldDefaults ? defaultHQParameters : p), ...cleanIdentity(data), activeJobId: validId(data.activeJobId) ? data.activeJobId : undefined };
   } catch { return null; }
 }

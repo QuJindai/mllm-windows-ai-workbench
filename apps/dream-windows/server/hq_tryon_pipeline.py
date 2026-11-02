@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hq_tryon_conditioning import PipelineError
+import hq_paired_depth as paired_depth
 
 ROLES = ('person', 'garment', 'pose')
 FILE_KEYS = ('checkpoint', 'personAdapter', 'personLora', 'garmentAdapter', 'clipVision', 'controlnet', 'poseModel')
@@ -42,7 +43,10 @@ def validate_config(config, identity_config=None):
     if config.get('schemaVersion') != 1:
         raise PipelineError('MODEL_NOT_READY', 'HQ config schemaVersion must be 1')
     result = {**DEFAULTS, **config}
-    for key in FILE_KEYS + DIRECTORY_KEYS:
+    depth_mode = result['poseEstimator'] == paired_depth.ESTIMATOR
+    path_keys = tuple(key for key in FILE_KEYS + DIRECTORY_KEYS
+                      if not depth_mode or key not in ('poseModel', 'poseAuxSource'))
+    for key in path_keys:
         if identity_config is not None and key in BASE_BINDINGS:
             authoritative = absolute_path(identity_config.get(BASE_BINDINGS[key]), 'identity.' + BASE_BINDINGS[key])
             if key in config and absolute_path(config[key], key) != authoritative:
@@ -52,8 +56,10 @@ def validate_config(config, identity_config=None):
             result[key] = str(absolute_path(result.get(key), key))
     if result['offload'] not in ('sequential', 'model'):
         raise PipelineError('MODEL_NOT_READY', 'offload must be sequential or model')
-    if result['poseEstimator'] != 'dwpose-full-image':
-        raise PipelineError('MODEL_NOT_READY', 'Expected dwpose-full-image for single-subject references')
+    if not depth_mode and result['poseEstimator'] != 'dwpose-full-image':
+        raise PipelineError('MODEL_NOT_READY', 'Unknown HQ pose estimator')
+    if depth_mode and (result['garmentScale'], result['poseScale']) != (.7, .9):
+        raise PipelineError('MODEL_NOT_READY', '配对深度预设要求服装权重 0.7、姿势权重 0.9')
     for key in ('garmentScale', 'poseScale'):
         value = result[key]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 2:
@@ -61,12 +67,12 @@ def validate_config(config, identity_config=None):
         result[key] = float(value)
     # Sampling, FaceID and restoration parameters belong to IdentityGenerateRequest.
     # Legacy duplicated HQ settings are not allowed to override that request.
-    return {'schemaVersion': 1, **{key: result[key] for key in FILE_KEYS + DIRECTORY_KEYS + tuple(DEFAULTS)}}
+    return {'schemaVersion': 1, **{key: result[key] for key in path_keys + tuple(DEFAULTS)}}
 
 
 def required_assets(config):
     cfg = validate_config(config)
-    rows = {key: Path(cfg[key]) for key in FILE_KEYS}
+    rows = {key: Path(cfg[key]) for key in FILE_KEYS if key in cfg}
     rows['controlnetConfig/config.json'] = Path(cfg['controlnetConfig']) / 'config.json'
     for name in ('det_10g.onnx', 'w600k_r50.onnx'):
         rows['insightface/' + name] = Path(cfg['insightfaceRoot']) / 'models' / 'buffalo_l' / name
@@ -78,6 +84,11 @@ def required_assets(config):
         for path in root.rglob('*'):
             if path.is_file() and '.cache' not in path.parts:
                 rows['pipelineConfig/' + path.relative_to(root).as_posix()] = path
+    if cfg['poseEstimator'] == paired_depth.ESTIMATOR:
+        rows['posePairs/manifest'] = paired_depth.ASSETS / 'manifest.json'
+        for item in paired_depth.catalog()['items']:
+            rows['posePairs/' + item['id']] = paired_depth.ASSETS / (item['depthSha256'] + '.webp')
+        return rows
     aux = Path(cfg['poseAuxSource']) / 'custom_controlnet_aux'
     for name in ('__init__.py', 'util.py', 'dwpose/__init__.py', 'dwpose/wholebody.py', 'dwpose/util.py',
                  'dwpose/types.py', 'dwpose/dw_onnx/cv_ox_pose.py'):
@@ -142,7 +153,7 @@ class ConditioningAudit:
             raise PipelineError('OUTPUT_EXISTS', 'Use fresh HQ audit and artifact paths')
         self.started = time.perf_counter()
         self.parent_emit = emit
-        self.audit = {'schemaVersion': 2, 'pipeline': 'identity-session-hq-sd15-v1', 'jobId': first['jobId'],
+        self.audit = {'schemaVersion': 2, 'pipeline': spec.get('pipeline', paired_depth.LEGACY_PIPELINE), 'jobId': first['jobId'],
                       'parentJobId': spec.get('jobId'),
                       'status': 'preparing', 'startedAt': datetime.now(timezone.utc).isoformat(),
                       'parameters': parameters, 'inputs': {}, 'preprocessing': {}, 'conditioning': {},
@@ -279,6 +290,11 @@ class ConditioningAudit:
                 raise PipelineError('MODEL_NOT_READY', 'Model changed while hashing', path=str(path))
             self.model_stats[str(path)] = signature
             self.audit['models'][key] = {'path': str(path), 'sha256': digest, 'bytes': stat.st_size}
+        if config['poseEstimator'] == paired_depth.ESTIMATOR:
+            for key, expected in [('controlnet', paired_depth.CONTROLNET_SHA256),
+                                  ('controlnetConfig/config.json', paired_depth.CONTROLNET_CONFIG_SHA256)]:
+                if self.audit['models'][key]['sha256'] != expected:
+                    raise PipelineError('MODEL_NOT_READY', '深度 ControlNet 与已验证的版本不一致', model=key)
 
     def verify_unchanged(self):
         for filename, expected in self.model_stats.items():

@@ -1739,12 +1739,21 @@ class IdentityService:
             self._update(job_id, **changes)
 
     def _validate_hq_output(self, job_id, request, metadata, output):
+        import hq_paired_depth as paired_depth
+        expected = self._jobs[job_id]['hqConditioning']
         audit = metadata.get('hq')
         if (not isinstance(audit, dict) or audit.get('schemaVersion') != 2
-                or audit.get('pipeline') != 'identity-session-hq-sd15-v1'
+                or audit.get('pipeline') != expected.get('pipeline', paired_depth.LEGACY_PIPELINE)
                 or audit.get('status') != 'completed' or audit.get('jobId') != job_id):
             raise DreamApiError('HQ_AUDIT_INVALID', 'HQ 人物管线未返回完整三图绑定审计')
-        expected = self._jobs[job_id]['hqConditioning']
+        if audit['pipeline'] == paired_depth.PIPELINE:
+            binding = audit.get('conditioning', {}).get('pose', {})
+            pair = paired_depth.lookup(expected['inputs']['pose']['id'])
+            receipt = binding.get('receipt') or {}
+            if (binding.get('method') != paired_depth.ESTIMATOR or receipt.get('sha256') != pair['depthSha256']
+                    or receipt.get('poseSha256') != expected['inputs']['pose']['sha256']
+                    or receipt.get('poseId') != pair['id']):
+                raise DreamApiError('HQ_AUDIT_INVALID', '成片所用的深度图与所选姿势不一致')
         for role, item in expected['inputs'].items():
             bound = audit.get('inputs', {}).get(role, {})
             actual = audit.get('conditioning', {}).get(role, {}).get('actualConditioning', {})

@@ -225,9 +225,9 @@ describe("local HQ API boundary", () => {
     expect(reserveHQOperation(request, [downloading]).idempotencyKey).toBe(restored.idempotencyKey);
   });
 
-  it.each([[512, 768], [640, 960], [768, 1152], [768, 512], [960, 640], [1152, 768]])("accepts native preset %s x %s while retaining the standard default", (width, height) => {
+  it.each([[512, 768], [640, 960], [768, 1152], [768, 512], [960, 640], [1152, 768]])("accepts native preset %s x %s with the approved A/B/C defaults", (width, height) => {
     expect(validHQParameters({ ...defaultHQParameters, width, height })).toBe(true);
-    expect(defaultHQParameters).toMatchObject({ width: 512, height: 768 });
+    expect(defaultHQParameters).toEqual({ width: 768, height: 1152, steps: 30, seed: 20261104 });
     const request = { ...body, parameters: { ...defaultHQParameters, width, height } };
     const receipt = reserveHQOperation(request, []);
     expect(reserveHQOperation(request, []).idempotencyKey).toBe(receipt.idempotencyKey);

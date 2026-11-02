@@ -1,0 +1,22 @@
+{
+  "release": "20261101-r2-v2",
+  "poseEstimator": "paired-depth-r2-v1",
+  "items": [
+    {
+      "id": "full_single_P001_low",
+      "label": "后仰坐・单膝立起 · 仰视",
+      "category": "坐姿",
+      "fullSha256": "70bb61be4308fc145b8748aef1375ec880482d966d98f09ea345b34c4f2ebd9e",
+      "depthSha256": "88990d0660df006e82beec62ae718968a1fb3c265d892233ad54fd12ac702ba1",
+      "r2Object": "hq-tryon-assets/trials/dream-depth/36ff730b/full_single_P001_low/88990d0660df006e82beec62ae718968a1fb3c265d892233ad54fd12ac702ba1.webp"
+    },
+    {
+      "id": "full_single_P015_front",
+      "label": "站立・对立式平衡・手扶腰 · 正面",
+      "category": "站姿",
+      "fullSha256": "51f54ceb4d8115f6e29a36a9583a88f896314304101ca035091a1d30394e80aa",
+      "depthSha256": "50bd2b827ee646b2115cc29b77756b092263f71576fee6aa2eb84fa7d6410b76",
+      "r2Object": "hq-tryon-assets/trials/dream-depth/36ff730b/full_single_P015_front/50bd2b827ee646b2115cc29b77756b092263f71576fee6aa2eb84fa7d6410b76.webp"
+    }
+  ]
+}

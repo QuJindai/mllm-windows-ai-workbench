@@ -28,6 +28,7 @@ def test_other_models_and_research_do_not_inherit_unvalidated_hd_budget():
         with pytest.raises(ValidationError):identity(width=768,height=1152,traceLevel=trace)
 
 
-def test_existing_default_dimensions_do_not_change():
-    for request in (HQParameters(),identity()):
-        assert (request.width,request.height)==(512,768)
+def test_approved_hq_defaults_are_scoped_to_tryon():
+    p = HQParameters()
+    assert (p.width, p.height, p.steps, p.seed) == (768, 1152, 30, 20261104)
+    assert (identity().width, identity().height) == (512, 768)

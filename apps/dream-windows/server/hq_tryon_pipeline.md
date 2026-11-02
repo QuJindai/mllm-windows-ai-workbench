@@ -1,5 +1,34 @@
 # HQ conditioning inside the existing identity pipeline
 
+The local browser release `dream-hq-paired-depth-20261102` uses the original
+R2 depth images from the approved A/B/C runs. Open
+[HQ 试衣](http://127.0.0.1:8766/?view=hq-tryon), choose a person, garment and
+pose, then select **本机生成**. **套用 A/B/C 定稿参数** restores 768 × 1152,
+30 Euler steps, seed 20261104 and optional face polish at 0.35. FaceID uses
+CFG 5.5, identity 0.82, structure 0.9 and companion LoRA 0.55. The garment
+adapter runs at 0.7 and SD1.5 Depth ControlNet runs at 0.9 over all steps.
+
+The released pose pairs are `full_single_P001_low` (A/C, low-angle sitting)
+and `full_single_P015_front` (B, frontal standing). The pose picker lists the
+verified pairs. The full R2 person and garment catalogs remain available.
+The two small public control maps, their R2 keys, the original pose checksums
+and depth checksums are packaged in `config/dream/hq-paired-depth-v1`.
+Each generation verifies the selected R2 original, depth file and model. The
+audit includes the pair receipt and the tensor observed during sampling.
+
+On the existing Windows installation, run `scripts/stop_dream_web.ps1` while
+idle, then `scripts/enable_hq_paired_depth.ps1`, build the browser frontend
+with `npm.cmd run build` from `apps/dream-windows`, and launch
+`scripts/start_dream_web_background.ps1`. The enable script verifies the model
+and packaged maps and prints the backup path for the previous pipeline
+configuration. A hash mismatch means the weight or map needs to be restored
+from its verified copy. An outdated saved pose needs to be reselected.
+To roll back, stop the idle service, restore the printed backup as
+`E:/Dream/data/hq/pipeline.json`, restore the preceding frontend and server
+release together, then start the service. Both releases use the same local
+history. The remaining DWPose configuration example below applies to the
+previous OpenPose release.
+
 HQ generation runs through `IdentityService` -> one-shot `identity_worker.py` ->
 `IdentitySession.__init__/render`. It uses the existing reference cache, FaceID
 projection, companion LoRA, model selection, Euler scheduler, request parameters,

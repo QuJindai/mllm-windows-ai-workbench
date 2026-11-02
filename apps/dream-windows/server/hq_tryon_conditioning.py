@@ -391,8 +391,15 @@ class IdentityHQConditioning:
                 'clipHiddenStates': save_tensor(self.run, 'garment-clip-hidden', self.garment_clip),
                 'featureSource': 'existing-identity-extract_clip_features',
             }
-        with self.run.stage('HQ CPU 姿态提取'):
-            self.pose_image = extract_pose(self.config, self.images['pose'], self.run)
+        import hq_paired_depth as paired_depth
+        depth_mode = self.config['poseEstimator'] == paired_depth.ESTIMATOR
+        if self.run.audit['pipeline'] != paired_depth.pipeline_id(self.config):
+            raise PipelineError('HQ_PIPELINE_CHANGED', '任务提交后姿势管线已变更，请重新选择预设')
+        with self.run.stage('HQ 读取已配对的原始深度图' if depth_mode else 'HQ CPU 姿态提取'):
+            if depth_mode:
+                self.pose_image = paired_depth.control_image(self.run, self.images['pose'])
+            else:
+                self.pose_image = extract_pose(self.config, self.images['pose'], self.run)
             self.run.audit['conditioning']['pose']['scale'] = self.config['poseScale']
         del self.images
 

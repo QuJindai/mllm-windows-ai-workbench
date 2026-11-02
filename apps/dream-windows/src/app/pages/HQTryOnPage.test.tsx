@@ -182,10 +182,12 @@ describe("HQ local workflow", () => {
     expect(screen.queryByRole("button", { name: "2倍清晰增强" })).not.toBeInTheDocument();
   });
 
-  it("keeps standard defaults and changes only dimensions when a resolution preset is explicitly chosen", async () => {
+  it("starts with the approved HD preset and preserves seed and steps across resolution changes", async () => {
     saveSelection(); render(<HQTryOnPage />);
     const preset = await screen.findByRole("combobox", { name: "尺寸预设" });
-    expect(preset).toHaveValue("512x768");
+    expect(preset).toHaveValue("768x1152");
+    fireEvent.change(preset, { target: { value: "512x768" } });
+    expect(screen.getByLabelText("宽度")).toHaveValue(512);
     fireEvent.change(screen.getByLabelText("种子"), { target: { value: "20261102" } });
     fireEvent.change(screen.getByLabelText("步数"), { target: { value: "30" } });
     fireEvent.change(preset, { target: { value: "768x1152" } });
@@ -323,7 +325,7 @@ describe("HQ local workflow", () => {
     const button = screen.getByRole("button", { name: "本机生成" }); fireEvent.click(button); fireEvent.click(button);
     expect(hqApi.create).toHaveBeenCalledTimes(1);
     const sent = vi.mocked(hqApi.create).mock.calls[0][0];
-    expect(sent).toEqual({ personId: ids.person, garmentId: ids.garment, poseId: ids.pose, parameters: defaultHQParameters, facePolish: false, faceRestoreStrength: .35, idempotencyKey: expect.stringMatching(/^hq-local-/) });
+    expect(sent).toEqual({ personId: ids.person, garmentId: ids.garment, poseId: ids.pose, parameters: defaultHQParameters, facePolish: true, faceRestoreStrength: .35, idempotencyKey: expect.stringMatching(/^hq-local-/) });
     await act(async () => pending.resolve(createJob({ idempotencyKey: sent.idempotencyKey })));
     expect(await screen.findByRole("button", { name: "查看本组已有任务" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "查看本组已有任务" }));
@@ -473,7 +475,7 @@ describe("HQ local workflow", () => {
     fireEvent.change(screen.getByRole("spinbutton", { name: "种子" }), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "本机生成" })); await screen.findByRole("button", { name: "查看本组已有任务" });
     expect(vi.mocked(hqApi.create).mock.calls[0][0].idempotencyKey).not.toBe(vi.mocked(hqApi.create).mock.calls[1][0].idempotencyKey);
-    fireEvent.change(screen.getByRole("spinbutton", { name: "种子" }), { target: { value: "0" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "种子" }), { target: { value: String(defaultHQParameters.seed) } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "查看本组已有任务" }))); expect(hqApi.create).toHaveBeenCalledTimes(2);
   });
 

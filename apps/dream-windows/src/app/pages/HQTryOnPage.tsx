@@ -72,8 +72,10 @@ export function HQTryOnPage() {
   const operation = readHQOperations().find(r => r.fingerprint === hqFingerprint(body));
   const validProfile = !profileId || !profileLoading && !profileError && selectedProfile?.id === profileId && selectedProfile.state === "ready" && (selectedProfile.referenceKind ?? "faceid") === "faceid";
   const validFace = Number.isFinite(faceOptions.faceRestoreStrength) && faceOptions.faceRestoreStrength >= 0 && faceOptions.faceRestoreStrength <= 1 && (!faceOptions.facePolish || identityStatus?.facePolish?.ready === true && !identityError);
-  const ready = reconciled && validProfile && validFace && status?.configured === true && status.authorized === true && status.modelReady === true && !connectionError;
-  const allSelected = hqRoles.every(role => selection[role]);
+  const presetMismatch = Boolean(status?.pipeline && status.pipeline !== hqExecutionBasis);
+  const ready = reconciled && !presetMismatch && validProfile && validFace && status?.configured === true && status.authorized === true && status.modelReady === true && !connectionError;
+  const unsupportedPose = Boolean(selection.pose && status?.supportedPoseIds && !status.supportedPoseIds.includes(selection.pose.id));
+  const allSelected = hqRoles.every(role => selection[role]) && !unsupportedPose;
   const retryJobs = job?.id === activeId ? [job, ...jobs.filter(item => item.id !== job.id)] : jobs;
   const retryJob = reconciled && !loading && !detailLoading && !connectionError && !detailError && jobsRevision === refresh && detailRevision === refresh
     && job?.id === activeId && job.id === operation?.jobId ? retryableHQJob(operation, retryJobs) : undefined;
@@ -240,7 +242,9 @@ export function HQTryOnPage() {
   return <div className="hq-page">
     <section className="surface-card hq-status" aria-label="本地 HQ 状态">
       <div className="card-head"><h2>本机三图试衣</h2><button className="secondary-button" disabled={loading} onClick={() => refreshJobs(true)}>刷新图库与任务</button></div>
-      <p>固定人物与构图后，用服装和姿势生成底图，再按需换脸或独立精修。当前使用 Realistic Vision V5.1 + FaceID，单次生成 1 张。</p>
+      <p>使用 Realistic Vision V5.1 和 FaceID 固定人物，结合服装原图生成一张全身成片。可选修脸和独立精修。</p>
+      {currentStatus?.pipeline === hqExecutionBasis && <p>当前使用 A/B/C 定稿版。原始配对深度图全程控制姿势，可选姿势 {currentStatus.supportedPoseIds?.length} 个。</p>}
+      {presetMismatch && <p className="hq-error">本地服务使用旧管线，请启用配对深度版本后刷新页面。</p>}
       <p className="hq-hint">服装为图像参考生成，版型、配饰和细节可能有偏差，请对照原图验收。</p>
       <ol className="hq-workflow" aria-label="人物试衣流程"><li>固定人物与构图</li><li>底图</li><li>可选换脸</li><li>独立精修</li></ol>
       <div className="hq-status-line" role="status">
@@ -281,6 +285,10 @@ export function HQTryOnPage() {
 
       <section className="surface-card hq-selection" aria-label="已选三图与生成参数">
         <h2>2 · 确认并生成</h2>
+        {currentStatus?.pipeline === hqExecutionBasis && <button type="button" className="secondary-button" onClick={() => {
+          setParameters({ ...defaultHQParameters }); setFaceOptions({ ...defaultHQIdentity });
+        }}>套用 A/B/C 定稿参数</button>}
+        {unsupportedPose && <p role="alert" className="hq-error">草稿中的姿势缺少配对深度图，请在姿势页重选。</p>}
         <div className="hq-profile">
           <label>固定人物档案（可选）<select value={profileId} onChange={e => setProfileId(e.target.value)}>
             <option value="">使用所选 R2 人物图 · 本地导入 / 缓存</option>
@@ -305,7 +313,7 @@ export function HQTryOnPage() {
           <option value="custom">自定义尺寸</option>
           {hqResolutionPresets.map(preset => <option key={preset.label} value={`${preset.width}x${preset.height}`}>{preset.label}</option>)}
         </select></label>
-        <p className="hq-hint">全身成片建议选高清 768×1152，标准 512×768 适合快速预览。高清生成更慢，显存占用更高；已有草稿只在你选择预设时更改宽高。</p>
+        <p className="hq-hint">定稿版使用 768×1152，标准 512×768 适合快速预览。高清生成更慢，显存占用更高。可单独切换尺寸，也可恢复整套定稿参数。</p>
         <div className="hq-parameters">{([
           ["seed", "种子", 0, 2147483647, 1], ["width", "宽度", 256, 1152, 64], ["height", "高度", 256, 1152, 64], ["steps", "步数", 1, 50, 1],
         ] as const).map(([key, label, min, max, step]) => <label key={key}>{label}<input type="number" min={min} max={max} step={step} value={parameters[key]} onChange={e => setParameters(previous => ({ ...previous, [key]: Number(e.target.value) }))} /></label>)}</div>

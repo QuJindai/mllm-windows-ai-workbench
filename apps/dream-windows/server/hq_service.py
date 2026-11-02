@@ -33,6 +33,7 @@ from identity_service import IdentityService, ReferenceUpload, StorageOwnerLease
 from identity_contract import IdentityGenerateRequest
 from history_transactions import validate_history_path, history_deletion_flags
 from job_runner import JobRunner
+import hq_paired_depth as paired_depth
 
 ORIGIN = 'https://hq-tryon-picker.qujindai1986.workers.dev'
 ROLES = ('person', 'garment', 'pose')
@@ -42,15 +43,15 @@ SHA_RE = re.compile(r'^[a-f0-9]{64}$')
 ASSET_RE = re.compile(r'^[A-Za-z0-9_-]{2,64}$')
 MAX_IMAGE = 8 * 1024 * 1024
 MAX_RESULT = 32 * 1024 * 1024
-PIPELINE = 'identity-session-hq-sd15-v1'
+PIPELINE = paired_depth.LEGACY_PIPELINE
 
 
 class HQParameters(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True, allow_inf_nan=False)
-    seed: int = Field(default=0, ge=0, le=2147483647)
-    width: int = Field(default=512, ge=256, le=1152, multiple_of=64)
-    height: int = Field(default=768, ge=256, le=1152, multiple_of=64)
-    steps: int = Field(default=24, ge=1, le=50)
+    seed: int = Field(default=20261104, ge=0, le=2147483647)
+    width: int = Field(default=768, ge=256, le=1152, multiple_of=64)
+    height: int = Field(default=1152, ge=256, le=1152, multiple_of=64)
+    steps: int = Field(default=30, ge=1, le=50)
 
     @model_validator(mode='after')
     def pixel_budget(self):
@@ -317,6 +318,13 @@ class HQService:
         except (ImportError, OSError, ValueError, TypeError):
             return False
 
+    @staticmethod
+    def _pipeline(settings):
+        try:
+            return paired_depth.pipeline_id(read_json(Path(settings['pipelineConfig']), 64 * 1024))
+        except (OSError, ValueError, TypeError):
+            _fail('MODEL_NOT_READY', '无法读取本机 HQ 管线配置')
+
     def status(self) -> dict:
         with self._operation():
             result = {'configured': False, 'authorized': False, 'modelReady': False, 'pipelineFilesPresent': False,
@@ -324,6 +332,9 @@ class HQService:
             try:
                 settings = self._settings()
                 result['configured'] = True
+                result['pipeline'] = self._pipeline(settings)
+                if result['pipeline'] == paired_depth.PIPELINE:
+                    result['supportedPoseIds'] = [item['id'] for item in paired_depth.catalog()['items']]
                 result['modelReady'] = self._ready(settings)
                 result['pipelineFilesPresent'] = result['modelReady']
                 result['readiness'] = 'files-present' if result['modelReady'] else 'missing-files'
@@ -331,7 +342,7 @@ class HQService:
                     configuration_hash = _sha(Path(settings['pipelineConfig']).read_bytes())
                     with self._lock:
                         result['executionValidated'] = any(
-                            row['state'] == 'succeeded' and (row.get('audit') or {}).get('pipeline') == PIPELINE
+                            row['state'] == 'succeeded' and (row.get('audit') or {}).get('pipeline') == result['pipeline']
                             and (row.get('audit') or {}).get('configuration', {}).get('sha256') == configuration_hash
                             for row in self._jobs.values())
                 self._authorized(settings)
@@ -368,6 +379,17 @@ class HQService:
             if not isinstance(q, str) or len(q) > 100 or not isinstance(category, str) or len(category) > 160:
                 _fail('REQUEST_INVALID', '图库筛选参数无效', 422)
             if kind != 'person':
+                if kind == 'pose' and self._pipeline(settings) == paired_depth.PIPELINE:
+                    manifest = paired_depth.catalog()
+                    needle = unicodedata.normalize('NFKC', q).casefold()
+                    poses = manifest['items']
+                    matched = [item for item in poses if (not category or category == item['category']) and
+                               needle in unicodedata.normalize('NFKC', item['id'] + ' ' + item['label']).casefold()]
+                    start = page * limit
+                    return {'kind': kind, 'items': [self._item(item, kind) for item in matched[start:start + limit]],
+                            'total': len(matched), 'hasMore': start + limit < len(matched), 'page': page,
+                            'limit': limit, 'categories': sorted({item['category'] for item in poses}),
+                            'sourceMode': 'owned-r2-paired-depth', 'release': manifest['release']}
                 result = self._json_get('/api/catalog?' + urlencode(dict(kind=kind, q=q, category=category, page=page, limit=limit)))
                 if (not isinstance(result.get('items'), list) or len(result['items']) > 48
                         or type(result.get('total')) is not int or type(result.get('hasMore')) is not bool):
@@ -475,16 +497,23 @@ class HQService:
         with self._operation(), self._submission_lock:
             payload = HQCreateRequest.model_validate(payload)
             values = payload.model_dump()
-            digest = _sha(_canonical({'pipeline': PIPELINE, 'request': values}))
-            job_id = 'hq-' + _sha(('local-hq-v2\0' + PIPELINE + '\0' + payload.idempotencyKey).encode())
+            ids = {name: 'hq-' + _sha(('local-hq-v2\0' + name + '\0' + payload.idempotencyKey).encode())
+                   for name in (PIPELINE, paired_depth.PIPELINE)}
             with self._lock:
-                prior = self._jobs.get(job_id)
-                if prior:
-                    if prior['requestDigest'] != digest:
+                for name, candidate in ids.items():
+                    prior = self._jobs.get(candidate)
+                    if not prior:
+                        continue
+                    if prior['requestDigest'] != _sha(_canonical({'pipeline': name, 'request': values})):
                         _fail('IDEMPOTENCY_CONFLICT', '此幂等键已用于另一组三图、档案或参数', 409)
                     return self._view(prior), True
             settings = self._settings()
             self._session(settings)
+            pipeline = self._pipeline(settings)
+            if pipeline == paired_depth.PIPELINE and not any(item['id'] == payload.poseId for item in paired_depth.catalog()['items']):
+                _fail('HQ_DEPTH_UNAVAILABLE', '请在姿势页选择已有配对深度图的姿势', 422)
+            job_id = ids[pipeline]
+            digest = _sha(_canonical({'pipeline': pipeline, 'request': values}))
             if not self._ready(settings):
                 _fail('MODEL_NOT_READY', '本机 HQ 人物条件模型尚未齐备')
             folder = self._folder(job_id)
@@ -493,7 +522,7 @@ class HQService:
             folder.mkdir(parents=True)
             (folder / 'inputs').mkdir()
             child_id = self.identity.hq_child_id(job_id)
-            record = {'id': job_id, 'requestDigest': digest, 'idempotencyKey': payload.idempotencyKey, 'pipeline': PIPELINE,
+            record = {'id': job_id, 'requestDigest': digest, 'idempotencyKey': payload.idempotencyKey, 'pipeline': pipeline,
                       'state': 'queued', 'phase': 'queued', 'progress': 0, 'cancellationRequested': False,
                       'createdAt': _now(), 'startedAt': None, 'completedAt': None, 'parameters': values['parameters'],
                       'requestedInputIds': {role: values[role + 'Id'] for role in ROLES},
@@ -554,7 +583,7 @@ class HQService:
                         self._save(record)
                     request = self._identity_request(record, Path(inputs['person']['path']), self._cancel[job_id])
                     check()
-                    conditioning = {'jobId': job_id, 'configPath': str(Path(settings['pipelineConfig']).resolve()), 'inputs': inputs,
+                    conditioning = {'jobId': job_id, 'pipeline': record['pipeline'], 'configPath': str(Path(settings['pipelineConfig']).resolve()), 'inputs': inputs,
                                     'auditPath': str(self._safe(folder / 'audit.json')),
                                     'eventPath': str(self._safe(folder / 'events.jsonl')),
                                     'cancelPath': str(self._safe(folder / 'cancel.flag'))}
@@ -600,7 +629,8 @@ class HQService:
             saved = profile.get('defaults', {})
             if saved.get('modelId', 'realistic-vision-v5.1-faceid') != 'realistic-vision-v5.1-faceid':
                 _fail('HQ_PROFILE_MODEL_UNSUPPORTED', '所选档案预设不是 RV FaceID；请使用兼容档案，未移植其他底模或风格 LoRA', 409)
-            defaults = {k: saved[k] for k in ('cfg', 'identityStrength', 'structureStrength', 'faceLoraStrength') if k in saved}
+            if record.get('pipeline') != paired_depth.PIPELINE:
+                defaults = {k: saved[k] for k in ('cfg', 'identityStrength', 'structureStrength', 'faceLoraStrength') if k in saved}
         else:
             # upload() schedules and awaits face inspection; this method runs on the I/O pool, never the GPU queue.
             reference = self.identity.upload(ReferenceUpload(name='HQ person ' + record['requestedInputIds']['person'][:12],
@@ -634,7 +664,7 @@ class HQService:
             if child['state'] in {'complete', 'failed', 'cancelled'} and audit_path.is_file():
                 try:
                     audit = read_json(audit_path)
-                    if (audit.get('jobId') == record['identityJobId'] and audit.get('pipeline') == PIPELINE
+                    if (audit.get('jobId') == record['identityJobId'] and audit.get('pipeline') == record.get('pipeline', PIPELINE)
                             and audit.get('parentJobId') == record['id']):
                         record['audit'] = _public_audit(audit)
                 except (OSError, ValueError):
@@ -651,7 +681,7 @@ class HQService:
                     return
                 path, metadata = self._identity_result_path(record, child)
                 audit = metadata.get('hq')
-                if not isinstance(audit, dict) or audit.get('pipeline') != PIPELINE or audit.get('status') != 'completed':
+                if not isinstance(audit, dict) or audit.get('pipeline') != record.get('pipeline', PIPELINE) or audit.get('status') != 'completed':
                     _fail('HQ_AUDIT_INVALID', '人物子任务缺少真实三图绑定审计')
                 info = self._image(path.read_bytes(), audit['output']['sha256'], 'image/png')
                 record.update(state='succeeded', phase='complete', progress=100, completedAt=_now(),

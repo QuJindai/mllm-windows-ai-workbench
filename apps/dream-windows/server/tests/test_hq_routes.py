@@ -74,6 +74,13 @@ def test_strict_post_rejects_paths_commands_extras_and_invalid_parameters(client
     assert 'evil.exe' not in response.text
 
 
+@pytest.mark.parametrize('changes', [{'personId': None}, {'profileId': 'person-' + 'b' * 24}])
+def test_create_requires_exactly_one_person_source(client, hq, changes):
+    response = client.post('/api/hq/jobs', json={**hq.payload.model_dump(), **changes})
+    assert response.status_code == 422 and response.json()['code'] == 'HQ_PERSON_SOURCE_INVALID'
+    assert not hq.r2.calls and not hq.service.jobs()['jobs']
+
+
 def test_post_origin_body_limits_and_cancel_scope(client, hq):
     denied = client.post('/api/hq/jobs', json=hq.payload.model_dump(), headers={'origin': 'http://evil.invalid'})
     assert denied.status_code == 403

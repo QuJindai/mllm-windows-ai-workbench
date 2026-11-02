@@ -97,7 +97,8 @@ describe("HQ local workflow", () => {
   it.each(["failed", "cancelled"] as const)("creates one new attempt for explicitly retried %s settings while preserving the old job", async state => {
     const parameters = { width: 768, height: 1152, seed: 20261104, steps: 30 };
     const options = { profileId: personProfile.id, facePolish: true, faceRestoreStrength: .4 };
-    const old = createJob({ state, phase: state, pipeline: hqExecutionBasis, identityJobId: "identity-old", idempotencyKey: "hq-old-terminal-key", parameters, ...options });
+    const old = createJob({ state, phase: state, pipeline: hqExecutionBasis, identityJobId: "identity-old", idempotencyKey: "hq-old-terminal-key", parameters,
+      personSource: "profile", requestedInputIds: { ...ids, person: personProfile.id }, ...options });
     writeHQDraft({ selection: { person: asset("person"), garment: asset("garment"), pose: asset("pose") }, activeJobId: old.id, parameters, ...options });
     const gate = deferred<HQJob>();
     vi.mocked(hqApi.jobs).mockResolvedValue([old]); vi.mocked(hqApi.job).mockResolvedValue(old); vi.mocked(hqApi.create).mockReturnValue(gate.promise);
@@ -110,7 +111,8 @@ describe("HQ local workflow", () => {
     await waitFor(() => expect(hqApi.create).toHaveBeenCalledTimes(1));
     const sent = vi.mocked(hqApi.create).mock.calls[0][0];
     expect(sent.idempotencyKey).not.toBe(old.idempotencyKey);
-    expect(sent).toMatchObject({ personId: ids.person, garmentId: ids.garment, poseId: ids.pose, parameters, ...options });
+    expect(sent).toMatchObject({ garmentId: ids.garment, poseId: ids.pose, parameters, ...options });
+    expect(sent).not.toHaveProperty("personId");
     expect(readHQDraft()).toMatchObject({ parameters, ...options });
     const created = { ...old, id: "hq-retry-new", state: "queued" as const, phase: "queued", idempotencyKey: sent.idempotencyKey };
     vi.mocked(hqApi.jobs).mockResolvedValue([old, created]); vi.mocked(hqApi.job).mockImplementation(async id => id === old.id ? old : created);
@@ -233,27 +235,49 @@ describe("HQ local workflow", () => {
     expect(hqApi.create).not.toHaveBeenCalled();
   });
 
-  it("keeps profile optional and face polish off, then sends explicit profile/face choices without replacing the R2 person", async () => {
+  it("switches to a local profile, clears the gallery person and submits only the profile even without gallery authorization", async () => {
     saveSelection(); vi.mocked(identityApi.profiles).mockResolvedValue([personProfile, { ...personProfile, id: "visual-profile", name: "视觉档案", referenceKind: "visual" }]);
+    vi.mocked(hqApi.status).mockImplementation(async (_signal, source) => ({ ...ready, authorized: source !== "profile" }));
     render(<HQTryOnPage />);
-    const select = await screen.findByRole("combobox", { name: "固定人物档案（可选）" });
+    expect(screen.getByRole("img", { name: "已选人物原图" })).toHaveAttribute("src", hqApi.assetUrl("person", ids.person));
+    fireEvent.click(screen.getByRole("radio", { name: "只选本机档案" }));
+    const select = await screen.findByRole("combobox", { name: "本机人物档案" });
     await screen.findByRole("option", { name: /测试素颜档案/ });
     expect(select).toHaveValue(""); expect(screen.queryByRole("option", { name: /视觉档案/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "人物" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "本机生成" })).toBeDisabled();
+    expect(readHQDraft()?.selection.person).toBeUndefined();
     const polish = screen.getByRole("checkbox", { name: "生成后修脸（可选）" }); expect(polish).not.toBeChecked();
     fireEvent.change(select, { target: { value: personProfile.id } });
     await waitFor(() => expect(screen.getByRole("button", { name: "本机生成" })).toBeEnabled());
-    expect(screen.getByRole("img", { name: "已选人物原图" })).toHaveAttribute("src", hqApi.assetUrl("person", ids.person));
+    expect(screen.getByRole("img", { name: "已选人物原图" })).toHaveAttribute("src", "/api/identity/references/ref-test/image");
     fireEvent.click(polish); expect(screen.getByRole("spinbutton", { name: "面部细节修复强度" })).toHaveValue(.35);
     expect(screen.getByText(/0–1，默认 0.35/)).toBeVisible();
     fireEvent.change(screen.getByRole("spinbutton", { name: "面部细节修复强度" }), { target: { value: "1.1" } });
     expect(screen.getByRole("button", { name: "本机生成" })).toBeDisabled();
     fireEvent.change(screen.getByRole("spinbutton", { name: "面部细节修复强度" }), { target: { value: ".35" } });
-    vi.mocked(hqApi.create).mockRejectedValueOnce(new Error("PROFILE_PERSON_MISMATCH：人物不匹配"));
     fireEvent.click(screen.getByRole("button", { name: "本机生成" }));
-    await screen.findByText(/PROFILE_PERSON_MISMATCH/);
-    expect(vi.mocked(hqApi.create).mock.calls[0][0]).toMatchObject({ personId: ids.person, profileId: personProfile.id, facePolish: true, faceRestoreStrength: .35, parameters: defaultHQParameters });
-    expect(screen.getByRole("img", { name: "已选人物原图" })).toHaveAttribute("src", hqApi.assetUrl("person", ids.person));
+    await waitFor(() => expect(hqApi.create).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(hqApi.create).mock.calls[0][0]).toMatchObject({ profileId: personProfile.id, garmentId: ids.garment, poseId: ids.pose, facePolish: true, faceRestoreStrength: .35, parameters: defaultHQParameters });
+    expect(vi.mocked(hqApi.create).mock.calls[0][0]).not.toHaveProperty("personId");
     expect(screen.queryByRole("combobox", { name: /模型/ })).not.toBeInTheDocument();
+  });
+
+  it("restores profile-only without querying private photos and clears the profile when switching back to the gallery", async () => {
+    writeHQDraft({ personSource: "profile", profileId: personProfile.id, selection: { garment: asset("garment"), pose: asset("pose") }, parameters: defaultHQParameters });
+    vi.mocked(identityApi.profiles).mockResolvedValue([personProfile]);
+    render(<HQTryOnPage />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "本机生成" })).toBeEnabled());
+    expect(vi.mocked(hqApi.catalog).mock.calls.every(([role]) => role !== "person")).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "图库照片" }));
+    expect(screen.queryByRole("combobox", { name: "本机人物档案" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "本机生成" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "选择人物 person-original" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "本机生成" })));
+    const [sent] = vi.mocked(hqApi.create).mock.calls[0];
+    expect(sent).toMatchObject({ personId: ids.person, garmentId: ids.garment, poseId: ids.pose });
+    expect(sent).not.toHaveProperty("profileId");
+    expect(readHQDraft()).toMatchObject({ personSource: "gallery", profileId: null });
   });
 
   it("reuses original/result switching and the existing refinement workspace for the linked identity job", async () => {

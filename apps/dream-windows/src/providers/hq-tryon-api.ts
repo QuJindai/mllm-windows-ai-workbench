@@ -1,4 +1,4 @@
-import type { HQAsset, HQBasis, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQRole, HQStatus } from "../domain/hq-tryon";
+import type { HQAsset, HQBasis, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQPersonSource, HQRole, HQStatus } from "../domain/hq-tryon";
 import { defaultHQParameters, hqActive, hqError, hqExecutionBasis, isHQBasis, validHQParameters } from "../domain/hq-tryon";
 
 const root = "/api/hq";
@@ -20,7 +20,7 @@ function decodeJob(data: HQJob | { job: HQJob }): HQJob {
   return { ...job, inputs: Array.isArray(job.inputs) ? job.inputs : [] };
 }
 export const hqApi = {
-  status: (signal?: AbortSignal) => request<HQStatus>("/status", { signal }),
+  status: (signal?: AbortSignal, source: HQPersonSource = "gallery") => request<HQStatus>(source === "profile" ? "/status?personSource=profile" : "/status", { signal }),
   catalog: async (kind: HQRole, q = "", category = "", page = 0, signal?: AbortSignal): Promise<HQCatalog> => {
     const data = await request<HQCatalog>("/catalog?" + new URLSearchParams({ kind, q, category, page: String(page), limit: "24" }), { signal });
     if (!Array.isArray(data.items) || !Number.isFinite(data.total)) throw new Error("HQ 图库格式无效");
@@ -62,7 +62,7 @@ export const hqApi = {
 
 // Only selection IDs, parameters and receipts are persisted. No pixels or authorization material.
 export interface HQOperation { fingerprint: string; idempotencyKey: string; jobId?: string; retryOf?: string; delivery: "prepared" | "unknown" | "submitted" }
-export interface HQDraft extends HQIdentityOptions { selection: Partial<Record<HQRole, HQAsset>>; parameters: HQParameters; activeJobId?: string }
+export interface HQDraft extends HQIdentityOptions { personSource?: HQPersonSource; selection: Partial<Record<HQRole, HQAsset>>; parameters: HQParameters; activeJobId?: string }
 // Unqualified v1 receipts belong to the earlier execution basis. Never upgrade
 // them by filling defaults; verified current server jobs can restore their keys.
 const operationsKey = "dream.hq.operations.v2", draftKey = "dream.hq.draft.v1";
@@ -76,7 +76,8 @@ function validFingerprint(value: unknown): value is string {
   if (typeof value !== "string" || value.length >= 768) return false;
   try {
     const fields = JSON.parse(value);
-    return Array.isArray(fields) && fields.length === 11 && isHQBasis(fields[0]) && fields.slice(1, 4).every(validId)
+    return Array.isArray(fields) && fields.length === 11 && isHQBasis(fields[0]) && fields.slice(2, 4).every(validId)
+      && (validId(fields[1]) || (fields[1] === null && validId(fields[8])))
       && validHQParameters({ seed: fields[4], width: fields[5], height: fields[6], steps: fields[7] })
       && (fields[8] === null || validId(fields[8])) && typeof fields[9] === "boolean"
       && typeof fields[10] === "number" && fields[10] >= 0 && fields[10] <= 1;
@@ -117,7 +118,10 @@ function jobSettingsFingerprint(job: HQJob): string | null {
   const garmentId = job.requestedInputIds?.garment || job.inputs.find(input => input.role === "garment")?.id;
   const poseId = job.requestedInputIds?.pose || job.inputs.find(input => input.role === "pose")?.id;
   const basis = jobBasis(job);
-  return basis && validId(personId) && validId(garmentId) && validId(poseId) ? hqFingerprint({ personId, garmentId, poseId, parameters: job.parameters, ...cleanIdentity(job) }, basis) : null;
+  if (!basis || !validId(personId) || !validId(garmentId) || !validId(poseId)) return null;
+  if (job.personSource === "profile" && personId !== job.profileId) return null;
+  return hqFingerprint({ personId: job.personSource === "profile" ? undefined : personId, garmentId, poseId,
+    parameters: job.parameters, ...cleanIdentity(job) }, basis);
 }
 export const hqJobFingerprint = (job: HQJob): string | null => currentExecution(job) ? jobSettingsFingerprint(job) : null;
 
@@ -217,13 +221,20 @@ export async function reserveHQRetry(body: Omit<HQCreateRequest, "idempotencyKey
   persistHQOperation(next, previous.idempotencyKey);
   return next;
 }
+function draftIdentity(draft: HQDraft) {
+  const identity = cleanIdentity(draft);
+  const personSource: HQPersonSource = draft.personSource === "profile" || (draft.personSource !== "gallery" && identity.profileId) ? "profile" : "gallery";
+  return { ...identity, personSource, profileId: personSource === "profile" ? identity.profileId : null };
+}
 export function writeHQDraft(draft: HQDraft) {
+  const identity = draftIdentity(draft);
   const selection: HQDraft["selection"] = {};
   for (const role of ["person", "garment", "pose"] as const) {
+    if (role === "person" && identity.personSource === "profile") continue;
     const item = draft.selection[role];
     if (item && validId(item.id)) selection[role] = { id: item.id, label: item.label || item.name || item.id };
   }
-  try { sessionStorage.setItem(draftKey, JSON.stringify({ selection, basis: hqExecutionBasis, parameters: cleanParameters(draft.parameters), ...cleanIdentity(draft), activeJobId: validId(draft.activeJobId) ? draft.activeJobId : undefined })); } catch { /* Receipt storage is checked separately before creating a job. */ }
+  try { sessionStorage.setItem(draftKey, JSON.stringify({ selection, basis: hqExecutionBasis, parameters: cleanParameters(draft.parameters), ...identity, activeJobId: validId(draft.activeJobId) ? draft.activeJobId : undefined })); } catch { /* Receipt storage is checked separately before creating a job. */ }
 }
 export function readHQDraft(): HQDraft | null {
   try {
@@ -231,8 +242,10 @@ export function readHQDraft(): HQDraft | null {
     if (!data?.selection || !validHQParameters(data.parameters)) return null;
     const selection: HQDraft["selection"] = {};
     for (const role of ["person", "garment", "pose"] as const) if (validId(data.selection[role]?.id)) selection[role] = { id: data.selection[role].id, label: String(data.selection[role].label || data.selection[role].id) };
+    const identity = draftIdentity(data);
+    if (identity.personSource === "profile") delete selection.person;
     const p = data.parameters;
     const oldDefaults = !data.basis && p.seed === 0 && p.width === 512 && p.height === 768 && p.steps === 24;
-    return { selection, parameters: cleanParameters(oldDefaults ? defaultHQParameters : p), ...cleanIdentity(data), activeJobId: validId(data.activeJobId) ? data.activeJobId : undefined };
+    return { selection, parameters: cleanParameters(oldDefaults ? defaultHQParameters : p), ...identity, activeJobId: validId(data.activeJobId) ? data.activeJobId : undefined };
   } catch { return null; }
 }

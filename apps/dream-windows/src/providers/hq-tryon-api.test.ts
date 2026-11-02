@@ -220,19 +220,31 @@ describe("local HQ API boundary", () => {
   });
 
   it("recovers the initial downloading receipt by requested IDs and explicit identity options before pixels exist", () => {
-    const request = { ...body, profileId: "person-existing", facePolish: true, faceRestoreStrength: .35 };
+    const request = { garmentId: body.garmentId, poseId: body.poseId, parameters: body.parameters, profileId: "person-existing", facePolish: true, faceRestoreStrength: .35 };
     const downloading: HQJob = { ...job, state: "queued", phase: "downloading", inputs: [], result: null,
-      requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId }, parameters: body.parameters,
+      requestedInputIds: { person: request.profileId, garment: body.garmentId, pose: body.poseId }, parameters: body.parameters, personSource: "profile",
       profileId: request.profileId, facePolish: true, faceRestoreStrength: .35, idempotencyKey: "hq-existing-profile-request" };
     const restored = reserveHQOperation(request, [downloading]);
     expect(restored).toMatchObject({ jobId: job.id, idempotencyKey: downloading.idempotencyKey, delivery: "submitted" });
     vi.stubGlobal("sessionStorage", new MemoryStorage());
     expect(reserveHQOperation(request, []).idempotencyKey).toBe(restored.idempotencyKey);
-    const alternatives = [reserveHQOperation({ ...request, profileId: null }, [downloading]),
+    const alternatives = [reserveHQOperation({ ...request, personId: body.personId, profileId: null }, [downloading]),
       reserveHQOperation({ ...request, facePolish: false }, [downloading]),
       reserveHQOperation({ ...request, faceRestoreStrength: .4 }, [downloading])];
     expect(new Set([restored, ...alternatives].map(receipt => receipt.idempotencyKey)).size).toBe(4);
     expect(reserveHQOperation(request, [downloading]).idempotencyKey).toBe(restored.idempotencyKey);
+  });
+
+  it("migrates a combined draft to its selected local profile and separates historical combined receipts", () => {
+    const selection = { person: {id: body.personId}, garment: {id: body.garmentId}, pose: {id: body.poseId} };
+    sessionStorage.setItem("dream.hq.draft.v1", JSON.stringify({ selection, parameters: body.parameters, profileId: "person-existing" }));
+    expect(readHQDraft()).toMatchObject({ personSource: "profile", profileId: "person-existing", selection: { garment: selection.garment, pose: selection.pose } });
+    expect(readHQDraft()?.selection.person).toBeUndefined();
+    const legacy = { ...job, requestedInputIds: { person: body.personId, garment: body.garmentId, pose: body.poseId },
+      parameters: body.parameters, profileId: "person-existing", idempotencyKey: "legacy-combined" };
+    const current = reserveHQOperation({ ...body, personId: undefined, profileId: legacy.profileId }, [legacy]);
+    expect(current.jobId).toBeUndefined();
+    expect(current.idempotencyKey).not.toBe(legacy.idempotencyKey);
   });
 
   it.each([[512, 768], [640, 960], [768, 1152], [768, 512], [960, 640], [1152, 768]])("accepts native preset %s x %s with the approved A/B/C defaults", (width, height) => {

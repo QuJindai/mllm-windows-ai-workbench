@@ -26,11 +26,12 @@ from urllib.parse import urlencode, urlsplit
 import httpx
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from config import DreamServerConfig
 from errors import DreamApiError
-from identity_service import IdentityService, ReferenceUpload, StorageOwnerLease, WorkerCancelled, atomic_json, read_json, hq_pixel_fingerprint
-from identity_contract import IdentityGenerateRequest
+from identity_service import IdentityService, ReferenceUpload, StorageOwnerLease, WorkerCancelled, atomic_json, read_json
+from identity_contract import HQ_PROFILE_PNG_MAX_BYTES, IdentityGenerateRequest
 from history_transactions import validate_history_path, history_deletion_flags
 from job_runner import JobRunner
 import hq_paired_depth as paired_depth
@@ -62,7 +63,7 @@ class HQParameters(BaseModel):
 
 class HQCreateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
-    personId: str = Field(pattern=r'^[a-f0-9]{64}$')
+    personId: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
     garmentId: str = Field(pattern=r'^[A-Za-z0-9_-]{2,64}$')
     poseId: str = Field(pattern=r'^[A-Za-z0-9_-]{2,64}$')
     idempotencyKey: str = Field(pattern=r'^[A-Za-z0-9._:-]{8,128}$')
@@ -70,6 +71,12 @@ class HQCreateRequest(BaseModel):
     facePolish: bool = False
     faceRestoreStrength: float = Field(default=.35, ge=0, le=1)
     parameters: HQParameters = Field(default_factory=HQParameters)
+
+    @model_validator(mode='after')
+    def one_person_source(self):
+        if (self.personId is None) == (self.profileId is None):
+            raise PydanticCustomError('hq_person_source', '图库照片和本机档案必须且只能选一个')
+        return self
 
 
 def _now() -> str:
@@ -210,7 +217,7 @@ class HQService:
             data = read_json(self.config_path, 16384)
             if data.get('origin') != ORIGIN:
                 _fail('HQ_ORIGIN_INVALID', 'HQ origin 必须是已授权的自有 Cloudflare Worker', 503)
-            for key in ('sessionFile', 'pipelineConfig', 'python'):
+            for key in ('pipelineConfig', 'python'):
                 if not isinstance(data.get(key), str) or not Path(data[key]).is_absolute():
                     _fail('HQ_CONFIG_INVALID', 'HQ 本地配置缺少有效的绝对路径')
             # Only this config file, never request payloads, selects local runtime paths.
@@ -220,7 +227,10 @@ class HQService:
 
     def _session(self, settings: dict) -> tuple[str, str]:
         try:
-            data = read_json(Path(settings['sessionFile']), 4096)
+            path = settings.get('sessionFile')
+            if not isinstance(path, str) or not Path(path).is_absolute():
+                _fail('HQ_AUTH_REQUIRED', 'HQ 人物图库尚未配置本地授权会话', 401)
+            data = read_json(Path(path), 4096)
             token, expires = data.get('token'), data.get('expiresAt')
             if not isinstance(token, str) or not SHA_RE.fullmatch(token) or type(expires) is not int:
                 raise ValueError()
@@ -327,9 +337,9 @@ class HQService:
         except (OSError, ValueError, TypeError):
             _fail('MODEL_NOT_READY', '无法读取本机 HQ 管线配置')
 
-    def status(self) -> dict:
+    def status(self, person_source='gallery') -> dict:
         with self._operation():
-            result = {'configured': False, 'authorized': False, 'modelReady': False, 'pipelineFilesPresent': False,
+            result = {'configured': False, 'authorized': False if person_source == 'gallery' else None, 'modelReady': False, 'pipelineFilesPresent': False,
                       'executionValidated': False, 'pipeline': PIPELINE, 'readiness': 'not-configured', 'error': None}
             try:
                 settings = self._settings()
@@ -351,8 +361,9 @@ class HQService:
                             row['state'] == 'succeeded' and ready.get((row.get('audit') or {}).get('pipeline'))
                             and (row.get('audit') or {}).get('configuration', {}).get('sha256') == configuration_hash
                             for row in self._jobs.values())
-                self._authorized(settings)
-                result['authorized'] = True
+                if person_source == 'gallery':
+                    self._authorized(settings)
+                    result['authorized'] = True
                 if not result['modelReady']:
                     result['error'] = {'code': 'MODEL_NOT_READY', 'message': '本机 HQ 推理管线或模型文件尚未齐备'}
             except DreamApiError as exc:
@@ -481,7 +492,7 @@ class HQService:
     def _view(self, record: dict) -> dict:
         fields = ('id', 'state', 'phase', 'progress', 'cancellationRequested', 'createdAt', 'updatedAt', 'completedAt',
                   'startedAt', 'parameters', 'idempotencyKey', 'inputs', 'result', 'error', 'audit',
-                  'profileId', 'facePolish', 'faceRestoreStrength', 'requestedInputIds', 'identityJobId', 'identityResult', 'referenceId', 'pipeline')
+                  'personSource', 'profileId', 'facePolish', 'faceRestoreStrength', 'requestedInputIds', 'identityJobId', 'identityResult', 'referenceId', 'pipeline')
         result = {key: record.get(key) for key in fields}
         result['pipeline'] = record.get('pipeline') or (record.get('audit') or {}).get('pipeline')
         result.update(output=record.get('result'), outputSha256=(record.get('result') or {}).get('sha256'))
@@ -507,7 +518,8 @@ class HQService:
                         _fail('IDEMPOTENCY_CONFLICT', '此幂等键已用于另一组三图、档案或参数', 409)
                     return self._view(prior), True
             settings = self._settings()
-            self._session(settings)
+            if payload.personId is not None:
+                self._session(settings)
             pipeline = self._pipeline(settings, payload.poseId)
             job_id = ids[pipeline]
             digest = _sha(_canonical({'pipeline': pipeline, 'request': values}))
@@ -522,7 +534,8 @@ class HQService:
             record = {'id': job_id, 'requestDigest': digest, 'idempotencyKey': payload.idempotencyKey, 'pipeline': pipeline,
                       'state': 'queued', 'phase': 'queued', 'progress': 0, 'cancellationRequested': False,
                       'createdAt': _now(), 'startedAt': None, 'completedAt': None, 'parameters': values['parameters'],
-                      'requestedInputIds': {role: values[role + 'Id'] for role in ROLES},
+                      'requestedInputIds': {'person': payload.personId or payload.profileId, 'garment': payload.garmentId, 'pose': payload.poseId},
+                      'personSource': 'profile' if payload.profileId else 'gallery',
                       'profileId': payload.profileId, 'facePolish': payload.facePolish,
                       'faceRestoreStrength': payload.faceRestoreStrength, 'identityJobId': child_id,
                       'referenceId': None, 'identityResult': None, 'inputs': [], 'result': None, 'error': None, 'audit': None}
@@ -554,11 +567,21 @@ class HQService:
                     with self._lock:
                         record['phase'] = 'downloading'
                         self._save(record)
+                    profile = self._profile_for_tryon(record['profileId']) if record['profileId'] else None
                     inputs = {}
                     for role in ROLES:
                         check()
                         identifier = record['requestedInputIds'][role]
-                        raw, info = self._asset(role, identifier, settings=settings, check_cancel=check)
+                        if role == 'person' and profile:
+                            reference = self.identity.reference_image(profile['referenceId'])
+                            if not 0 < reference.stat().st_size <= HQ_PROFILE_PNG_MAX_BYTES:
+                                _fail('HQ_IMAGE_INVALID', '档案参考图缺失或超过本机参考图大小限制', 422)
+                            raw = reference.read_bytes()
+                            info = self._image(raw, _sha(raw), 'image/png')
+                            info.update(label=profile['name'], referenceId=profile['referenceId'], faceIndex=profile['faceIndex'])
+                        else:
+                            raw, info = self._asset(role, identifier, settings=settings, check_cancel=check)
+                        source = {'source': record['personSource']} if role == 'person' else {}
                         check()
                         extension = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}[info['mime']]
                         path = self._safe(folder / 'inputs' / (role + extension))
@@ -568,9 +591,9 @@ class HQService:
                             os.fsync(stream.fileno())
                         if _sha(path.read_bytes()) != info['sha256']:
                             _fail('HQ_INPUT_WRITE_FAILED', '本地原图副本校验失败')
-                        inputs[role] = {'path': str(path), 'id': identifier, 'sha256': info['sha256']}
+                        inputs[role] = {'path': str(path), 'id': identifier, 'sha256': info['sha256'], **source}
                         with self._lock:
-                            record['inputs'].append({'role': role, 'id': identifier, **info,
+                            record['inputs'].append({'role': role, 'id': identifier, **info, **source,
                                                      'imageUrl': f'/api/hq/jobs/{job_id}/inputs/{role}'})
                             record['progress'] = len(inputs)
                             self._save(record)
@@ -578,7 +601,7 @@ class HQService:
                     with self._lock:
                         record['phase'] = 'identifying'
                         self._save(record)
-                    request = self._identity_request(record, Path(inputs['person']['path']), self._cancel[job_id])
+                    request = self._identity_request(record, Path(inputs['person']['path']), self._cancel[job_id], profile)
                     check()
                     conditioning = {'jobId': job_id, 'pipeline': record['pipeline'], 'configPath': str(Path(settings['pipelineConfig']).resolve()), 'inputs': inputs,
                                     'auditPath': str(self._safe(folder / 'audit.json')),
@@ -614,18 +637,19 @@ class HQService:
             if exc.code != 'HQ_SERVICE_CLOSED':
                 raise
 
-    def _identity_request(self, record, original: Path, cancelled: threading.Event) -> IdentityGenerateRequest:
+    def _profile_for_tryon(self, profile_id):
+        profile = self.identity.profile_operation('get', profile_id)
+        if profile.get('state') != 'ready' or profile.get('referenceKind', 'faceid') != 'faceid':
+            _fail('HQ_PROFILE_INVALID', '请选择已就绪的 FaceID 人物档案', 409)
+        if profile.get('defaults', {}).get('modelId', 'realistic-vision-v5.1-faceid') != 'realistic-vision-v5.1-faceid':
+            _fail('HQ_PROFILE_MODEL_UNSUPPORTED', '此档案的底模与本机试衣不兼容，请选择 Realistic Vision FaceID 档案', 409)
+        return profile
+
+    def _identity_request(self, record, original: Path, cancelled: threading.Event, profile) -> IdentityGenerateRequest:
         defaults = {}
-        if record['profileId']:
-            profile = self.identity.profile_operation('get', record['profileId'])
-            if profile.get('state') != 'ready' or profile.get('referenceKind', 'faceid') != 'faceid':
-                _fail('HQ_PROFILE_INVALID', '请选择已就绪的 FaceID 人物档案', 409)
+        if profile:
             reference_id, face_index = profile['referenceId'], profile['faceIndex']
-            if hq_pixel_fingerprint(original) != hq_pixel_fingerprint(self.identity.reference_image(reference_id)):
-                _fail('HQ_PERSON_MISMATCH', 'R2 人物原图与所选档案参考图像素不一致，未自动替换人物', 409)
             saved = profile.get('defaults', {})
-            if saved.get('modelId', 'realistic-vision-v5.1-faceid') != 'realistic-vision-v5.1-faceid':
-                _fail('HQ_PROFILE_MODEL_UNSUPPORTED', '所选档案预设不是 RV FaceID；请使用兼容档案，未移植其他底模或风格 LoRA', 409)
             if record.get('pipeline') != paired_depth.PIPELINE:
                 defaults = {k: saved[k] for k in ('cfg', 'identityStrength', 'structureStrength', 'faceLoraStrength') if k in saved}
         else:
@@ -764,7 +788,8 @@ class HQService:
                 if not info:
                     _fail('HQ_INPUT_NOT_FOUND', '找不到此角色的原图', 404)
                 ext = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}.get(info['mime'])
-                path, limit = folder / 'inputs' / (role + (ext or '.invalid')), MAX_IMAGE
+                path = folder / 'inputs' / (role + (ext or '.invalid'))
+                limit = HQ_PROFILE_PNG_MAX_BYTES if role == 'person' and record.get('personSource') == 'profile' else MAX_IMAGE
             path = validate_history_path(self.config.dream_root, path) if role is None else self._safe(path)
             if not path.is_file() or not 0 < path.stat().st_size <= limit:
                 _fail('HQ_ARTIFACT_INVALID', '本地图片缺失或大小无效', 404)

@@ -9,6 +9,11 @@
 .hq-profile { margin: 12px 0 18px; }
 .hq-profile label { display: grid; gap: 8px; }
 .hq-profile select { width: 100%; }
+.hq-person-source { display: flex; flex-wrap: wrap; gap: 8px 20px; border: 0; padding: 0; margin: 0 0 14px; }
+.hq-person-source legend { padding: 0; margin-bottom: 8px; color: var(--text-2); font-size: var(--ui-small); }
+.hq-person-source label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.hq-person-source input { width: 1em; height: 1em; margin: 0; accent-color: var(--cyan); }
+.hq-tabs button:disabled { opacity: .45; cursor: default; }
 .hq-identity-result { margin-bottom: 18px; }
 .hq-identity-result .refinement-workspace { margin-top: 16px; }
 .hq-identity-result .refinement-body { grid-template-columns: minmax(0, 1fr); }

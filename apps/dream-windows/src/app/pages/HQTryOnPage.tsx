@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import type { HQAsset, HQCatalog, HQJob, HQParameters, HQRole, HQStatus } from "../../domain/hq-tryon";
+import type { HQAsset, HQCatalog, HQJob, HQParameters, HQPersonSource, HQRole, HQStatus } from "../../domain/hq-tryon";
 import { defaultHQIdentity, defaultHQParameters, hqActive, hqBasisForPose, hqError, hqExecutionBasis, hqResolutionPresets, hqRoleLabels, hqRoles, hqStateLabels, isHQBasis, validHQParameters } from "../../domain/hq-tryon";
 import type { IdentityJob, IdentityProfile, IdentityStatus } from "../../domain/identity";
 import { identityStateLabels } from "../../domain/identity";
@@ -17,6 +17,7 @@ import "./HQTryOnPage.css";
 
 const describe = (e: unknown) => e instanceof Error ? e.message : "本地服务请求失败";
 const assetName = (asset: HQAsset) => asset.label || asset.name || asset.id;
+const compatibleProfile = (p: IdentityProfile) => (p.defaults?.modelId ?? "realistic-vision-v5.1-faceid") === "realistic-vision-v5.1-faceid";
 const shortId = (id: string) => id.length > 24 ? `${id.slice(0, 12)}…${id.slice(-6)}` : id;
 type HQActionNotice = { jobId: string; kind: "submitted" | "cancel" | "copied" };
 const phaseLabels: Record<string, string> = { downloading: "读取三图原图", identifying: "固定人物档案", identity_queued: "等待人物生成", queued: "等待本机资源", preparing: "固定人物与构图", sampling: "生成底图", generating: "生成底图", polishing: "可选换脸", face_polish: "可选换脸", "face-polish": "可选换脸", publishing: "保存成片", uploading: "保存成片", complete: "处理完成", succeeded: "处理完成", failed: "处理失败", cancelled: "已取消", interrupted: "运行中断" };
@@ -26,6 +27,8 @@ export function HQTryOnPage() {
   const [draft] = useState(readHQDraft);
   const [selection, setSelection] = useState<Partial<Record<HQRole, HQAsset>>>(draft?.selection || {});
   const [parameters, setParameters] = useState<HQParameters>(draft?.parameters || defaultHQParameters);
+  const [personSource, setPersonSource] = useState<HQPersonSource>(draft?.personSource ?? "gallery");
+  const profileOnly = personSource === "profile";
   const [profileId, setProfileId] = useState(draft?.profileId || "");
   const [faceOptions, setFaceOptions] = useState({ facePolish: draft?.facePolish ?? defaultHQIdentity.facePolish, faceRestoreStrength: draft?.faceRestoreStrength ?? defaultHQIdentity.faceRestoreStrength });
   const [profiles, setProfiles] = useState<IdentityProfile[]>([]);
@@ -34,7 +37,7 @@ export function HQTryOnPage() {
   const [identityError, setIdentityError] = useState("");
   const [profileError, setProfileError] = useState("");
   const [profileLoading, setProfileLoading] = useState(false);
-  const [kind, setKind] = useState<HQRole>("person");
+  const [kind, setKind] = useState<HQRole>(profileOnly ? "garment" : "person");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({ q: "", category: "", page: 0 });
   const [loadedCatalog, setLoadedCatalog] = useState<{ key: string; data: HQCatalog } | null>(null);
@@ -51,7 +54,8 @@ export function HQTryOnPage() {
   const [resultRefresh, setResultRefresh] = useState(0);
   const catalogKey = JSON.stringify([kind, filters.q, filters.category, filters.page, catalogRefresh]);
   // Never pair a new role/filter with old IDs, even in the commit before effects run.
-  const catalog = status?.authorized && status.configured && loadedCatalog?.key === catalogKey ? loadedCatalog.data : null;
+  const canReadCatalog = status?.configured === true && (kind !== "person" || (!profileOnly && status.authorized));
+  const catalog = canReadCatalog && loadedCatalog?.key === catalogKey ? loadedCatalog.data : null;
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [jobsRevision, setJobsRevision] = useState(-1);
@@ -68,15 +72,16 @@ export function HQTryOnPage() {
   const [resultUrl, setResultUrl] = useState("");
   const [resultError, setResultError] = useState("");
   const [, setReceiptVersion] = useState(0);
-  const body = { personId: selection.person?.id || "", garmentId: selection.garment?.id || "", poseId: selection.pose?.id || "", parameters, ...(profileId ? { profileId } : {}), ...faceOptions };
+  const body = { ...(profileOnly ? { profileId } : { personId: selection.person?.id }), garmentId: selection.garment?.id || "", poseId: selection.pose?.id || "", parameters, ...faceOptions };
   const basis = hqBasisForPose(status, selection.pose?.id);
   const operation = readHQOperations().find(r => r.fingerprint === hqFingerprint(body, basis));
-  const validProfile = !profileId || !profileLoading && !profileError && selectedProfile?.id === profileId && selectedProfile.state === "ready" && (selectedProfile.referenceKind ?? "faceid") === "faceid";
+  const activeProfile = profileOnly && profileId === selectedProfile?.id ? selectedProfile : null;
+  const validProfile = !profileOnly || !!activeProfile && !profileLoading && !profileError && activeProfile.state === "ready" && (activeProfile.referenceKind ?? "faceid") === "faceid" && compatibleProfile(activeProfile);
   const validFace = Number.isFinite(faceOptions.faceRestoreStrength) && faceOptions.faceRestoreStrength >= 0 && faceOptions.faceRestoreStrength <= 1 && (!faceOptions.facePolish || identityStatus?.facePolish?.ready === true && !identityError);
   const presetMismatch = Boolean(status?.pipeline && !isHQBasis(status.pipeline));
   const routeReady = status?.posePipelineReady?.[basis] ?? status?.modelReady;
-  const ready = reconciled && !presetMismatch && validProfile && validFace && status?.configured === true && status.authorized === true && routeReady === true && !connectionError;
-  const allSelected = hqRoles.every(role => selection[role]);
+  const ready = reconciled && !presetMismatch && validProfile && validFace && status?.configured === true && (profileOnly || status.authorized === true) && routeReady === true && !connectionError;
+  const allSelected = !!(selection.garment && selection.pose && (profileOnly ? profileId : selection.person));
   const retryJobs = job?.id === activeId ? [job, ...jobs.filter(item => item.id !== job.id)] : jobs;
   const retryJob = reconciled && !loading && !detailLoading && !connectionError && !detailError && jobsRevision === refresh && detailRevision === refresh
     && job?.id === activeId && job.id === operation?.jobId ? retryableHQJob(operation, retryJobs) : undefined;
@@ -93,7 +98,7 @@ export function HQTryOnPage() {
     setNotice(current => current?.jobId === activeId ? current : null); setActionError("");
   }, [activeId]);
 
-  useEffect(() => { writeHQDraft({ selection, parameters, profileId: profileId || null, ...faceOptions, activeJobId: activeId }); }, [selection, parameters, profileId, faceOptions, activeId]);
+  useEffect(() => { writeHQDraft({ selection, parameters, personSource, profileId: profileId || null, ...faceOptions, activeJobId: activeId }); }, [selection, parameters, personSource, profileId, faceOptions, activeId]);
 
   useEffect(() => {
     const controller = new AbortController(); let alive = true; setIdentityError("");
@@ -119,7 +124,7 @@ export function HQTryOnPage() {
   useEffect(() => {
     const controller = new AbortController(); let alive = true;
     setLoading(true);
-    Promise.all([hqApi.status(controller.signal), hqApi.jobs(controller.signal)]).then(([nextStatus, nextJobs]) => {
+    Promise.all([hqApi.status(controller.signal, personSource), hqApi.jobs(controller.signal)]).then(([nextStatus, nextJobs]) => {
       if (!alive) return;
       setStatus(nextStatus); setJobs(nextJobs);
       const successors = new Map<string, string>();
@@ -134,16 +139,16 @@ export function HQTryOnPage() {
       });
     }).catch(e => { if (alive) { setReconciled(false); setConnectionError(describe(e)); } }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; controller.abort(); };
-  }, [refresh]);
+  }, [refresh, personSource]);
 
   useEffect(() => {
-    if (!status?.authorized || !status.configured) { setLoadedCatalog(null); return; }
+    if (!canReadCatalog) { setLoadedCatalog(null); setCatalogLoading(false); return; }
     const controller = new AbortController(); let alive = true;
     setCatalogLoading(true); setCatalogError(""); setLoadedCatalog(null);
     hqApi.catalog(kind, filters.q, filters.category, filters.page, controller.signal).then(value => { if (alive) setLoadedCatalog({ key: catalogKey, data: value }); })
       .catch(e => { if (alive) setCatalogError(describe(e)); }).finally(() => { if (alive) setCatalogLoading(false); });
     return () => { alive = false; controller.abort(); };
-  }, [kind, filters, status?.authorized, status?.configured, catalogKey]);
+  }, [kind, filters, canReadCatalog, catalogKey]);
 
   useEffect(() => {
     const epoch = ++detailEpoch.current;
@@ -198,6 +203,14 @@ export function HQTryOnPage() {
   }
 
   function switchKind(next: HQRole) { setKind(next); setSearch(""); setFilters({ q: "", category: "", page: 0 }); }
+  function switchPersonSource(next: HQPersonSource) {
+    if (next === personSource) return;
+    setPersonSource(next); setProfileId(""); setSelectedProfile(null); setProfileError("");
+    setSelection(({ person: _person, ...outfit }) => outfit);
+    setStatus(null); setCatalogError(""); setReconciled(false); setActionError("");
+    if (next === "gallery") switchKind("person");
+    else if (kind === "person") switchKind("garment");
+  }
   function searchCatalog(event: FormEvent) { event.preventDefault(); setFilters(current => ({ ...current, q: search.trim(), page: 0 })); }
   async function generate(newAttempt = false) {
     if (submittingRef.current || !allSelected || !ready || !validHQParameters(parameters)) return;
@@ -250,12 +263,12 @@ export function HQTryOnPage() {
       <ol className="hq-workflow" aria-label="人物试衣流程"><li>固定人物与构图</li><li>底图</li><li>可选换脸</li><li>独立精修</li></ol>
       <div className="hq-status-line" role="status">
         <span>{connectionError ? "本机服务离线" : currentStatus ? currentStatus.configured ? "已配置" : "尚未配置" : "正在连接本地服务…"}</span>
-        <span>{currentStatus ? currentStatus.authorized ? "图库已授权" : "图库未授权" : "授权状态未知"}</span>
+        <span>{profileOnly ? "使用本机人物档案" : currentStatus ? currentStatus.authorized ? "图库已授权" : "图库未授权" : "授权状态未知"}</span>
         <span>{currentStatus ? currentStatus.modelReady ? "模型文件齐备" : "模型未就绪" : "模型状态未知"}</span>
         {currentStatus?.pipeline && <span>管线：{currentStatus.pipeline}</span>}
       </div>
       {connectionError && status && <p className="hq-hint">上次状态已过期，授权和模型状态等待重新读取。</p>}
-      {currentStatus && (!currentStatus.configured || !currentStatus.authorized) && <p className="hq-hint">请在本机完成 HQ 图库授权配置，然后刷新。此页无需输入图库密钥。</p>}
+      {currentStatus && !profileOnly && (!currentStatus.configured || !currentStatus.authorized) && <p className="hq-hint">请在本机完成 HQ 图库授权配置，然后刷新。此页无需输入图库密钥。</p>}
       {currentStatus && !currentStatus.modelReady && <p className="hq-hint">本地三图管线尚未就绪，暂不能提交生成；可查看已有任务。</p>}
       {hqError(currentStatus?.error) && <p role="alert" className="hq-error">{hqError(currentStatus?.error)}</p>}
       {connectionError && <p role="alert" className="hq-error">本地服务不可用：{connectionError}</p>}
@@ -263,8 +276,22 @@ export function HQTryOnPage() {
 
     <div className="hq-compose">
       <section className="surface-card hq-catalog" aria-label="HQ 原图图库">
-        <h2>1 · 选择三张原图</h2>
-        <div className="hq-tabs" role="tablist" aria-label="素材角色">{hqRoles.map(role => <button key={role} role="tab" aria-selected={kind === role} onClick={() => switchKind(role)}>{hqRoleLabels[role]}</button>)}</div>
+        <h2>1 · 选择人物、服装和姿势</h2>
+        <fieldset className="hq-person-source"><legend>人物来源</legend>
+          <label><input type="radio" name="hq-person-source" checked={!profileOnly} onChange={() => switchPersonSource("gallery")} />图库照片</label>
+          <label><input type="radio" name="hq-person-source" checked={profileOnly} onChange={() => switchPersonSource("profile")} />只选本机档案</label>
+        </fieldset>
+        {profileOnly && <div className="hq-profile">
+          <label>本机人物档案<select value={profileId} onChange={e => setProfileId(e.target.value)}>
+            <option value="">请选择人物档案</option>
+            {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={profile.state !== "ready" || !compatibleProfile(profile)}>{profile.name}{profile.state !== "ready" ? " · 尚未就绪" : !compatibleProfile(profile) ? " · 底模不兼容" : ""}</option>)}
+            {profileId && !profiles.some(profile => profile.id === profileId) && <option value={profileId}>所选档案暂不可用</option>}
+          </select></label>
+          <p className="hq-hint">使用建档时选定的人脸和参考图。服装和姿势仍从下方图库选择。</p>
+          {profileLoading && <p role="status">正在核对人物档案…</p>}
+          {profileError && <p className="hq-error" role="alert">{profileError}</p>}
+        </div>}
+        <div className="hq-tabs" role="tablist" aria-label="素材角色">{hqRoles.map(role => <button key={role} role="tab" disabled={profileOnly && role === "person"} aria-selected={kind === role} onClick={() => switchKind(role)}>{hqRoleLabels[role]}</button>)}</div>
         <form className="hq-filters" onSubmit={searchCatalog}>
           <input type="search" aria-label="搜索 HQ 素材" placeholder="名称或编号" value={search} onChange={e => setSearch(e.target.value)} />
           <select aria-label="HQ 素材分类" value={filters.category} onChange={e => setFilters(current => ({ ...current, category: e.target.value, q: search.trim(), page: 0 }))}>
@@ -291,21 +318,15 @@ export function HQTryOnPage() {
         }}>套用 A/B/C 定稿参数</button>}
         {selection.pose && currentStatus && <p className="hq-hint">所选姿势使用{basis === hqExecutionBasis ? "配对深度图" : "OpenPose 骨架"}。</p>}
         {selection.pose && currentStatus?.posePipelineReady?.[basis] === false && <p role="alert" className="hq-error">所选姿势需要的本机模型尚未就绪。</p>}
-        <div className="hq-profile">
-          <label>固定人物档案（可选）<select value={profileId} onChange={e => setProfileId(e.target.value)}>
-            <option value="">使用所选 R2 人物图 · 本地导入 / 缓存</option>
-            {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={profile.state !== "ready"}>{profile.name} · FaceID{profile.state === "ready" ? "" : " · 尚未就绪"}</option>)}
-            {profileId && !profiles.some(profile => profile.id === profileId) && <option value={profileId}>所选档案暂不可用</option>}
-          </select></label>
-          <p className="hq-hint">不选档案时使用上方 R2 人物原图。选择档案后，提交时核验人物图与档案绑定是否一致；不匹配会拒绝，不替换所选人物。</p>
-          {profileLoading && <p role="status">正在核对人物档案…</p>}
-          {selectedProfile && !profileLoading && <p className="hq-hint">已选档案：{selectedProfile.name} · 人脸 {selectedProfile.faceIndex + 1} · {selectedProfile.referenceId}</p>}
-          {(profileError || identityError) && <p className="hq-error" role="alert">{profileError || `人物能力读取失败：${identityError}`}</p>}
-        </div>
-        <div className="hq-selected-grid">{hqRoles.map(role => <figure key={role}>
-          <figcaption>{hqRoleLabels[role]}</figcaption>
-          {selection[role] ? <><HQImage src={hqApi.assetUrl(role, selection[role]!.id)} alt={`已选${hqRoleLabels[role]}原图`} /><p>{assetName(selection[role]!)}</p><a href={hqApi.assetUrl(role, selection[role]!.id)} target="_blank" rel="noreferrer">打开{hqRoleLabels[role]}原图</a></> : <p className="hq-empty">尚未选择</p>}
-        </figure>)}</div>
+        {identityError && <p className="hq-error" role="alert">人物能力读取失败：{identityError}</p>}
+        <div className="hq-selected-grid">{hqRoles.map(role => {
+          const local = role === "person" && profileOnly, item = selection[role];
+          const url = local ? activeProfile && `/api/identity/references/${encodeURIComponent(activeProfile.referenceId)}/image` : item && hqApi.assetUrl(role, item.id);
+          const name = local ? activeProfile && `${activeProfile.name} · 人脸 ${activeProfile.faceIndex + 1}` : item && assetName(item);
+          return <figure key={role}><figcaption>{local ? "人物 · 本机档案" : hqRoleLabels[role]}</figcaption>
+            {url ? <><HQImage src={url} alt={`已选${hqRoleLabels[role]}原图`} /><p>{name}</p><a href={url} target="_blank" rel="noreferrer">打开{hqRoleLabels[role]}原图</a></> : <p className="hq-empty">{local ? "请选择本机档案" : "尚未选择"}</p>}
+          </figure>;
+        })}</div>
         <label className="hq-resolution">尺寸预设<select
           value={hqResolutionPresets.some(preset => preset.width === parameters.width && preset.height === parameters.height) ? `${parameters.width}x${parameters.height}` : "custom"}
           onChange={event => {
@@ -350,13 +371,14 @@ export function HQTryOnPage() {
           {typeof job.progress === "number" && Number.isFinite(job.progress) && <progress aria-label="本机任务进度" max={100} value={Math.min(100, Math.max(0, job.progress))} />}
           {job.state === "queued" && <p className="hq-hint">等待本机生成资源。其他 Dream 任务占用 GPU 时，本任务保持排队。</p>}
           {hqError(job.error) && <p role="alert" className="hq-error">{hqError(job.error)}</p>}
-          {typeof job.error === "object" && job.error?.code === "HQ_PERSON_MISMATCH" && <p className="hq-hint">要使用新选的照片，请把“固定人物档案”改为“使用所选 R2 人物图”；要保留档案，请选择该档案的建档原图。修改后再提交。</p>}
+          {typeof job.error === "object" && job.error?.code === "HQ_PERSON_MISMATCH" && <p className="hq-hint">请在人物来源中重新选择图库照片或本机档案，再提交。</p>}
+          {job.personSource && <p className="hq-hint">任务人物来源：{job.personSource === "profile" ? "本机档案" : "图库照片"}</p>}
           <div className="hq-input-grid">{hqRoles.map(role => {
             const input = job.inputs.find(item => item.role === role), width = input?.width ?? input?.dimensions?.width, height = input?.height ?? input?.dimensions?.height;
             return <figure key={role}><figcaption>{hqRoleLabels[role]}输入</figcaption>{input ? <>
               <HQImage src={hqApi.inputUrl(job.id, role)} alt={`任务${hqRoleLabels[role]}原图`} />
               <a href={hqApi.inputUrl(job.id, role)} target="_blank" rel="noreferrer">打开{hqRoleLabels[role]}输入原图</a>
-              <p>{input.id}</p>{width && height ? <p>{width} × {height}</p> : <p>尺寸待记录</p>}
+              <p>{input.label || input.id}</p>{width && height ? <p>{width} × {height}</p> : <p>尺寸待记录</p>}
               <small>SHA-256：{input.sha256 || "尚未记录"}</small>
             </> : <p className="hq-empty">原图尚未准备完成</p>}</figure>;
           })}</div>

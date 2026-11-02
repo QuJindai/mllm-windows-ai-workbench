@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from config import DreamServerConfig
 from errors import DreamApiError
 from history_transactions import delete_history_files, validate_history_path, committed_history_deletions
-from identity_contract import IdentityGenerateRequest
+from identity_contract import HQ_PROFILE_PNG_MAX_BYTES, IdentityGenerateRequest
 from identity_models import (is_visual_model_id, visual_restore_model,
                              ILLUSTRIOUS_VISUAL_MODEL_ID, require_identity_model_enabled)
 from identity_persistent_worker import PersistentWorkerClient, PersistentWorkerCancelled
@@ -1411,12 +1411,17 @@ class IdentityService:
             raise DreamApiError('HQ_BINDING_INVALID', 'HQ 必须绑定三张角色明确的原图', status_code=422)
         for role, item in conditioning['inputs'].items():
             saved = next((row for row in record['inputs'] if row['role'] == role), None)
-            if not saved or item.get('id') != saved['id'] or item.get('sha256') != saved['sha256']:
+            if not saved or item.get('id') != saved['id'] or item.get('sha256') != saved['sha256'] or item.get('source') != saved.get('source'):
                 raise DreamApiError('HQ_BINDING_INVALID', 'HQ 原图编号或哈希与任务不匹配', status_code=409)
+            if role == 'person' and record.get('personSource') == 'profile' and (
+                    saved.get('source') != 'profile' or saved['id'] != record.get('profileId')
+                    or saved.get('referenceId') != request.referenceId or saved.get('faceIndex') != request.faceIndex):
+                raise DreamApiError('HQ_BINDING_INVALID', '人物任务与所选档案的人脸不匹配', status_code=409)
             suffix = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}.get(saved['mime'])
             expected = folder / 'inputs' / (role + (suffix or '.invalid'))
             path = validate_history_path(self.config.dream_root, Path(item.get('path', '')))
-            if path.resolve() != expected.resolve() or not path.is_file() or not 0 < path.stat().st_size <= 8 * 1024 * 1024:
+            size_limit = HQ_PROFILE_PNG_MAX_BYTES if role == 'person' and record.get('personSource') == 'profile' else 8 * 1024 * 1024
+            if path.resolve() != expected.resolve() or not path.is_file() or not 0 < path.stat().st_size <= size_limit:
                 raise DreamApiError('HQ_BINDING_INVALID', 'HQ 原图路径无效', status_code=422)
             if hashlib.sha256(path.read_bytes()).hexdigest() != saved['sha256']:
                 raise DreamApiError('HQ_HASH_MISMATCH', 'HQ 本地原图哈希已改变', status_code=422)
@@ -1430,7 +1435,7 @@ class IdentityService:
         original = Path(conditioning['inputs']['person']['path'])
         reference = self.reference_image(request.referenceId)
         if hq_pixel_fingerprint(original) != hq_pixel_fingerprint(reference):
-            raise DreamApiError('HQ_PERSON_MISMATCH', 'R2 人物原图与档案参考图像素不一致，未切换人物', status_code=409)
+            raise DreamApiError('HQ_PERSON_MISMATCH', '人物输入与绑定的参考图像素不一致', status_code=409)
         return record
 
     @owned_operation

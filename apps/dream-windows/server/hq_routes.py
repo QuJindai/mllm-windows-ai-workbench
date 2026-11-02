@@ -104,8 +104,10 @@ def create_hq_router(config: DreamServerConfig, service: HQService) -> APIRouter
                     response = await original(request)
                     response.headers.update(PRIVATE_HEADERS)
                     return response
-                except RequestValidationError:
+                except RequestValidationError as exc:
                     error = {'code': 'REQUEST_INVALID', 'message': 'HQ 请求参数无效，请检查素材编号和生成参数'}
+                    if any(item['type'] == 'hq_person_source' for item in exc.errors()):
+                        error = {'code': 'HQ_PERSON_SOURCE_INVALID', 'message': '图库照片和本机档案必须且只能选一个'}
                     return JSONResponse({'error': error, **error, 'retryable': False}, status_code=422, headers=PRIVATE_HEADERS)
                 except DreamApiError as exc:
                     error = {'code': exc.code, 'message': exc.message}
@@ -128,8 +130,8 @@ def create_hq_router(config: DreamServerConfig, service: HQService) -> APIRouter
     router = APIRouter(prefix='/api/hq', route_class=HQRoute, lifespan=lifespan)
 
     @router.get('/status')
-    def status():
-        return service.status()
+    def status(personSource: Literal['gallery', 'profile'] = 'gallery'):
+        return service.status(personSource)
 
     @router.get('/catalog')
     def catalog(kind: Literal['person', 'garment', 'pose'], q: str = Query('', max_length=100),

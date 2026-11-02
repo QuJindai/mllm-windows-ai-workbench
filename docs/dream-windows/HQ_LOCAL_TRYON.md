@@ -6,7 +6,7 @@
 
 打开 `http://127.0.0.1:8766/?view=hq-tryon`。
 
-1. 选择人物原图。可以绑定现有 FaceID 人物档案，但档案参考与所选原图必须一致，不能静默替换人物。
+1. 在「人物来源」选择「图库照片」或「只选本机档案」。前者使用所选 R2 人物原图；后者使用本机 FaceID 档案的参考图和指定人脸，无需人物图库授权。切换来源会清除上一个人物选择，保留服装、姿势及生成参数。
 2. 在完整 R2 图库搜索、分类或翻页，按白模预览选择姿势与视角。当前 1,439 个姿势都有对应深度图。
 3. 点击「本机生成」后，Dream 按所选白模的编号与原图 SHA-256 查找深度图，将它送入原有 A/B/C 采样流程。缓存缺失时只读取该姿势的 R2 对象。确认区显示所选姿势的控制方式。「套用 A/B/C 定稿参数」可恢复 768×1152、30 步、种子 20261104 和可选修脸强度 0.35。
 4. 按需启用原有可选修脸。真人路线沿用身份回贴与细节修复；修脸前底图单独保留，失败需显示原因。
@@ -54,13 +54,17 @@
 
 可选清晰增强在同一人物运行配置中增加 `upscaleModel`，指向本机已有 `RealESRGAN_x4plus.pth`，其 SHA-256 随每个增强版本记录。使用配置中 `python` 对应环境的 PyTorch、Spandrel 和 Pillow，不依赖网页服务解释器安装推理包。能力检测不加载模型或初始化 GPU；结果短期缓存，配置／模型／解释器文件改变即失效。推理进入现有串行 GPU 队列，用 128 像素分块、32 像素上下文，4倍模型输出降采样为严格2倍；不再加载底模、换脸模型或参考照。未配置或组件缺失时不显示可用增强模式。
 
-人物授权复用已授权 Cloudflare 连接器和私有 R2 会话机制。原始 Bearer 仅保存在当前 Windows 用户和 SYSTEM 可读的本机凭据文件中；R2 只保存会话的 SHA-256 与有效期。浏览器、Git、普通日志和推理进程不接收会话或 Worker 主密钥。无公共免鉴权签发入口。
+人物图库授权复用已授权 Cloudflare 连接器和私有 R2 会话机制。原始 Bearer 仅保存在当前 Windows 用户和 SYSTEM 可读的本机凭据文件中；R2 只保存会话的 SHA-256 与有效期。浏览器、Git、普通日志和推理进程不接收会话或 Worker 主密钥。无公共免鉴权签发入口。
 
-授权过期时需重新签发短期会话。下载阶段必须仍获授权；成功下载并校验的输入可在本机执行，不依赖十分钟单图 grant 排队存活。不能用缩略图、截图或原素材外站替代失败的 R2 原图。
+选择图库照片时，下载人物原图需要有效的私有会话；授权过期后需重新签发。成功下载并校验的输入可在本机执行，不依赖十分钟单图 grant 排队存活。只选本机档案时不读取私有人物图库。不能用缩略图、截图或原素材外站替代失败的 R2 原图。
 
 ## 接口与证据
 
 新增接口均在本机 `/api/hq`：`status`、`catalog`、`asset`、`jobs`、单任务状态、`cancel`、三角色 `inputs` 和 `result`。Cloudflare 原有 MCP 三个工具不承担本机执行。
+
+`POST /api/hq/jobs` 只接受一种人物来源：选择图库照片传 `personId`，选择本机档案传 `profileId`。两者同时提供或均未提供时返回 HTTP 422，不创建任务。`GET /api/hq/status?personSource=profile` 不检查私有人物图库的会话；任务中的 `personSource` 和人物输入记录注明实际来源。
+
+2026-11-02 已在本机浏览器分别用档案和图库 JPEG 提交同服装、同姿势、同种子的两次生成。档案模式刷新和提交期间没有人物图库请求，任务的人物输入与建档参考 PNG 逐字节一致；图库模式的人物输入与所选 JPEG 的 SHA-256 一致。两张 768×1152 成片均已从任务页下载并校验哈希，三路条件各参与了 30 步采样。
 
 本机任务使用持久幂等键。网络重试和重复点击复用同一创作动作；参数变化或明确点击失败／取消任务的“按相同设置新建重试”才创建新动作。手动重试保留旧任务，生成新的请求编号。重启中断不能自动重跑，失败也不能被接口成功回执掩盖。
 
@@ -73,7 +77,7 @@ npm.cmd install --prefix E:/Dream/tools/hq-depth-r2 --save-exact wrangler@4.156.
 python scripts/install_hq_depth_library.py --activate
 ```
 
-传入 `--bundle <已回读的 bundle.zip>` 可离线安装。传入 `--index-only` 可只安装索引，在首次生成时按需补齐缓存。发布记录与 SHA-256 随 Dream 代码保存在 `config/dream/hq-paired-depth-v1/full-release.json`。深度图独立存放在 `hq-tryon-assets/dream-depth/v1/`，本机缓存位于 `E:/Dream/models/hq/depth-library/`。配置有变动时安装器会输出备份路径。构建前端并启动服务后，`/release.json` 显示 `dream-hq-r2-depth-library-20261102`。
+传入 `--bundle <已回读的 bundle.zip>` 可离线安装。传入 `--index-only` 可只安装索引，在首次生成时按需补齐缓存。发布记录与 SHA-256 随 Dream 代码保存在 `config/dream/hq-paired-depth-v1/full-release.json`。深度图独立存放在 `hq-tryon-assets/dream-depth/v1/`，本机缓存位于 `E:/Dream/models/hq/depth-library/`。配置有变动时安装器会输出备份路径。构建前端并启动服务后，`/release.json` 显示 `dream-hq-person-source-20261102`。
 
 原 HQ 选材器与 MCP 的 `get_tryon_asset({kind:"pose",id})` 继续读取白模 PNG。深度选择、补取和使用回执仅在 Dream 本机生成流程内执行。
 

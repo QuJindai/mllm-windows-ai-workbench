@@ -2,6 +2,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from typing import Literal
 from identity_models import is_visual_model_id, MODEL_SPECS
 
+# A stored 16 MP RGB reference can be larger as a lossless PNG than its upload.
+HQ_PROFILE_PNG_MAX_BYTES = 48 * 1024 * 1024
+
 
 class IdentityGenerateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False, strict=True)

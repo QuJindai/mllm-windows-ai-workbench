@@ -1,6 +1,7 @@
 import type { IdentityJob } from "./identity";
 
 export type HQRole = "person" | "garment" | "pose";
+export type HQPersonSource = "gallery" | "profile";
 export type HQJobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export interface HQParameters { seed: number; width: number; height: number; steps: number }
 export interface HQIdentityOptions { profileId?: string | null; facePolish?: boolean; faceRestoreStrength?: number }
@@ -9,11 +10,12 @@ export interface HQAsset {
   width?: number; height?: number;
 }
 export interface HQCatalog { items: HQAsset[]; total: number; hasMore: boolean; categories: string[] }
-export interface HQStatus { configured: boolean; authorized: boolean; modelReady: boolean; pipeline?: string; pairedDepthPoseIds?: string[]; posePipelineReady?: Partial<Record<HQBasis, boolean>>; error?: HQError }
+export interface HQStatus { configured: boolean; authorized: boolean | null; modelReady: boolean; pipeline?: string; pairedDepthPoseIds?: string[]; posePipelineReady?: Partial<Record<HQBasis, boolean>>; error?: HQError }
 export type HQError = string | { code?: string; message?: string } | null;
 export interface HQInput extends HQAsset { role: HQRole; dimensions?: { width: number; height: number } }
 export interface HQResult { sha256: string; width?: number; height?: number; mime?: string; metadata?: Record<string, unknown> }
 export interface HQJob extends HQIdentityOptions {
+  personSource?: HQPersonSource | null;
   id: string; state: HQJobState; phase?: string; progress?: number; cancellationRequested?: boolean;
   pipeline?: string | null;
   inputs: HQInput[]; parameters?: HQParameters; idempotencyKey?: string; error?: HQError;
@@ -25,7 +27,7 @@ export interface HQJob extends HQIdentityOptions {
   historyDeleted?: boolean; resultDeleted?: boolean; refinementsAvailable?: boolean;
 }
 export interface HQCreateRequest extends HQIdentityOptions {
-  personId: string; garmentId: string; poseId: string; idempotencyKey: string; parameters: HQParameters;
+  personId?: string; garmentId: string; poseId: string; idempotencyKey: string; parameters: HQParameters;
 }
 export const hqRoles: HQRole[] = ["person", "garment", "pose"];
 export const hqRoleLabels: Record<HQRole, string> = { person: "人物", garment: "服装", pose: "姿势" };

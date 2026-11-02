@@ -1,6 +1,6 @@
 # HQ conditioning inside the existing identity pipeline
 
-The local browser release `dream-hq-r2-depth-library-20261102` serves the full
+The local browser release `dream-hq-person-source-20261102` serves the full
 R2 white-model pose catalog and resolves the matching depth image for local generation. Open
 [HQ 试衣](http://127.0.0.1:8766/?view=hq-tryon), choose a person, garment and
 pose, then select **本机生成**. **套用 A/B/C 定稿参数** restores 768 × 1152,
@@ -53,7 +53,7 @@ only after binding its private assets to the real identity child job:
   "hqConditioning": {
     "configPath": "E:/Dream/data/hq/pipeline.json",
     "inputs": {
-      "person": {"path": "ABSOLUTE ORIGINAL PERSON IMAGE", "id": "asset-id", "sha256": "64 hex characters"},
+      "person": {"path": "ABSOLUTE ORIGINAL PERSON IMAGE", "id": "gallery-image-sha256", "source": "gallery", "sha256": "64 hex characters"},
       "garment": {"path": "ABSOLUTE ORIGINAL GARMENT IMAGE", "id": "asset-id", "sha256": "64 hex characters"},
       "pose": {"path": "ABSOLUTE ORIGINAL POSE IMAGE", "id": "asset-id", "sha256": "64 hex characters"}
     },
@@ -67,9 +67,11 @@ Optional fields within `hqConditioning`: `jobId` (HQ parent ID), `version`,
 The authoritative `imagePath`, `referenceId`, `faceIndex`, `jobId`, `dreamRoot`,
 `outputPath`, `metadataPath` remain the ordinary identity worker fields.
 
-`inputs.person.path` may be the original R2 file while `imagePath` is its stored
-identity PNG. The helper independently verifies **exact EXIF-transposed RGB pixel
-equality and dimensions**, preserving both encoded-file hashes. Face features
+Each job selects one person source. With `personId`, `inputs.person.path` is the
+original R2 photo and `imagePath` is its stored identity PNG. With `profileId`,
+the job copies the local profile's reference PNG and binds its saved face index;
+it does not read the private photo gallery. The helper independently verifies
+**exact EXIF-transposed RGB pixel equality and dimensions**, preserving both encoded-file hashes. Face features
 are still obtained from `identity_features.reference_features` using `imagePath`
 and the selected `faceIndex`. No profile is silently replaced.
 

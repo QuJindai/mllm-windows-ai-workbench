@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hq_tryon_conditioning import PipelineError
+from identity_contract import HQ_PROFILE_PNG_MAX_BYTES
 import hq_paired_depth as paired_depth
 
 ROLES = ('person', 'garment', 'pose')
@@ -242,8 +243,9 @@ class ConditioningAudit:
         for role, item in self.inputs.items():
             self.check_cancel()
             path = absolute_path(item['path'], role)
-            if not path.is_file() or path.stat().st_size > 30 * 1024**2:
-                raise PipelineError('INVALID_INPUT', 'Input must be a local image of at most 30 MiB', role=role)
+            size_limit = HQ_PROFILE_PNG_MAX_BYTES if role == 'person' and item.get('source') == 'profile' else 30 * 1024**2
+            if not path.is_file() or path.stat().st_size > size_limit:
+                raise PipelineError('INVALID_INPUT', 'Local input image missing or exceeds its size limit', role=role)
             data = path.read_bytes()
             digest = hashlib.sha256(data).hexdigest()
             if digest != item['sha256'].lower():
@@ -255,6 +257,8 @@ class ConditioningAudit:
                                               'width': image.width, 'height': image.height, 'mode': image.mode,
                                               'exifOrientation': image.getexif().get(274), 'bytes': len(data)}
                 if role == 'person':
+                    if item.get('source'):
+                        self.audit['inputs'][role]['source'] = item['source']
                     # Identity upload stores normalized PNG; original R2 bytes
                     # may differ. Require exact oriented RGB pixels, not filenames.
                     original_rgb = ImageOps.exif_transpose(image).convert('RGB')

@@ -561,7 +561,7 @@ def installed_profile(hq, *, defaults=None, different_person=False):
     hq.identity.profiles._save({'id': profile_id, 'name': 'Existing person', 'referenceId': reference_id,
         'faceIndex': 0, 'referenceKind': 'faceid', 'state': 'ready', 'defaults': defaults or {},
         'error': None, 'createdAt': '2026-11-02T00:00:00Z'})
-    return HQCreateRequest.model_validate({**hq.payload.model_dump(), 'profileId': profile_id})
+    return HQCreateRequest.model_validate({**hq.payload.model_dump(exclude={'personId'}), 'profileId': profile_id})
 
 
 def test_profile_reuses_identity_only_and_freezes_neutral_full_body_prompt(hq):
@@ -583,19 +583,35 @@ def test_profile_reuses_identity_only_and_freezes_neutral_full_body_prompt(hq):
     assert job['profileId'] == payload.profileId and job['referenceId'] == request['referenceId']
     original = Path(request['hqConditioning']['inputs']['person']['path'])
     reference = Path(request['imagePath'])
-    assert sha(original.read_bytes()) != sha(reference.read_bytes())
+    assert original != reference and sha(original.read_bytes()) == sha(reference.read_bytes())
     assert hq_pixel_fingerprint(original) == hq_pixel_fingerprint(reference)
 
 
-@pytest.mark.parametrize('different_person,defaults,code', [
-    (True, {}, 'HQ_PERSON_MISMATCH'),
-    (False, {'modelId': 'illustrious-xl-v2.0-faceid'}, 'HQ_PROFILE_MODEL_UNSUPPORTED'),
-])
-def test_incompatible_profile_never_changes_person_or_ports_sdxl(hq, different_person, defaults, code):
-    payload = installed_profile(hq, defaults=defaults, different_person=different_person)
+def test_profile_only_uses_local_pixels_even_without_private_gallery_authorization(hq):
+    payload = installed_profile(hq, different_person=True)
+    settings = hq.service._settings()
+    del settings['sessionFile']
+    atomic_json(hq.service.config_path, settings)
+    status = hq.service.status('profile')
+    assert status['modelReady'] and status['authorized'] is None and not status['error']
     created, _ = hq.service.create_job(payload)
     job = complete(hq, created['id'])
-    assert job['state'] == 'failed' and job['error']['code'] == code
+    assert job['state'] == 'succeeded', job['error']
+    assert job['personSource'] == 'profile' and job['requestedInputIds']['person'] == payload.profileId
+    image, info = hq.service.image_path(job['id'], 'person')
+    assert info['source'] == 'profile' and info['referenceId'] == job['referenceId']
+    assert image.read_bytes() == hq.identity.reference_image(job['referenceId']).read_bytes()
+    assert info['sha256'] == sha(image.read_bytes()) != sha(hq.r2.raw['person'])
+    assert not any(call.url.path.startswith('/api/person/') for call in hq.r2.calls)
+    assert {call.url.params['kind'] for call in hq.r2.calls if call.url.path == '/api/asset'} == {'garment', 'pose'}
+    assert hq.service.create_job(payload)[1] and len(hq.boundary.calls) == 1
+
+
+def test_incompatible_profile_does_not_start_generation(hq):
+    payload = installed_profile(hq, defaults={'modelId': 'illustrious-xl-v2.0-faceid'})
+    created, _ = hq.service.create_job(payload)
+    job = complete(hq, created['id'])
+    assert job['state'] == 'failed' and job['error']['code'] == 'HQ_PROFILE_MODEL_UNSUPPORTED'
     assert not hq.boundary.inspections and not hq.boundary.calls
 
 
@@ -741,7 +757,10 @@ def test_public_identity_request_cannot_accept_internal_conditioning_paths(hq):
 def test_changed_identity_options_with_same_key_are_conflicts(hq, field, value):
     created, _ = hq.service.create_job(hq.payload)
     complete(hq, created['id'])
-    changed = HQCreateRequest.model_validate({**hq.payload.model_dump(), field: value})
+    changes = {field: value}
+    if field == 'profileId':
+        changes['personId'] = None
+    changed = HQCreateRequest.model_validate({**hq.payload.model_dump(), **changes})
     with pytest.raises(DreamApiError) as error:
         hq.service.create_job(changed)
     assert error.value.code == 'IDEMPOTENCY_CONFLICT'

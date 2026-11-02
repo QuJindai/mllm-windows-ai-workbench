@@ -13,7 +13,7 @@ def load_config(request, *, operation='generate'):
     if not path.is_file():
         raise ValueError('人物运行配置不存在')
     config = json.loads(path.read_text(encoding='utf-8-sig'))
-    if operation in ('status', 'fusion'):
+    if operation in ('status', 'fusion', 'hq_body_repair'):
         return config
     if operation == 'refine' and request.get('editSettings', {}).get('mode') == 'upscale':
         # The independent final enhancement consumes only its own local model.
@@ -48,7 +48,7 @@ def main():
     parser.add_argument('--persistent', action='store_true')
     parser.add_argument('--ownership-handshake', action='store_true')
     parser.add_argument('--idle-ttl', type=float, default=60.)
-    parser.add_argument('--operation', choices=['status', 'inspect', 'generate', 'prepare', 'anime_prepare', 'batch', 'refine', 'fusion'])
+    parser.add_argument('--operation', choices=['status', 'inspect', 'generate', 'prepare', 'anime_prepare', 'batch', 'refine', 'fusion', 'hq_body_repair'])
     parser.add_argument('--request', type=Path)
     parser.add_argument('--result', type=Path)
     args = parser.parse_args()
@@ -70,7 +70,7 @@ def main():
     try:
         request = json.loads(args.request.read_text(encoding='utf-8-sig'))
         if args.ownership_handshake:
-            if args.operation != 'generate' or 'hqConditioning' not in request:
+            if not ((args.operation == 'generate' and 'hqConditioning' in request) or (args.operation == 'hq_body_repair' and 'manifestPath' in request)):
                 parser.error('one-shot --ownership-handshake requires trusted HQ generation')
             print(json.dumps({'workerReady': True, 'pid': os.getpid()}), flush=True)
             continuation = json.loads(sys.stdin.readline())
@@ -78,9 +78,12 @@ def main():
                 raise ValueError('HQ worker ownership continuation rejected')
         config = load_config(request, operation=args.operation)
         upscale_probe = args.operation == 'status' and request.get('capability') == 'upscale'
-        if args.operation not in ('refine', 'fusion') and not upscale_probe:
+        if args.operation not in ('refine', 'fusion', 'hq_body_repair') and not upscale_probe:
             from identity_pipeline import generate, inspect_reference, registered_loras, prepare, generate_batch
-        if upscale_probe:
+        if args.operation == 'hq_body_repair':
+            from hq_body_repair import run
+            result = run(Path(request['manifestPath']), config)
+        elif upscale_probe:
             # Pure file/spec checks in the configured worker environment. No
             # generation, face model, CUDA initialization, or model weights.
             from identity_upscale import upscale_status

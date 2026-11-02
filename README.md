@@ -43,7 +43,7 @@ microscope comparisons, with current limitations and pending main-release/CI sta
 
 The [HQ local try-on guide](docs/dream-windows/HQ_LOCAL_TRYON.md) describes
 using the owner's R2 originals directly in the browser through the existing
-Dream identity, optional face-polish and refinement workflow.
+Dream identity, optional face-polish and refinement workflow. The browser can also [check and repair depth imprints](docs/dream-windows/HQ_LOCAL_TRYON.md#自动识别修图) in a separate local version of the photograph.
 
 ## Architecture
 

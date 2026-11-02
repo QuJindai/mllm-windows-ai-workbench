@@ -67,3 +67,9 @@
 .hq-audit pre { max-height: 450px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: var(--text-2); }
 @media(max-width: 1100px) { .hq-compose { grid-template-columns: 1fr; } .hq-jobs-layout { grid-template-columns: 190px minmax(0,1fr); } }
 @media(max-width: 680px) { .hq-catalog-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .hq-jobs-layout { grid-template-columns: 1fr; } .hq-jobs-layout nav { max-height: 200px; } .hq-selected-grid,.hq-input-grid { grid-template-columns: 1fr; } :is(.hq-selected-grid,.hq-input-grid) img { height: 230px; } }
+.hq-body-repair { padding: 14px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: 10px; }
+.hq-body-repair figure { margin: 12px 0; }
+.hq-body-repair .hq-result-actions button[aria-pressed=true] { border-color: var(--cyan, #38caff); color: var(--cyan, #38caff); }
+.hq-body-repair > a { display: inline-block; padding: 8px 14px; text-decoration: none; }
+.hq-body-option { display: flex; align-items: center; gap: .55rem; }
+.hq-body-option input { width: auto; accent-color: var(--cyan, #38caff); }

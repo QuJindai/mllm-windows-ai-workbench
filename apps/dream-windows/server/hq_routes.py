@@ -168,6 +168,16 @@ def create_hq_router(config: DreamServerConfig, service: HQService) -> APIRouter
         return FileResponse(path, media_type=info['mime'], filename=path.name if download == '1' else None,
                             headers={**PRIVATE_HEADERS, 'X-Content-SHA256': info['sha256']})
 
+    @router.post('/jobs/{job_id}/body-repair')
+    def repair_job(job_id: str):
+        return service.request_repair(job_id)
+
+    @router.get('/jobs/{job_id}/body-repair/{kind}')
+    def repair_image(job_id: str, kind: Literal['result','mask'], download: Literal['0','1']='0'):
+        path,digest=service.repair_image(job_id,kind)
+        return FileResponse(path,media_type='image/png',filename=f'{job_id}-{kind}.png' if download=='1' else None,
+                            headers={**PRIVATE_HEADERS,'X-Content-SHA256':digest})
+
     @router.get('/jobs/{job_id}/result')
     def result(job_id: str, download: Literal['0', '1'] = '0'):
         path, info = service.image_path(job_id)

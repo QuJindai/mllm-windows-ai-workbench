@@ -90,6 +90,7 @@ $cases = @(
     @{ Name = 'active profile'; Refuse = $true; Setup = { $script:dreamStopCase.Responses['/api/identity/profiles'][0].state = 'preparing' } },
     @{ Name = 'active anime profile'; Refuse = $true; Setup = { $script:dreamStopCase.Responses['/api/identity/anime-profiles'] = @(@{ state = 'preparing' }) } },
     @{ Name = 'active refinement'; Refuse = $true; Setup = { $script:dreamStopCase.Ledger = @(@{ state = 'running' }) } },
+    @{ Name = 'active derived HQ repair'; Refuse = $true; Setup = { $script:dreamStopCase.Responses['/api/hq/jobs'].jobs = @(@{ state = 'succeeded'; bodyRepair = @{state='running'} }) } },
     @{ Name = 'pending HQ cancellation'; Refuse = $true; Setup = { $script:dreamStopCase.Responses['/api/hq/jobs'].jobs = @(@{ state = 'running'; cancellationRequested = $true }) } },
     @{ Name = 'unknown operations count'; Refuse = $true; Setup = { $script:dreamStopCase.Responses['/api/operations'].pendingWork.ordinary.status = 'unknown' } },
     @{ Name = 'missing HQ list'; Refuse = $true; Setup = { $script:dreamStopCase.Responses['/api/hq/jobs'] = @{} } },

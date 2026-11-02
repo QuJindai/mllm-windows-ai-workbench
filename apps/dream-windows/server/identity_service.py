@@ -1161,7 +1161,7 @@ class IdentityService:
                 request_path, result_path = folder / "request.json", folder / "result.json"
                 atomic_json(request_path, payload)
                 command = [python, str(Path(__file__).with_name("identity_worker.py")), "--operation", operation, "--request", str(request_path), "--result", str(result_path)]
-                trusted_hq = operation == 'generate' and bool(payload.get('hqConditioning'))
+                trusted_hq = (operation == 'generate' and bool(payload.get('hqConditioning'))) or operation == 'hq_body_repair'
                 if trusted_hq:
                     command.append('--ownership-handshake')
                 env = os.environ.copy()
@@ -1189,7 +1189,7 @@ class IdentityService:
                         lifetime = WorkerLifetime(process, awaiting_worker=True) if trusted_hq else WorkerLifetime(process)
                         if trusted_hq:
                             self._hq_worker_handshake(process, lifetime, cancelled)
-                        deadline = time.monotonic() + (900 * len(payload["items"]) if operation == "batch" else 900 if operation in {"generate", "refine", "fusion"} else 120)
+                        deadline = time.monotonic() + (900 * len(payload["items"]) if operation == "batch" else 900 if operation in {"generate", "refine", "fusion", "hq_body_repair"} else 120)
                         while True:
                             consume_events()
                             if cancelled is not None and cancelled.is_set():

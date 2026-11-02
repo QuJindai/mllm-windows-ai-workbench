@@ -23,6 +23,7 @@ def client(hq):
     '/status', '/catalog?kind=person', '/asset?kind=person&id=' + '0' * 64,
     '/jobs', '/jobs/hq-' + '0' * 64, '/jobs/hq-' + '0' * 64 + '/inputs/person',
     '/jobs/hq-' + '0' * 64 + '/result',
+    '/jobs/hq-' + '0' * 64 + '/body-repair/result', '/jobs/hq-' + '0' * 64 + '/body-repair/mask',
 ])
 @pytest.mark.parametrize('headers', [
     {'origin': 'https://evil.invalid'}, {'sec-fetch-site': 'cross-site'},

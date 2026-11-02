@@ -1,6 +1,6 @@
 # HQ conditioning inside the existing identity pipeline
 
-The local browser release `dream-hq-person-source-20261102` serves the full
+The local browser release `dream-hq-auto-body-repair-20261102` serves the full
 R2 white-model pose catalog and resolves the matching depth image for local generation. Open
 [HQ 试衣](http://127.0.0.1:8766/?view=hq-tryon), choose a person, garment and
 pose, then select **本机生成**. **套用 A/B/C 定稿参数** restores 768 × 1152,

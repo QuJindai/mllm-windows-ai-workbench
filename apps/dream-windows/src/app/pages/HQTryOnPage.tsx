@@ -13,6 +13,7 @@ import type { RefinementSnapshot } from "../../providers/refinement-api";
 import { useDeletedImageIds } from "../image-deletion";
 import { hqApi, hqFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, reserveHQRetry, retryableHQJob, saveHQOperation, writeHQDraft } from "../../providers/hq-tryon-api";
 import type { HQOperation } from "../../providers/hq-tryon-api";
+import { HQBodyRepair } from "./HQBodyRepair";
 import "./HQTryOnPage.css";
 
 const describe = (e: unknown) => e instanceof Error ? e.message : "本地服务请求失败";
@@ -30,6 +31,7 @@ export function HQTryOnPage() {
   const [personSource, setPersonSource] = useState<HQPersonSource>(draft?.personSource ?? "gallery");
   const profileOnly = personSource === "profile";
   const [profileId, setProfileId] = useState(draft?.profileId || "");
+  const [autoRepairEnabled, setAutoRepairEnabled] = useState(draft?.autoRepairEnabled ?? true);
   const [faceOptions, setFaceOptions] = useState({ facePolish: draft?.facePolish ?? defaultHQIdentity.facePolish, faceRestoreStrength: draft?.faceRestoreStrength ?? defaultHQIdentity.faceRestoreStrength });
   const [profiles, setProfiles] = useState<IdentityProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<IdentityProfile | null>(null);
@@ -98,7 +100,7 @@ export function HQTryOnPage() {
     setNotice(current => current?.jobId === activeId ? current : null); setActionError("");
   }, [activeId]);
 
-  useEffect(() => { writeHQDraft({ selection, parameters, personSource, profileId: profileId || null, ...faceOptions, activeJobId: activeId }); }, [selection, parameters, personSource, profileId, faceOptions, activeId]);
+  useEffect(() => { writeHQDraft({ selection, parameters, personSource, profileId: profileId || null, ...faceOptions, activeJobId: activeId, autoRepairEnabled }); }, [selection, parameters, personSource, profileId, faceOptions, activeId, autoRepairEnabled]);
 
   useEffect(() => {
     const controller = new AbortController(); let alive = true; setIdentityError("");
@@ -163,7 +165,8 @@ export function HQTryOnPage() {
   }, [activeId, refresh]);
 
   useEffect(() => {
-    if (loading || detailLoading || (!submitting && !jobs.some(hqActive) && !(job && hqActive(job)))) return;
+    const watching = (item: HQJob) => hqActive(item) || item.bodyRepair?.state === "queued" || item.bodyRepair?.state === "running";
+    if (loading || detailLoading || (!submitting && !jobs.some(watching) && !(job && watching(job)))) return;
     const timer = window.setTimeout(() => setRefresh(n => n + 1), 4000);
     return () => window.clearTimeout(timer);
   }, [jobs, job, refresh, loading, detailLoading, submitting]);
@@ -224,7 +227,7 @@ export function HQTryOnPage() {
       saveHQOperation({ ...receipt, delivery: "unknown" });
       pendingCreate.current = receipt;
       dispatched = true;
-      const created = await hqApi.create({ ...body, idempotencyKey: receipt.idempotencyKey });
+      const created = await hqApi.create({ ...body, ...(autoRepairEnabled ? {} : { autoRepairEnabled: false }), idempotencyKey: receipt.idempotencyKey });
       if (created.id === receipt.retryOf || created.idempotencyKey && created.idempotencyKey !== receipt.idempotencyKey) throw new Error("服务回执与本次请求不匹配");
       saveHQOperation({ ...receipt, jobId: created.id, delivery: "submitted" });
       setActiveId(created.id);
@@ -341,6 +344,8 @@ export function HQTryOnPage() {
           ["seed", "种子", 0, 2147483647, 1], ["width", "宽度", 256, 1152, 64], ["height", "高度", 256, 1152, 64], ["steps", "步数", 1, 50, 1],
         ] as const).map(([key, label, min, max, step]) => <label key={key}>{label}<input type="number" min={min} max={max} step={step} value={parameters[key]} onChange={e => setParameters(previous => ({ ...previous, [key]: Number(e.target.value) }))} /></label>)}</div>
         {!validHQParameters(parameters) && <p className="hq-error">种子需为 0–2147483647 的整数；宽高需为 256–1152 间 64 的倍数，总像素不超过 884736；步数为 1–50。</p>}
+        <label className="hq-body-option"><input type="checkbox" disabled={basis !== hqExecutionBasis} checked={autoRepairEnabled && basis === hqExecutionBasis} onChange={e=>setAutoRepairEnabled(e.target.checked)} /> 成片后自动识别修图</label>
+        <p className="hq-hint">{basis === hqExecutionBasis ? "检查配对深度图在膝部和衣料留下的伪影。仅保存通过检查的局部修整，原图随时可看。" : "此姿势使用骨架控制，没有配对深度图，不执行这项修整。"}</p>
         <FacePolishControls value={faceOptions} capability={identityStatus?.facePolish} defaultStrength={defaultHQIdentity.faceRestoreStrength} onChange={value => setFaceOptions({ facePolish: value.facePolish, faceRestoreStrength: value.faceRestoreStrength })} />
         <p className="hq-hint">同一组三图、人物档案和处理参数会复用请求编号。更换素材或种子可创建新任务。</p>
         <button className="primary-button hq-generate" disabled={submitting || !ready || !allSelected || !validHQParameters(parameters)} onClick={() => void generate()}>
@@ -385,6 +390,7 @@ export function HQTryOnPage() {
           {job.parameters && <p className="hq-hint">种子 {job.parameters.seed} · {job.parameters.width} × {job.parameters.height} · {job.parameters.steps} 步</p>}
           {resultDeleted && <p role="status" className="hq-hint">人物结果已从历史删除，任务参数与输入记录保留。</p>}
           {job.state === "succeeded" && !resultDeleted && <div className="hq-result">
+            {job.pipeline === hqExecutionBasis && <HQBodyRepair key={job.id} job={job} original={resultUrl} refresh={()=>setRefresh(n=>n+1)} />}
             <h3>实际成片</h3>
             {job.identityJobId && <HQIdentityResult key={job.identityJobId} identity={linkedIdentity?.id === job.identityJobId ? linkedIdentity : null} unavailable={!!linkedIdentityError} refinementsAvailable={job.refinementsAvailable !== false} />}
             {resultUrl ? <>{!job.identityJobId && <ResultPreview key={resultUrl} imageUrl={resultUrl} label="HQ 本机试衣成片" />}<a className="secondary-button" href={resultUrl} target="_blank" rel="noreferrer">打开成片原文件 / 放大查看</a><a className="primary-button" href={resultUrl} download={`${job.id}.png`}>下载成片原图</a><p className="hq-hint">本次任务成片 SHA-256 已校验。精修版本使用各自的下载入口。</p><small>任务成片 SHA-256：{resultSha}</small></> : resultError ? <p className="hq-error" role="alert">{resultError}</p> : <p role="status">正在读取并校验成片…</p>}

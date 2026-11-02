@@ -19,7 +19,24 @@ function decodeJob(data: HQJob | { job: HQJob }): HQJob {
   if (!job || !validId(job.id) || !["queued", "running", "succeeded", "failed", "cancelled"].includes(job.state)) throw new Error("HQ 任务状态无效");
   return { ...job, inputs: Array.isArray(job.inputs) ? job.inputs : [] };
 }
+async function verifiedPng(path: string, expected: string | undefined, signal?: AbortSignal): Promise<Blob> {
+    if (!/^[a-f0-9]{64}$/.test(expected || "")) throw new Error("缺少成片 SHA-256，无法校验原图");
+    const response = await fetch(path, { credentials: "same-origin", redirect: "error", cache: "no-store", signal });
+    if (!response.ok) throw new Error(`成片读取失败（HTTP ${response.status}）`);
+    const header = response.headers.get("x-content-sha256");
+    if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || header && header !== expected) throw new Error("成片校验信息不一致");
+    const blob = await response.blob();
+    if (!blob.size || blob.size > 32 * 1024 * 1024) throw new Error("成片大小无效");
+    if (await sha256Hex(await blob.arrayBuffer()) !== expected) throw new Error("成片 SHA-256 校验失败，已阻止预览和下载");
+    return blob;
+}
 export const hqApi = {
+  repair: async (id: string) => {
+    const job = decodeJob(await request<HQJob>(`/jobs/${identifier(id)}/body-repair`, { method: "POST" }));
+    if (job.id !== id) throw new Error("修整回执与原任务不匹配");
+    return job;
+  },
+  repairResult: (id: string, kind: "mask" | "result", digest?: string, signal?: AbortSignal) => verifiedPng(`${root}/jobs/${identifier(id)}/body-repair/${kind}`, digest, signal),
   status: (signal?: AbortSignal, source: HQPersonSource = "gallery") => request<HQStatus>(source === "profile" ? "/status?personSource=profile" : "/status", { signal }),
   catalog: async (kind: HQRole, q = "", category = "", page = 0, signal?: AbortSignal): Promise<HQCatalog> => {
     const data = await request<HQCatalog>("/catalog?" + new URLSearchParams({ kind, q, category, page: String(page), limit: "24" }), { signal });
@@ -46,23 +63,13 @@ export const hqApi = {
   inputUrl: (id: string, role: HQRole) => `${root}/jobs/${identifier(id)}/inputs/${role}`,
   resultUrl: (id: string) => `${root}/jobs/${identifier(id)}/result`,
   result: async (job: HQJob, signal?: AbortSignal): Promise<Blob> => {
-    const expected = job.result?.sha256 || job.output?.sha256;
-    if (!/^[a-f0-9]{64}$/.test(expected || "")) throw new Error("缺少成片 SHA-256，无法校验原图");
-    const response = await fetch(hqApi.resultUrl(job.id), { credentials: "same-origin", redirect: "error", cache: "no-store", signal });
-    if (!response.ok) throw new Error(`成片读取失败（HTTP ${response.status}）`);
-    const header = response.headers.get("x-content-sha256");
-    if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || header && header !== expected) throw new Error("成片校验信息不一致");
-    const blob = await response.blob();
-    if (!blob.size || blob.size > 32 * 1024 * 1024) throw new Error("成片大小无效");
-    const actual = await sha256Hex(await blob.arrayBuffer());
-    if (actual !== expected) throw new Error("成片 SHA-256 校验失败，已阻止预览和下载");
-    return blob;
+    return verifiedPng(hqApi.resultUrl(job.id), job.result?.sha256 || job.output?.sha256, signal);
   },
 };
 
 // Only selection IDs, parameters and receipts are persisted. No pixels or authorization material.
 export interface HQOperation { fingerprint: string; idempotencyKey: string; jobId?: string; retryOf?: string; delivery: "prepared" | "unknown" | "submitted" }
-export interface HQDraft extends HQIdentityOptions { personSource?: HQPersonSource; selection: Partial<Record<HQRole, HQAsset>>; parameters: HQParameters; activeJobId?: string }
+export interface HQDraft extends HQIdentityOptions { autoRepairEnabled?: boolean; personSource?: HQPersonSource; selection: Partial<Record<HQRole, HQAsset>>; parameters: HQParameters; activeJobId?: string }
 // Unqualified v1 receipts belong to the earlier execution basis. Never upgrade
 // them by filling defaults; verified current server jobs can restore their keys.
 const operationsKey = "dream.hq.operations.v2", draftKey = "dream.hq.draft.v1";
@@ -224,7 +231,7 @@ export async function reserveHQRetry(body: Omit<HQCreateRequest, "idempotencyKey
 function draftIdentity(draft: HQDraft) {
   const identity = cleanIdentity(draft);
   const personSource: HQPersonSource = draft.personSource === "profile" || (draft.personSource !== "gallery" && identity.profileId) ? "profile" : "gallery";
-  return { ...identity, personSource, profileId: personSource === "profile" ? identity.profileId : null };
+  return { ...identity, ...(typeof draft.autoRepairEnabled === "boolean" ? { autoRepairEnabled: draft.autoRepairEnabled } : {}), personSource, profileId: personSource === "profile" ? identity.profileId : null };
 }
 export function writeHQDraft(draft: HQDraft) {
   const identity = draftIdentity(draft);

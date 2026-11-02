@@ -245,6 +245,9 @@ function Assert-DreamStopIdle {
     }
     $hq = Get-DreamStopJson '/api/hq/jobs'
     Assert-DreamStopStates $hq.jobs @('succeeded', 'failed', 'cancelled')
+    foreach ($job in $hq.jobs) {
+        if ($job['bodyRepair'] -and $job.bodyRepair.state -in @('queued', 'running')) { throw 'HQ 局部自动修整仍在等待或执行，拒绝停止。' }
+    }
     $script:dreamStopRefinementRecords = Read-DreamStopRefinementLedger $health.dreamRoot
 }
 function Invoke-DreamWebStop([switch]$CheckOnly) {

@@ -14,7 +14,9 @@ export interface HQStatus { configured: boolean; authorized: boolean | null; mod
 export type HQError = string | { code?: string; message?: string } | null;
 export interface HQInput extends HQAsset { role: HQRole; dimensions?: { width: number; height: number } }
 export interface HQResult { sha256: string; width?: number; height?: number; mime?: string; metadata?: Record<string, unknown> }
+export interface HQBodyVersion { state: "queued" | "running" | "applied" | "partial" | "unchanged" | "rejected" | "failed"; sha256?: string; maskSha256?: string; regions?: { part: string }[]; message?: string; errorCode?: string }
 export interface HQJob extends HQIdentityOptions {
+  bodyRepairCurrent?: boolean; autoRepairEnabled?: boolean; bodyRepair?: HQBodyVersion | null;
   personSource?: HQPersonSource | null;
   id: string; state: HQJobState; phase?: string; progress?: number; cancellationRequested?: boolean;
   pipeline?: string | null;
@@ -27,6 +29,7 @@ export interface HQJob extends HQIdentityOptions {
   historyDeleted?: boolean; resultDeleted?: boolean; refinementsAvailable?: boolean;
 }
 export interface HQCreateRequest extends HQIdentityOptions {
+  autoRepairEnabled?: boolean;
   personId?: string; garmentId: string; poseId: string; idempotencyKey: string; parameters: HQParameters;
 }
 export const hqRoles: HQRole[] = ["person", "garment", "pose"];

@@ -35,6 +35,8 @@ from identity_contract import HQ_PROFILE_PNG_MAX_BYTES, IdentityGenerateRequest
 from history_transactions import validate_history_path, history_deletion_flags
 from job_runner import JobRunner
 import hq_paired_depth as paired_depth
+from hq_repair_service import HQRepairService
+from hq_repair_version import VERSION as BODY_VERSION
 
 ORIGIN = 'https://hq-tryon-picker.qujindai1986.workers.dev'
 ROLES = ('person', 'garment', 'pose')
@@ -68,6 +70,7 @@ class HQCreateRequest(BaseModel):
     poseId: str = Field(pattern=r'^[A-Za-z0-9_-]{2,64}$')
     idempotencyKey: str = Field(pattern=r'^[A-Za-z0-9._:-]{8,128}$')
     profileId: str | None = Field(default=None, pattern=r'^person-[a-f0-9]{24}$')
+    autoRepairEnabled: bool = True
     facePolish: bool = False
     faceRestoreStrength: float = Field(default=.35, ge=0, le=1)
     parameters: HQParameters = Field(default_factory=HQParameters)
@@ -120,7 +123,7 @@ def _public_audit(value: Any, depth=0) -> Any:
     return value if value is None or type(value) in (int, float, bool) else None
 
 
-class HQService:
+class HQService(HQRepairService):
     def __init__(self, config: DreamServerConfig, job_runner: JobRunner, *,
                  identity_service: IdentityService, client: httpx.Client | None = None):
         self.config, self.job_runner = config, job_runner
@@ -137,6 +140,8 @@ class HQService:
         self._catalog_lock = threading.Lock()
         self._started = self._closing = self._closed = False
         self._active = 0
+        self._repair_futures = {}
+        self._repair_stops = {}
         self._jobs: dict[str, dict] = {}
         self._futures: dict[str, Any] = {}
         self._cancel: dict[str, threading.Event] = {}
@@ -196,6 +201,13 @@ class HQService:
                         atomic_json(path, record)
                     self._jobs[folder.name] = record
                 self._started = True
+                for record in self._jobs.values():
+                    state = (record.get('bodyRepair') or {}).get('state')
+                    if state == 'running':
+                        record['bodyRepair'].update(state='failed', message='修整时服务中断，原图已保留；可重新检查。', updatedAt=_now())
+                        self._save(record)
+                    elif (record.get('autoRepairEnabled') or state == 'queued') and record.get('state') == 'succeeded' and state in (None, 'queued') and record.get('pipeline') == paired_depth.PIPELINE:
+                        self._auto_schedule(record)
             except BaseException:
                 self._lease.close()
                 raise
@@ -489,24 +501,25 @@ class HQService:
         atomic_json(self._folder(record['id']) / 'record.json', record)
         self._jobs[record['id']] = record
 
-    def _view(self, record: dict) -> dict:
+    def _view(self, record: dict, deletion_flags=None) -> dict:
         fields = ('id', 'state', 'phase', 'progress', 'cancellationRequested', 'createdAt', 'updatedAt', 'completedAt',
                   'startedAt', 'parameters', 'idempotencyKey', 'inputs', 'result', 'error', 'audit',
-                  'personSource', 'profileId', 'facePolish', 'faceRestoreStrength', 'requestedInputIds', 'identityJobId', 'identityResult', 'referenceId', 'pipeline')
+                  'autoRepairEnabled', 'bodyRepair', 'personSource', 'profileId', 'facePolish', 'faceRestoreStrength', 'requestedInputIds', 'identityJobId', 'identityResult', 'referenceId', 'pipeline')
         result = {key: record.get(key) for key in fields}
         result['pipeline'] = record.get('pipeline') or (record.get('audit') or {}).get('pipeline')
+        result['bodyRepairCurrent'] = (record.get('bodyRepair') or {}).get('version') == BODY_VERSION
         result.update(output=record.get('result'), outputSha256=(record.get('result') or {}).get('sha256'))
-        deleted = history_deletion_flags(self.config.dream_root).get(record.get('identityJobId'))
+        deleted = (history_deletion_flags(self.config.dream_root) if deletion_flags is None else deletion_flags).get(record.get('identityJobId'))
         result['refinementsAvailable'] = bool(record.get('identityJobId') and record['state'] == 'succeeded' and not deleted)
         if deleted:
             result.update(historyDeleted=True, resultDeleted=deleted.get('resultDeleted', False),
-                          result=None, output=None, outputSha256=None, identityResult=None)
+                          result=None, output=None, outputSha256=None, identityResult=None, bodyRepair=None)
         return copy.deepcopy(result)
 
     def create_job(self, payload: HQCreateRequest) -> tuple[dict, bool]:
         with self._operation(), self._submission_lock:
             payload = HQCreateRequest.model_validate(payload)
-            values = payload.model_dump()
+            values = payload.model_dump(exclude={'autoRepairEnabled'})  # Derived version preferences never change a base generation's identity.
             ids = {name: 'hq-' + _sha(('local-hq-v2\0' + name + '\0' + payload.idempotencyKey).encode())
                    for name in (PIPELINE, paired_depth.PIPELINE)}
             with self._lock:
@@ -538,7 +551,7 @@ class HQService:
                       'personSource': 'profile' if payload.profileId else 'gallery',
                       'profileId': payload.profileId, 'facePolish': payload.facePolish,
                       'faceRestoreStrength': payload.faceRestoreStrength, 'identityJobId': child_id,
-                      'referenceId': None, 'identityResult': None, 'inputs': [], 'result': None, 'error': None, 'audit': None}
+                      'autoRepairEnabled': payload.autoRepairEnabled, 'referenceId': None, 'identityResult': None, 'inputs': [], 'result': None, 'error': None, 'audit': None}
             atomic_json(folder / 'request.json', {'requested': values, 'identityJobId': child_id})
             with self._lock:
                 self._save(record)  # Includes the deterministic child ID BEFORE any background work or dispatch.
@@ -721,6 +734,17 @@ class HQService:
                     record['startedAt'] = _now()
             self._save(record)
 
+            if state == 'complete' and record.get('autoRepairEnabled') and record.get('pipeline') == paired_depth.PIPELINE and not self._closing:
+                self._auto_schedule(record)
+
+    def _auto_schedule(self, record):
+        try:
+            self._schedule_repair(record)
+        except (DreamApiError, RuntimeError) as exc:
+            record['bodyRepair'] = {'state':'failed', 'errorCode':getattr(exc, 'code', 'HQ_REPAIR_FAILED'),
+                                    'message':'无法启动局部修整，原图已保留。', 'updatedAt':_now()}
+            self._save(record)
+
     def _identity_result_path(self, record, child=None):
         if record['identityJobId'] in history_deletion_flags(self.config.dream_root):
             _fail('HQ_RESULT_DELETED', '此人物作品已从历史删除，HQ 不再提供成片或精修版本', 404)
@@ -739,7 +763,8 @@ class HQService:
 
     def jobs(self) -> dict:
         with self._operation(), self._lock:
-            return {'jobs': [self._view(row) for row in sorted(self._jobs.values(), key=lambda x: x['createdAt'], reverse=True)]}
+            deleted = history_deletion_flags(self.config.dream_root)
+            return {'jobs': [self._view(row, deleted) for row in sorted(self._jobs.values(), key=lambda x: x['createdAt'], reverse=True)]}
 
     def get_job(self, job_id: str) -> dict:
         with self._operation(), self._lock:
@@ -809,7 +834,9 @@ class HQService:
                     self._save(record)
             for event in self._cancel.values():
                 event.set()
-            futures = list(self._futures.values())
+            for event in self._repair_stops.values():
+                event.set()
+            futures = list(self._futures.values()) + list(self._repair_futures.values())
             for future in futures:
                 future.cancel()
         for future in futures:

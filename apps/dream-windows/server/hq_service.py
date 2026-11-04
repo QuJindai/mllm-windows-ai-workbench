@@ -138,6 +138,7 @@ class HQService(HQRepairService):
         self._condition = threading.Condition(self._lock)
         self._submission_lock = threading.Lock()
         self._catalog_lock = threading.Lock()
+        self._authorization_lock = threading.Lock()
         self._started = self._closing = self._closed = False
         self._active = 0
         self._repair_futures = {}
@@ -247,7 +248,7 @@ class HQService(HQRepairService):
             if not isinstance(token, str) or not SHA_RE.fullmatch(token) or type(expires) is not int:
                 raise ValueError()
             if expires <= int(time.time() * 1000):
-                _fail('HQ_AUTH_EXPIRED', 'HQ 人物图库授权已到期，请由已授权连接器更新本机会话', 401)
+                _fail('HQ_AUTH_EXPIRED', 'HQ 人物图库授权已到期，请点击“一键授权”恢复', 401)
             return token, _sha(token.encode())
         except (OSError, ValueError):
             _fail('HQ_AUTH_REQUIRED', 'HQ 人物图库尚未授权', 401)
@@ -291,7 +292,7 @@ class HQService(HQRepairService):
                 if 300 <= response.status_code < 400:
                     _fail('HQ_UPSTREAM_REDIRECT', 'R2 素材读取不接受重定向', 502)
                 if response.status_code in (401, 403):
-                    _fail('HQ_AUTH_REQUIRED', 'HQ 人物图库授权失效，请更新本机会话', 401)
+                    _fail('HQ_AUTH_REQUIRED', 'HQ 人物图库授权失效，请点击“一键授权”恢复', 401)
                 if response.status_code == 404:
                     _fail('HQ_ASSET_NOT_FOUND', 'R2 原图不存在', 404)
                 if response.status_code != 200:
@@ -329,6 +330,26 @@ class HQService(HQRepairService):
             self._auth_cache = (fingerprint, time.monotonic() + 15)
         return fingerprint
 
+    def renew_authorization(self) -> dict:
+        from hq_authorization import renew
+        with self._operation():
+            if not self._authorization_lock.acquire(blocking=False):
+                _fail('HQ_AUTH_BUSY', '已有图库授权正在处理，请稍后刷新授权状态', 409)
+            try:
+                def verify(settings):
+                    # Bypass the old authorization cache to prove the newly
+                    # minted session is accepted by the existing private API.
+                    result = self._json_get('/api/person/list?limit=1', private=True, settings=settings)
+                    if not isinstance(result.get('items'), list):
+                        _fail('HQ_UPSTREAM_INVALID', '人物图库返回的数据无效', 502)
+                result = renew(self.root, self._settings(), verify)
+                with self._catalog_lock:
+                    self._person_cache = None
+                    self._auth_cache = None
+                return result
+            finally:
+                self._authorization_lock.release()
+
     def _ready(self, settings: dict, pipeline=None) -> bool:
         if not Path(settings['python']).is_file():
             return False
@@ -356,6 +377,9 @@ class HQService(HQRepairService):
             try:
                 settings = self._settings()
                 result['configured'] = True
+                if person_source == 'gallery':
+                    from hq_authorization import capability
+                    result['authorization'] = capability(self.root, settings)
                 result['pipeline'] = self._pipeline(settings)
                 ready = {result['pipeline']: self._ready(settings, result['pipeline'])}
                 if result['pipeline'] == paired_depth.PIPELINE:

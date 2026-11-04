@@ -1,4 +1,4 @@
-import type { HQAsset, HQBasis, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQPersonSource, HQRole, HQStatus } from "../domain/hq-tryon";
+import type { HQAsset, HQAuthorization, HQBasis, HQCatalog, HQCreateRequest, HQIdentityOptions, HQJob, HQParameters, HQPersonSource, HQRole, HQStatus } from "../domain/hq-tryon";
 import { defaultHQParameters, hqActive, hqError, hqExecutionBasis, isHQBasis, validHQParameters } from "../domain/hq-tryon";
 
 const root = "/api/hq";
@@ -31,6 +31,11 @@ async function verifiedPng(path: string, expected: string | undefined, signal?: 
     return blob;
 }
 export const hqApi = {
+  renewAuthorization: async (): Promise<HQAuthorization> => {
+    const data = await request<HQAuthorization>("/authorization/renew", { method: "POST", body: "{}" });
+    if (data.authorized !== true || !Number.isSafeInteger(data.expiresAt) || data.expiresAt <= Date.now() || typeof data.reused !== "boolean") throw new Error("授权结果未确认，请刷新状态后重试");
+    return { authorized: true, expiresAt: data.expiresAt, reused: data.reused };
+  },
   repair: async (id: string) => {
     const job = decodeJob(await request<HQJob>(`/jobs/${identifier(id)}/body-repair`, { method: "POST" }));
     if (job.id !== id) throw new Error("修整回执与原任务不匹配");

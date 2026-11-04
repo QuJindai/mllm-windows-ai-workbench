@@ -66,7 +66,19 @@
 
 可选清晰增强在同一人物运行配置中增加 `upscaleModel`，指向本机已有 `RealESRGAN_x4plus.pth`，其 SHA-256 随每个增强版本记录。使用配置中 `python` 对应环境的 PyTorch、Spandrel 和 Pillow，不依赖网页服务解释器安装推理包。能力检测不加载模型或初始化 GPU；结果短期缓存，配置／模型／解释器文件改变即失效。推理进入现有串行 GPU 队列，用 128 像素分块、32 像素上下文，4倍模型输出降采样为严格2倍；不再加载底模、换脸模型或参考照。未配置或组件缺失时不显示可用增强模式。
 
-人物图库授权复用已授权 Cloudflare 连接器和私有 R2 会话机制。原始 Bearer 仅保存在当前 Windows 用户和 SYSTEM 可读的本机凭据文件中；R2 只保存会话的 SHA-256 与有效期。浏览器、Git、普通日志和推理进程不接收会话或 Worker 主密钥。无公共免鉴权签发入口。
+人物图库授权复用既有 Cloudflare 登录和私有 R2 会话机制。原始 Bearer 仅保存在当前 Windows 用户和 SYSTEM 可读的本机凭据文件中；R2 只保存会话的 SHA-256 与有效期。浏览器、Git、普通日志和推理进程不接收会话或 Worker 主密钥。无公共免鉴权签发入口。
+
+### 一键授权（2026-11-04 已部署，用户确认完成）
+
+图库授权过期或缺失时，本机 HQ 页面显示「一键授权」。仅主动点击会调用新接口 `POST /api/hq/authorization/renew`（空 JSON 请求），页面加载、刷新、轮询不续期、不打开登录页面，也不自动生成。成功后自动刷新人物图库，保留已选服装、姿势、人物和参数；「只选本机档案」不需要这个按钮。
+
+后端复用 `E:/Dream/tools/hq-depth-r2/node_modules/wrangler/wrangler-dist/cli.js` 与 PATH 中的 Node.js。账号由 `config/dream/hq-authorization.jsonc` 固定为既有 HQ 所属账号，不接受浏览器传入账号、路径、命令、凭据或回调 URL。前提是当前 Windows 用户已在本机 Wrangler 登录且有该私有 R2 桶的写权限；ChatGPT 的 Cloudflare 连接器登录不会自动等同于本机 CLI 登录。本次没有触发真实登录或验证当前 OAuth 状态。
+
+流程为：生成 32 字节随机 token → 私有临时文件保存 → 用既有登录通过 Wrangler 将 `{version:1,expiresAt:毫秒时间戳}` 写入固定私有桶的 `sessions/v1/<SHA256(token)>` → 用新 token 实际读取既有 `/api/person/list?limit=1` 验证 → 原子替换本机会话文件 → 清除授权/人物列表缓存。新会话有效期 1 小时；重复点击和丢失响应后的重试会复用仍有至少 5 分钟有效期、且经接口验证的会话。原始 token 从不进入 CLI 参数；CLI 不收到原始 token。ACL 在写入凭据前设定，临时目录和日志随操作结束清理。
+
+Cloudflare 登录失效返回 `HQ_CLOUDFLARE_LOGIN_REQUIRED`；网络或 R2 权限失败返回 `HQ_AUTH_RENEW_FAILED`；45 秒 CLI 超时返回 `HQ_AUTH_TIMEOUT`；同一时刻的重复请求返回 `HQ_AUTH_BUSY`。失败不覆盖旧会话，不对外回显 CLI 原始诊断。不修改 Worker、插件工具协议、白模图库或深度图映射。Wrangler 命令依据[官方 R2 文档](https://developers.cloudflare.com/workers/wrangler/commands/r2/)及本机 4.156.0 源码核对。
+
+验证记录：`docs/dream-windows/HQ_AUTHORIZATION_ACCEPTANCE.md`。前后端已部署为 `dream-hq-one-click-authorization-20261104`，服务、授权能力和静态资源读回通过；用户自行确认完成。独立构建及回滚文件位于 `E:/Dream/test-runs/hq-authorization-20261104/deploy`。自动流程没有代用户签发真实授权或生图。回滚仅恢复前后端代码；保留现有会话、人物档案、作品和任务目录。
 
 选择图库照片时，下载人物原图需要有效的私有会话；授权过期后需重新签发。成功下载并校验的输入可在本机执行，不依赖十分钟单图 grant 排队存活。只选本机档案时不读取私有人物图库。不能用缩略图、截图或原素材外站替代失败的 R2 原图。
 
@@ -96,7 +108,7 @@ python scripts/install_hq_depth_library.py --activate
 ## 排障和回滚
 
 - 服务离线：使用原启动器；先核对端口监听归属，不停止其他项目服务。
-- 人物授权失效：重新签发短期会话，之后刷新授权状态。公开素材不需要人物会话。
+- 人物授权失效：点击「一键授权」，成功后自动刷新。若提示本机 Cloudflare 登录失效，需先在本机完成 Wrangler 登录；按钮不会绕过账号授权。公开素材不需要人物会话。
 - 原图校验失败：保留错误和已下载证据，不改用缩略图。已终止任务需明确创建新动作，不能隐式再推理。
 - 保存的姿势可直接复用。模型文件缺失时页面会提示对应姿势的模型状态。骨架提取失败时可在任务详情查看原因，遮挡和多人图可能不适合现有单人骨架模型。
 - 显存不足：终止当前任务并确认 CUDA 工作进程退出；不自动同时启动第二个生成或无限重试。

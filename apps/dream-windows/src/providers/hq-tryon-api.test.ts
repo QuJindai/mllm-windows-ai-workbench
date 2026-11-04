@@ -17,6 +17,19 @@ beforeEach(() => { vi.stubGlobal("sessionStorage", new MemoryStorage()); vi.stub
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("local HQ API boundary", () => {
+  it("posts an empty authorization request and returns only a verified non-secret receipt", async () => {
+    const receipt = { authorized: true, expiresAt: Date.now() + 3600000, reused: false };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...receipt, token: "not-allowed" })));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await hqApi.renewAuthorization()).toEqual(receipt);
+    expect(fetchMock).toHaveBeenCalledWith("/api/hq/authorization/renew", expect.objectContaining({ method: "POST", body: "{}", credentials: "same-origin", redirect: "error", cache: "no-store" }));
+    expect(localStorage.getItem("token")).toBeNull();
+  });
+  it.each([{ authorized: false, expiresAt: Date.now() + 3600000, reused: false },
+    { authorized: true, expiresAt: 1, reused: false }, { ok: true }])("rejects an incomplete or expired authorization receipt", async receipt => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt))));
+    await expect(hqApi.renewAuthorization()).rejects.toThrow("授权结果未确认");
+  });
   it("recovers skeleton receipts without reusing them for the same pose on the depth route", () => {
     const skeletonJob = { ...job, pipeline: hqOpenPoseBasis, parameters: body.parameters,
       idempotencyKey: "hq-skeleton-verified", requestedInputIds: {person: body.personId, garment: body.garmentId, pose: body.poseId} };

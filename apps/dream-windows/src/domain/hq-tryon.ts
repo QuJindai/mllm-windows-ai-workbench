@@ -10,7 +10,8 @@ export interface HQAsset {
   width?: number; height?: number;
 }
 export interface HQCatalog { items: HQAsset[]; total: number; hasMore: boolean; categories: string[] }
-export interface HQStatus { configured: boolean; authorized: boolean | null; modelReady: boolean; pipeline?: string; pairedDepthPoseIds?: string[]; posePipelineReady?: Partial<Record<HQBasis, boolean>>; error?: HQError }
+export interface HQAuthorization { authorized: true; expiresAt: number; reused: boolean }
+export interface HQStatus { configured: boolean; authorized: boolean | null; modelReady: boolean; pipeline?: string; pairedDepthPoseIds?: string[]; posePipelineReady?: Partial<Record<HQBasis, boolean>>; error?: HQError; authorization?: { available: boolean; method: string; error?: HQError } }
 export type HQError = string | { code?: string; message?: string } | null;
 export interface HQInput extends HQAsset { role: HQRole; dimensions?: { width: number; height: number } }
 export interface HQResult { sha256: string; width?: number; height?: number; mime?: string; metadata?: Record<string, unknown> }

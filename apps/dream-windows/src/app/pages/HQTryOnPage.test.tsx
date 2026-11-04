@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.spyOn(refinementApi, "list").mockResolvedValue({ sourceJobId: "identity-hq-test", selectedVersionId: "result", modes: ["restore"],
     versions: [{ id: "result", state: "complete", message: "完成", createdAt: "2026-11-02", parentVersionId: null, settings: {}, imageUrl: "/api/history/identity-hq-test/image" }] });
   vi.spyOn(hqApi, "status").mockResolvedValue(ready);
+  vi.spyOn(hqApi, "renewAuthorization").mockResolvedValue({ authorized: true, expiresAt: Date.now() + 3600000, reused: false });
   vi.spyOn(hqApi, "jobs").mockResolvedValue([]);
   vi.spyOn(hqApi, "job").mockImplementation(async id => createJob({ id }));
   vi.spyOn(hqApi, "catalog").mockImplementation(async role => ({ items: [asset(role)], total: 1, hasMore: false, categories: ["春", "派对"] }));
@@ -53,6 +54,77 @@ async function chooseThree() {
 function saveSelection() { writeHQDraft({ selection: { person: asset("person"), garment: asset("garment"), pose: asset("pose") }, parameters: defaultHQParameters }); }
 
 describe("HQ local workflow", () => {
+  it("renews only on click, blocks repeated clicks and reloads the gallery without changing the draft or generating", async () => {
+    saveSelection();
+    const expired = { ...ready, authorized: false, authorization: { available: true, method: "local-wrangler" },
+      error: { code: "HQ_AUTH_EXPIRED", message: "HQ 人物图库授权已到期，请点击一键授权恢复" } };
+    vi.mocked(hqApi.status).mockResolvedValue(expired);
+    const pending = deferred<{ authorized: true; expiresAt: number; reused: boolean }>();
+    vi.mocked(hqApi.renewAuthorization).mockReturnValue(pending.promise);
+    render(<HQTryOnPage />);
+    const button = await screen.findByRole("button", { name: "一键授权" });
+    expect(hqApi.renewAuthorization).not.toHaveBeenCalled();
+    expect(hqApi.catalog).not.toHaveBeenCalledWith("person", expect.anything(), expect.anything(), expect.anything(), expect.anything());
+    fireEvent.click(button); fireEvent.click(button);
+    expect(screen.getByRole("button", { name: "正在授权…" })).toBeDisabled();
+    expect(hqApi.renewAuthorization).toHaveBeenCalledTimes(1);
+    vi.mocked(hqApi.status).mockResolvedValue(ready);
+    await act(async () => pending.resolve({ authorized: true, expiresAt: Date.now() + 3600000, reused: false }));
+    expect(await screen.findByText("图库已授权")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "选择人物 person-original" })).toBeVisible();
+    expect(screen.queryByText(/HQ_AUTH_EXPIRED/)).not.toBeInTheDocument();
+    expect(screen.getByText(/图库授权已恢复/)).toBeVisible();
+    expect(readHQDraft()).toMatchObject({ selection: { person: asset("person"), garment: asset("garment"), pose: asset("pose") }, parameters: defaultHQParameters });
+    expect(hqApi.create).not.toHaveBeenCalled(); expect(hqApi.cancel).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed renewal, allows retry and never treats a refresh as renewal", async () => {
+    vi.mocked(hqApi.status).mockResolvedValue({ ...ready, authorized: false, authorization: { available: true, method: "local-wrangler" } });
+    vi.mocked(hqApi.renewAuthorization).mockRejectedValue(new Error("HQ_CLOUDFLARE_LOGIN_REQUIRED · 本机 Cloudflare 登录已失效"));
+    render(<HQTryOnPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "一键授权" }));
+    expect(await screen.findByText(/HQ_CLOUDFLARE_LOGIN_REQUIRED/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "一键授权" })).toBeEnabled();
+    expect(screen.queryByText(/图库授权已恢复/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新图库与任务" })).toBeEnabled());
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "刷新图库与任务" })));
+    expect(hqApi.renewAuthorization).toHaveBeenCalledTimes(1);
+    expect(hqApi.create).not.toHaveBeenCalled();
+  });
+
+  it("explains missing authorization support and hides gallery authorization in profile-only mode", async () => {
+    vi.mocked(hqApi.status).mockResolvedValue({ ...ready, authorized: false, authorization: { available: false, method: "local-wrangler", error: { message: "本机授权组件未就绪" } } });
+    render(<HQTryOnPage />);
+    expect(await screen.findByRole("button", { name: "一键授权" })).toBeDisabled();
+    expect(screen.getByText("本机授权组件未就绪")).toBeVisible();
+    await act(async () => fireEvent.click(screen.getByRole("radio", { name: "只选本机档案" })));
+    expect(screen.queryByRole("button", { name: "一键授权" })).not.toBeInTheDocument();
+    expect(hqApi.renewAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("does not restore a gallery selection when switching to local profiles during renewal", async () => {
+    saveSelection();
+    vi.mocked(hqApi.status).mockResolvedValue({ ...ready, authorized: false, authorization: { available: true, method: "local-wrangler" } });
+    const pending = deferred<{ authorized: true; expiresAt: number; reused: boolean }>();
+    vi.mocked(hqApi.renewAuthorization).mockReturnValue(pending.promise);
+    render(<HQTryOnPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "一键授权" }));
+    fireEvent.click(screen.getByRole("radio", { name: "只选本机档案" }));
+    await act(async () => pending.resolve({ authorized: true, expiresAt: Date.now() + 3600000, reused: false }));
+    expect(screen.getByRole("radio", { name: "只选本机档案" })).toBeChecked();
+    expect(readHQDraft()?.selection.person).toBeUndefined();
+    expect(hqApi.create).not.toHaveBeenCalled();
+  });
+
+  it("exposes one-click recovery when authorization expires between status and loading the gallery", async () => {
+    vi.mocked(hqApi.status).mockResolvedValue({ ...ready, authorization: { available: true, method: "local-wrangler" } });
+    vi.mocked(hqApi.catalog).mockRejectedValue(new Error("HQ_AUTH_EXPIRED · 图库授权已到期"));
+    render(<HQTryOnPage />);
+    expect(await screen.findByRole("button", { name: "一键授权" })).toBeEnabled();
+    expect(screen.getByText("图库未授权")).toBeVisible();
+    expect(hqApi.renewAuthorization).not.toHaveBeenCalled();
+  });
+
   it("submits a saved unpaired pose through the skeleton route", async () => {
     vi.mocked(hqApi.status).mockResolvedValue({ ...ready, pairedDepthPoseIds: ["a-different-depth-pose"],
       posePipelineReady: { [hqExecutionBasis]: false, [hqOpenPoseBasis]: true } });

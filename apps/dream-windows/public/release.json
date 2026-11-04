@@ -1,5 +1,5 @@
 {
-  "release": "dream-hq-auto-body-repair-20261102",
+  "release": "dream-hq-one-click-authorization-20261104",
   "product": "Dream browser workstation",
   "features": "disk-safeguards; durable-batch-retry; bounded-cross-batch-worker; reference-sampling-window; preserved-original-and-before-after-view; complete-unsent-identity-drafts; live-hardware-telemetry; HQ original paired depth with garment and FaceID",
   "experimental": "illustrious-xl-visual-reference: quality-rejected, disabled-by-default",
@@ -8,5 +8,6 @@
   "entry": "http://127.0.0.1:8766/",
   "hqPreset": "identity-session-hq-paired-depth-v1",
   "hqBodyRepair": "paired-surface-v4",
+  "hqAuthorization": "local-wrangler-session-v1",
   "hqEntry": "http://127.0.0.1:8766/?view=hq-tryon"
 }

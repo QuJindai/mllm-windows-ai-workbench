@@ -5,6 +5,9 @@
 .hq-page .card-head { gap: 12px; flex-wrap: wrap; }
 .hq-status-line { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-2); font-size: var(--ui-small); }
 .hq-status-line span { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; }
+.hq-authorization { margin-top: 14px; }
+.hq-authorization:empty { display: none; }
+.hq-authorization .primary-button { min-height: 40px; padding: 9px 20px; }
 .hq-workflow { display: flex; flex-wrap: wrap; gap: 10px 26px; padding-left: 22px; color: var(--text-2); font-size: var(--ui-small); }
 .hq-profile { margin: 12px 0 18px; }
 .hq-profile label { display: grid; gap: 8px; }

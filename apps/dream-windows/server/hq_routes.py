@@ -133,6 +133,15 @@ def create_hq_router(config: DreamServerConfig, service: HQService) -> APIRouter
     def status(personSource: Literal['gallery', 'profile'] = 'gallery'):
         return service.status(personSource)
 
+    @router.post('/authorization/renew')
+    async def renew_authorization(request: Request):
+        # No credentials, arbitrary executable, account, or callback URL may be
+        # supplied by the browser. Only the installed local connector is used.
+        body = await request.body()
+        if body and body.strip() != b'{}':
+            raise DreamApiError('REQUEST_INVALID', '图库授权请求不接受参数或凭据', status_code=422)
+        return await run_in_threadpool(service.renew_authorization)
+
     @router.get('/catalog')
     def catalog(kind: Literal['person', 'garment', 'pose'], q: str = Query('', max_length=100),
                 category: str = Query('', max_length=160), page: int = Query(0, ge=0, le=1000),

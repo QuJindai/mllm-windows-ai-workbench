@@ -14,9 +14,11 @@ import { useDeletedImageIds } from "../image-deletion";
 import { hqApi, hqFingerprint, readHQDraft, readHQOperations, reconcileHQOperations, reserveHQOperation, reserveHQRetry, retryableHQJob, saveHQOperation, writeHQDraft } from "../../providers/hq-tryon-api";
 import type { HQOperation } from "../../providers/hq-tryon-api";
 import { HQBodyRepair } from "./HQBodyRepair";
+import { HQAuthorization } from "./HQAuthorization";
 import "./HQTryOnPage.css";
 
 const describe = (e: unknown) => e instanceof Error ? e.message : "本地服务请求失败";
+const authorizationError = (e: unknown) => /^HQ_AUTH_(?:EXPIRED|REQUIRED)\b/.test(describe(e));
 const assetName = (asset: HQAsset) => asset.label || asset.name || asset.id;
 const compatibleProfile = (p: IdentityProfile) => (p.defaults?.modelId ?? "realistic-vision-v5.1-faceid") === "realistic-vision-v5.1-faceid";
 const shortId = (id: string) => id.length > 24 ? `${id.slice(0, 12)}…${id.slice(-6)}` : id;
@@ -148,7 +150,7 @@ export function HQTryOnPage() {
     const controller = new AbortController(); let alive = true;
     setCatalogLoading(true); setCatalogError(""); setLoadedCatalog(null);
     hqApi.catalog(kind, filters.q, filters.category, filters.page, controller.signal).then(value => { if (alive) setLoadedCatalog({ key: catalogKey, data: value }); })
-      .catch(e => { if (alive) setCatalogError(describe(e)); }).finally(() => { if (alive) setCatalogLoading(false); });
+      .catch(e => { if (alive) { setCatalogError(describe(e)); if (kind === "person" && authorizationError(e)) setStatus(current => current ? { ...current, authorized: false, error: describe(e) } : current); } }).finally(() => { if (alive) setCatalogLoading(false); });
     return () => { alive = false; controller.abort(); };
   }, [kind, filters, canReadCatalog, catalogKey]);
 
@@ -237,6 +239,7 @@ export function HQTryOnPage() {
       setNotice(current => current?.jobId === created.id && current.kind === "cancel" ? current : { jobId: created.id, kind: "submitted" });
       setRefresh(n => n + 1);
     } catch (e) {
+      if (!profileOnly && authorizationError(e)) setStatus(current => current ? { ...current, authorized: false, error: describe(e) } : current);
       setActionError(dispatched ? `提交未确认：${describe(e)}。请先刷新任务；再次点击只重发同一请求编号。` : `尚未提交：${describe(e)}`);
     } finally { submittingRef.current = false; pendingCreate.current = null; setSubmitting(false); setReceiptVersion(n => n + 1); }
   }
@@ -271,7 +274,7 @@ export function HQTryOnPage() {
         {currentStatus?.pipeline && <span>管线：{currentStatus.pipeline}</span>}
       </div>
       {connectionError && status && <p className="hq-hint">上次状态已过期，授权和模型状态等待重新读取。</p>}
-      {currentStatus && !profileOnly && (!currentStatus.configured || !currentStatus.authorized) && <p className="hq-hint">请在本机完成 HQ 图库授权配置，然后刷新。此页无需输入图库密钥。</p>}
+      {!profileOnly && <HQAuthorization status={currentStatus} offline={!!connectionError} onAuthorized={() => { setStatus(current => current ? { ...current, authorized: true, error: null } : current); refreshJobs(true); }} />}
       {currentStatus && !currentStatus.modelReady && <p className="hq-hint">本地三图管线尚未就绪，暂不能提交生成；可查看已有任务。</p>}
       {hqError(currentStatus?.error) && <p role="alert" className="hq-error">{hqError(currentStatus?.error)}</p>}
       {connectionError && <p role="alert" className="hq-error">本地服务不可用：{connectionError}</p>}

@@ -12,6 +12,8 @@ C206 实测分辨率为 2560×1440，应用可用区域为 2560×1308，底部�
 
 与普通版共存时，显微镜版的本机生成、健康检查和放大统一使用 `localhost:18081`。普通版占用 `8081` 时，同一张图仍然可能生成成功，但借用它的后端会丢失显微镜的原生事件。回归时同时保留两个应用，进入 **CPU Models → Absolute Reality** 生成一张图，在 **显微镜 → 总览** 核对实际 U-Net 调用和模型文件哈希，再到 **过程图** 查看采样帧。远程受控模式沿用协议的 `8808/8081`。
 
+2026-11-16 在 C206 上使用 Absolute Reality、CPU/MNN、256×256、20 步和提示词 `a red sedan beside an alpine lake and pine trees` 复测。显微镜记录总耗时 54,484 ms、U-Net 和调度器各 20 次，过程页保留 8 帧内部 latent。该模型的逐步 VAE 彩色预览显示 `NOT EXECUTED`，最终图像正常写入历史。横屏历史图可从模型页或全局历史进入，按当前筛选顺序滑动切换。
+
 ## H2 goals
 
 - Preserve already-downloaded multi-GB model data across H2+ APK upgrades.

@@ -83,6 +83,47 @@ def fix_cpu_microscope(main, kotlin):
     ])
 
 
+def enable_model_history_carousel(kotlin):
+    edit(kotlin / "ui/screens/ModelRunScreen.kt", [
+        ('import androidx.compose.runtime.rememberCoroutineScope', 'import androidx.compose.runtime.key\nimport androidx.compose.runtime.rememberCoroutineScope'),
+        ('''        val historyBitmap by produceState<Bitmap?>(null, detailImagePath) {
+            value = withContext(Dispatchers.IO) {
+                detailImagePath?.let { BitmapFactory.decodeFile(it) }
+            }
+        }
+        val dismissDetail = {''', '''        val historyBitmap by key(detailImagePath) {
+            produceState<Bitmap?>(null) {
+                value = withContext(Dispatchers.IO) { detailImagePath?.let { BitmapFactory.decodeFile(it) } }
+            }
+        }
+        val detailIds by produceState(emptyList<Long>(), historyFilter, historyTotalCount) {
+            value = historyManager.queryIds(historyFilter)
+        }
+        val currentId = selectedHistoryItem?.id
+        val detailIndex = remember(detailIds, currentId) { currentId?.let(detailIds::indexOf) ?: -1 }
+        val detailScope = rememberCoroutineScope()
+        fun moveDetail(delta: Int) {
+            if (detailIndex < 0) return
+            val targetId = detailIds.getOrNull(detailIndex + delta) ?: return
+            detailScope.launch {
+                val next = historyManager.getItems(listOf(targetId)).firstOrNull()
+                if (next != null && selectedHistoryItem?.id == currentId) selectedHistoryItem = next
+            }
+        }
+        val dismissDetail = {'''),
+        ('''            bitmap = historyBitmap,
+            onDismiss = dismissDetail,
+            topEndContent = {''', '''            bitmap = historyBitmap,
+            onDismiss = dismissDetail,
+            canNavigatePrevious = detailIndex > 0,
+            canNavigateNext = detailIndex >= 0 && detailIndex < detailIds.lastIndex,
+            navigationPosition = if (detailIndex >= 0) "${detailIndex + 1} / ${detailIds.size}" else null,
+            onPrevious = { moveDetail(-1) },
+            onNext = { moveDetail(1) },
+            topEndContent = {'''),
+    ])
+
+
 def apply(root):
     app = root / "app"
     main = app / "src/main"
@@ -171,6 +212,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding"""),
     apply_car_identity(main, kotlin)
     isolate_local_backend(kotlin)
     fix_cpu_microscope(main, kotlin)
+    enable_model_history_carousel(kotlin)
 
 
 if __name__ == "__main__":

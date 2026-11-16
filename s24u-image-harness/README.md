@@ -2,6 +2,12 @@
 
 Public experimental Android image-generation harness for Samsung Galaxy S24 Ultra / Snapdragon 8 Gen 3, built from the immutable Local Dream v2.8.1 baseline (`a7666f6198412a58c6eb1eacc28828aa40c7d7ae`).
 
+## C206 横屏显微镜
+
+[H6R5R1 构建](../.github/workflows/s24u-image-harness-h6r5-build.yml)先生成 S24 Ultra 手机版，再用同一份 ARM64 推理库生成 `c206-image-harness-h6r5r1-landscape` 附件。车机版版本号为 `2.8.1-s24u-h6r5r1-c206.1`（7413），与手机版共用包名。模型目录采用网格排列，显微镜横向并排显示计算链、Token 和耗时，历史图预览避开系统栏。
+
+GitHub 附件使用项目测试证书。C206 实机安装包需要使用该车已配置的平台签名；用同一证书覆盖安装可以保留模型。
+
 ## H2 goals
 
 - Preserve already-downloaded multi-GB model data across H2+ APK upgrades.

@@ -216,3 +216,34 @@ jobs:
             apk-verification-h6r5r1.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: Build and verify the C206 landscape APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 s24u-image-harness/patch_h6r5r1_c206.py local-dream
+          (
+            cd local-dream
+            ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug
+          )
+          APK=LocalDream-H6R5R1-C206.1.apk
+          cp local-dream/app/build/outputs/apk/basic/debug/*-c206.1.apk "$APK"
+          TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOLS/aapt2" dump badging "$APK" > c206-badging.txt
+          grep -F "package: name='io.github.xororz.localdream.s24uharness' versionCode='7413' versionName='2.8.1-s24u-h6r5r1-c206.1'" c206-badging.txt
+          "$TOOLS/apksigner" verify --verbose --print-certs "$APK" > c206-signing.txt
+          grep -Fi "$EXPECTED_CERT_SHA256" c206-signing.txt
+          unzip -p "$APK" assets/s24u_microscope/c206.css > c206-packaged.css
+          cmp s24u-image-harness/c206/microscope.css c206-packaged.css
+          core=lib/arm64-v8a/libstable_diffusion_core.so
+          cmp <(unzip -p S24U_Image_Harness_H6R5R1_20260904.apk "$core") <(unzip -p "$APK" "$core")
+          sha256sum "$APK" > C206-SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c206-image-harness-h6r5r1-landscape
+          path: |
+            LocalDream-H6R5R1-C206.1.apk
+            C206-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7

@@ -231,6 +231,10 @@ jobs:
           TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           "$TOOLS/aapt2" dump badging "$APK" > c206-badging.txt
           grep -F "package: name='io.github.xororz.localdream.s24uharness' versionCode='7413' versionName='2.8.1-s24u-h6r5r1-c206.1'" c206-badging.txt
+          grep -F "application-label:'HQ 绘梦'" c206-badging.txt
+          grep -F "application-label-zh:'HQ 绘梦'" c206-badging.txt
+          unzip -p "$APK" 'classes*.dex' | strings > c206-dex-strings.txt
+          grep -F 'localhost:18081' c206-dex-strings.txt
           "$TOOLS/apksigner" verify --verbose --print-certs "$APK" > c206-signing.txt
           grep -Fi "$EXPECTED_CERT_SHA256" c206-signing.txt
           unzip -p "$APK" assets/s24u_microscope/c206.css > c206-packaged.css

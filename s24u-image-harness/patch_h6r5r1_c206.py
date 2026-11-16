@@ -13,6 +13,76 @@ def edit(path, edits):
     path.write_text(text, encoding="utf-8")
 
 
+def apply_car_identity(main, kotlin):
+    resources = main / "res"
+    shutil.copytree(Path(__file__).with_name("c206") / "res", resources, dirs_exist_ok=True)
+    for path in resources.glob("values*/strings.xml"):
+        contents = path.read_text(encoding="utf-8")
+        contents = contents.replace("Local Dream", "HQ 绘梦").replace("S24U Image Harness", "HQ 绘梦")
+        # Standalone listening uses the dedicated local port. Host mode still uses the wire protocol port.
+        lines = [line.replace("8081", "18081") if 'name="listen_on_all_addresses_hint"' in line else line
+                 for line in contents.splitlines(keepends=True)]
+        path.write_text("".join(lines), encoding="utf-8")
+    edit(kotlin / "ui/screens/ModelListScreen.kt", [
+        ('text = "Local Dream✨"', 'text = stringResource(R.string.app_name)'),
+    ])
+    edit(kotlin / "ui/screens/ModelRunScreen.kt", [
+        ('"S24U HARNESS · PURE RAW"', '"HQ 绘梦 · PURE RAW"'),
+    ])
+    edit(kotlin / "ui/components/ParamShareDialogs.kt", [('"Local Dream params"', '"HQ 绘梦 params"')])
+    edit(main / "assets/s24u_microscope/index.html", [
+        ('<title>S24U H6 Conditioning Influence Microscope</title>', '<title>HQ 绘梦 · 扩散显微镜</title>'),
+        ('>C206 · H6R5R1<', '>HQ 绘梦 · C206 · H6R5R1<'),
+    ])
+
+
+def isolate_local_backend(kotlin):
+    service = kotlin / "service"
+    edit(service / "BackgroundGenerationService.kt", [
+        ('const val LOCAL_BACKEND_HOST = "localhost:8081"',
+         'const val LOCAL_BACKEND_PORT = 18081\n        const val LOCAL_BACKEND_HOST = "localhost:$LOCAL_BACKEND_PORT"'),
+    ])
+    edit(service / "BackendService.kt", [
+        ('import io.github.xororz.localdream.data.Model', 'import io.github.xororz.localdream.data.Model\nimport io.github.xororz.localdream.remote.RemoteProtocol'),
+        ('val listenOnAll: Boolean,', 'val listenOnAll: Boolean,\n        val port: Int,'),
+        ('        val listenOnAll = getSharedPreferences', '        val hosting = RemoteHostService.isRunning.value\n        val listenOnAll = getSharedPreferences'),
+        ('            RemoteHostService.isRunning.value\n        return BackendConfig(modelId, backendType, width, height, listenOnAll)',
+         '            hosting\n        val port = if (hosting) RemoteProtocol.GENERATION_PORT else BackgroundGenerationService.LOCAL_BACKEND_PORT\n        return BackendConfig(modelId, backendType, width, height, listenOnAll, port)'),
+        ('runtimeDir.absolutePath,\n                    "--port",\n                    "8081",', 'runtimeDir.absolutePath,\n                    "--port",\n                    config.port.toString(),'),
+        ('modelsDir.absolutePath,\n                    "--port",\n                    "8081",', 'modelsDir.absolutePath,\n                    "--port",\n                    config.port.toString(),'),
+    ])
+    edit(kotlin / "ui/screens/ModelRunSupport.kt", [
+        ('"http://localhost:8081/health"', '"http://${BackgroundGenerationService.LOCAL_BACKEND_HOST}/health"'),
+    ])
+    edit(kotlin / "ui/screens/UpscaleScreen.kt", [('"8081",', 'BackgroundGenerationService.LOCAL_BACKEND_PORT.toString(),')])
+
+
+def fix_cpu_microscope(main, kotlin):
+    edit(kotlin / "ui/screens/ModelRunScreen.kt", [
+        ('    val h6r5UnetSha256 by produceState(', '''    val unetFileName = if (model?.backendType == "sd15cpu") "unet.mnn" else "unet.bin"
+    val h6r5UnetSha256 by produceState('''),
+        ('        modelId, model?.id, isRemote,\n    ) {\n        value = if (isRemote) "remote-unavailable" else withContext(Dispatchers.IO) {\n            h6r5CachedSha256(context, model?.id ?: modelId, "unet.bin")',
+         '''        modelId, model?.id, unetFileName, isRemote,
+    ) {
+        value = if (isRemote) "remote-unavailable" else withContext(Dispatchers.IO) {
+            h6r5CachedSha256(context, model?.id ?: modelId, unetFileName)'''),
+        ('    val h6r5ModelLoras by produceState(', '''    val unetWeightsSha256 by produceState<String?>(null, modelId, model?.id, unetFileName, isRemote) {
+        value = if (isRemote || unetFileName != "unet.mnn") null else withContext(Dispatchers.IO) {
+            h6r5CachedSha256(context, model?.id ?: modelId, "unet.mnn.weight")
+        }
+    }
+    val h6r5ModelLoras by produceState('''),
+        ('put("unet_sha256", h6r5UnetSha256)', 'put("unet_sha256", h6r5UnetSha256)\n            put("unet_hash_file", unetFileName)\n            unetWeightsSha256?.let { put("unet_weights_sha256", it) }'),
+    ])
+    edit(main / "assets/s24u_microscope/microscope.js", [
+        ('unet SHA256=${txt(s.unet_sha256)}', '${txt(s.unet_hash_file,\'U-Net\')} SHA256=${txt(s.unet_sha256)}${s.unet_weights_sha256 ? ` · unet.mnn.weight SHA256=${s.unet_weights_sha256}` : \'\'}'),
+        ("if(preservation){const pos=Boolean(s.positive_token_preserved)", '''if (preservation && !arr(s.positive_chunk_token_ids).length && !arr(s.negative_chunk_token_ids).length) {
+      preservation.className = 'attention-state';
+      preservation.textContent = '等待后端返回 Token 记录';
+    } else if(preservation){const pos=Boolean(s.positive_token_preserved)'''),
+    ])
+
+
 def apply(root):
     app = root / "app"
     main = app / "src/main"
@@ -98,6 +168,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding"""),
         ("S24U H6 · LIVE", "C206 · H6R5R1"),
     ])
     shutil.copyfile(Path(__file__).with_name("c206") / "microscope.css", microscope / "c206.css")
+    apply_car_identity(main, kotlin)
+    isolate_local_backend(kotlin)
+    fix_cpu_microscope(main, kotlin)
 
 
 if __name__ == "__main__":

@@ -83,6 +83,44 @@ def fix_cpu_microscope(main, kotlin):
     ])
 
 
+def fix_history_swipe(kotlin):
+    edit(kotlin / "ui/components/ZoomableImageOverlay.kt", [
+        ('import androidx.compose.foundation.gestures.detectHorizontalDragGestures', '''import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlin.math.abs'''),
+        ('''            var dragX = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { dragX = 0f },
+                onHorizontalDrag = { _, dragAmount -> dragX += dragAmount },
+                onDragCancel = { dragX = 0f },
+                onDragEnd = {
+                    val threshold = size.width * 0.14f
+                    when {
+                        dragX <= -threshold && canNavigateNext -> onNext?.invoke()
+                        dragX >= threshold && canNavigatePrevious -> onPrevious?.invoke()
+                    }
+                    dragX = 0f
+                },
+            )''', '''            // Observe before the transform detector consumes a drag. Two-finger gestures belong to zoom.
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                var end = down.position
+                var multiplePointers = false
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.changes.size > 1) multiplePointers = true
+                    event.changes.firstOrNull { it.id == down.id }?.let { end = it.position }
+                } while (event.changes.any { it.pressed })
+                val delta = end - down.position
+                if (!multiplePointers && abs(delta.x) > abs(delta.y) && abs(delta.x) >= size.width * 0.14f) {
+                    if (delta.x < 0 && canNavigateNext) onNext?.invoke()
+                    if (delta.x > 0 && canNavigatePrevious) onPrevious?.invoke()
+                }
+            }'''),
+    ])
+
+
 def enable_model_history_carousel(kotlin):
     edit(kotlin / "ui/screens/ModelRunScreen.kt", [
         ('import androidx.compose.runtime.rememberCoroutineScope', 'import androidx.compose.runtime.key\nimport androidx.compose.runtime.rememberCoroutineScope'),
@@ -213,6 +251,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding"""),
     isolate_local_backend(kotlin)
     fix_cpu_microscope(main, kotlin)
     enable_model_history_carousel(kotlin)
+    fix_history_swipe(kotlin)
 
 
 if __name__ == "__main__":

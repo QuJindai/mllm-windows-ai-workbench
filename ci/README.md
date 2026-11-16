@@ -11,8 +11,9 @@ receive both checks. A stale, duplicate, wildcard, or missing manifest path
 fails the gate; a modern-only entry cannot remove a file from both parsers.
 The checker only parses source; it never executes or imports the scanned files.
 
-The modern-only list currently contains the Dream diagnostic and background
-launcher, which use PowerShell 7's `Invoke-WebRequest -NoProxy`. Shared Dream
+The Dream diagnostic and background launcher use PowerShell 7's
+`Invoke-WebRequest -NoProxy`. The paired depth setup script uses
+`ConvertFrom-Json -AsHashtable` and also requires PowerShell 7. Shared Dream
 scripts still invoked by `powershell.exe` remain covered by 5.1. Add a file to
 the manifest only after checking its callers and declaring `#Requires -Version
 7.0` in that script. Keep legacy scripts ASCII-only or UTF-8 with BOM when they

@@ -4,7 +4,7 @@ Public experimental Android image-generation harness for Samsung Galaxy S24 Ultr
 
 ## C206 横屏显微镜
 
-[H6R5R1 构建](../.github/workflows/s24u-image-harness-h6r5-build.yml)先生成 S24 Ultra 手机版，再用同一份 ARM64 推理库生成 `c206-image-harness-h6r5r1-landscape` 附件。车机版版本号为 `2.8.1-s24u-h6r5r1-c206.2`（7414），与手机版共用包名。模型目录采用网格排列，显微镜横向并排显示计算链、Token 和耗时，历史图预览避开系统栏。
+[H6R5R1 构建](../.github/workflows/s24u-image-harness-h6r5-build.yml)先生成 S24 Ultra 手机版，再用同一份 ARM64 推理库生成 `c206-image-harness-h6r5r1-landscape` 附件。车机显微镜版名为 **绘梦PLUS**，版本号为 `2.8.1-s24u-h6r5r1-c206.3`（7415），与手机版共用包名。模型目录采用网格排列，显微镜横向并排显示计算链、Token 和耗时，历史图预览避开系统栏。
 
 在「生成结果」页，宽屏左侧按可用高度等比显示完整图片，右侧显示操作、最近出图和生成参数。点主图可进入缩放预览。回归时用历史里的同一张图，先核对首屏是否同时显示图像四边和参数，再切换缩略图、打开大图并返回。7413 的结果页曾按整屏宽度生成正方形容器，导致 256×256 样图只有一部分能在首屏看到。
 
@@ -12,7 +12,11 @@ Public experimental Android image-generation harness for Samsung Galaxy S24 Ultr
 
 GitHub 附件使用项目测试证书。C206 实机安装包需要使用该车已配置的平台签名；用同一证书覆盖安装可以保留模型。
 
-C206 实测分辨率为 2560×1440，应用可用区域为 2560×1308，底部空调栏保持可操作。手机包在同一车机上只有 736 像素宽。车机版沿用 [HQ 绘梦的无白边图标](https://github.com/QuJindai/hq-branding/tree/main/assets/android/huimeng)。
+C206 实测分辨率为 2560×1440，应用可用区域为 2560×1308，底部空调栏保持可操作。手机包在同一车机上只有 736 像素宽。
+
+验证桌面品牌时，覆盖安装后打开中控「全部应用」。普通版入口为「HQ 绘梦」，显微镜版入口为「绘梦PLUS」，启动图标下半部也应写有「绘梦PLUS」。点后者应打开同名的横屏模型目录。7414 在这个页面出现过两个「HQ 绘梦」，显微镜版显示为白底紫色星形。自 7415 起，应用和启动 Activity 的常规与圆形图标都直接引用同一张 512 像素透明圆角 PNG。构建会检查各语言名称和 APK 里的图标引用。[绘梦PLUS 品牌源文件](https://github.com/QuJindai/hq-branding/blob/e71db324acbf87f812f8c170ced86c6138c96cc5/assets/icons/hq-huimeng-plus.svg)
+
+2026-11-17 从 7414 覆盖升级时，「全部应用」立即更新了名称，却继续显示缓存的紫色星形。退出再进入列表仍可复现。先点「绘梦PLUS」使列表退到后台，在已选 C206 执行 `adb -s <C206序列号> shell am kill --user 10 ltd.qisi.appmanager`，再打开「全部应用」，第三排的 141×141 图标即显示品牌标识和 PLUS 短名。该命令仅回收后台应用列表进程。复测时对照第二排普通版图标，确认其像素与升级前完全一致。
 
 与普通版共存时，显微镜版的本机生成、健康检查和放大统一使用 `localhost:18081`。普通版占用 `8081` 时，同一张图仍然可能生成成功，但借用它的后端会丢失显微镜的原生事件。回归时同时保留两个应用，进入 **CPU Models → Absolute Reality** 生成一张图，在 **显微镜 → 总览** 核对实际 U-Net 调用和模型文件哈希，再到 **过程图** 查看采样帧。远程受控模式沿用协议的 `8808/8081`。
 

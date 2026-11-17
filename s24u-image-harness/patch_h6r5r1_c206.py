@@ -1,9 +1,14 @@
 """Apply the C206 UI to a fully patched H6R5R1 tree after packaging the phone APK."""
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import sys
 
 from patch_h6_v15_h6r5r1_history_carousel import replace_once
+
+
+CAR_NAME = "绘梦PLUS"
 
 
 def edit(path, edits):
@@ -15,10 +20,25 @@ def edit(path, edits):
 
 def apply_car_identity(main, kotlin):
     resources = main / "res"
-    shutil.copytree(Path(__file__).with_name("c206") / "res", resources, dirs_exist_ok=True)
+    overlay = Path(__file__).with_name("c206")
+    brand = json.loads((overlay / "branding.lock.json").read_text(encoding="utf-8"))
+    for icon, expected in brand["files"].items():
+        if hashlib.sha256((overlay / "res/drawable-nodpi" / icon).read_bytes()).hexdigest() != expected:
+            raise ValueError(f"C206 branding asset differs from the pinned source: {icon}")
+    shutil.copytree(overlay / "res", resources, dirs_exist_ok=True)
+    shutil.copyfile(resources / "drawable-nodpi/hq_huimeng_plus.png", main / "ic_launcher-playstore.png")
+    # Give launchers the same bitmap whether they resolve the application or its launch activity.
+    launcher = "@drawable/hq_huimeng_plus"
+    edit(main / "AndroidManifest.xml", [
+        ('android:icon="@mipmap/ic_launcher"', f'android:icon="{launcher}"'),
+        ('android:roundIcon="@mipmap/ic_launcher_round"', f'android:roundIcon="{launcher}"'),
+        ('android:name=".MainActivity"', f'android:name=".MainActivity"\n'
+         f'            android:icon="{launcher}"\n            android:roundIcon="{launcher}"\n'
+         '            android:label="@string/app_name"'),
+    ])
     for path in resources.glob("values*/strings.xml"):
         contents = path.read_text(encoding="utf-8")
-        contents = contents.replace("Local Dream", "HQ 绘梦").replace("S24U Image Harness", "HQ 绘梦")
+        contents = contents.replace("Local Dream", CAR_NAME).replace("S24U Image Harness", CAR_NAME)
         # Standalone listening uses the dedicated local port. Host mode still uses the wire protocol port.
         lines = [line.replace("8081", "18081") if 'name="listen_on_all_addresses_hint"' in line else line
                  for line in contents.splitlines(keepends=True)]
@@ -27,12 +47,23 @@ def apply_car_identity(main, kotlin):
         ('text = "Local Dream✨"', 'text = stringResource(R.string.app_name)'),
     ])
     edit(kotlin / "ui/screens/ModelRunScreen.kt", [
-        ('"S24U HARNESS · PURE RAW"', '"HQ 绘梦 · PURE RAW"'),
+        ('"S24U HARNESS · PURE RAW"', f'"{CAR_NAME} · PURE RAW"'),
     ])
-    edit(kotlin / "ui/components/ParamShareDialogs.kt", [('"Local Dream params"', '"HQ 绘梦 params"')])
+    edit(kotlin / "ui/components/ParamShareDialogs.kt", [('"Local Dream params"', f'"{CAR_NAME} params"')])
+    # Public output labels only. Private storage, saved history and backup formats keep their identifiers.
+    for path in ["utils/ImageUtils.kt", "ui/screens/ModelListScreen.kt", "ui/screens/DataBackupDialog.kt"]:
+        file = kotlin / path
+        text = file.read_text(encoding="utf-8")
+        for old, new in [
+            ('"/LocalDream"', f'"/{CAR_NAME}"'), ('"LocalDream"', f'"{CAR_NAME}"'),
+            ('"Downloads/LocalDream/', f'"Downloads/{CAR_NAME}/'),
+            ('"LocalDream_history_', f'"{CAR_NAME}_history_'), ('"local_dream_log_', f'"{CAR_NAME}_log_'),
+        ]:
+            text = text.replace(old, new)
+        file.write_text(text, encoding="utf-8")
     edit(main / "assets/s24u_microscope/index.html", [
-        ('<title>S24U H6 Conditioning Influence Microscope</title>', '<title>HQ 绘梦 · 扩散显微镜</title>'),
-        ('>C206 · H6R5R1<', '>HQ 绘梦 · C206 · H6R5R1<'),
+        ('<title>S24U H6 Conditioning Influence Microscope</title>', f'<title>{CAR_NAME} · 扩散显微镜</title>'),
+        ('>C206 · H6R5R1<', f'>{CAR_NAME} · C206 · H6R5R1<'),
     ])
 
 
@@ -228,8 +259,9 @@ def apply(root):
     main = app / "src/main"
     kotlin = main / "java/io/github/xororz/localdream"
     edit(app / "build.gradle.kts", [
-        ("versionCode = 7412", "versionCode = 7414"),
-        ('versionName = "2.8.1-s24u-h6r5r1"', 'versionName = "2.8.1-s24u-h6r5r1-c206.2"'),
+        ("versionCode = 7412", "versionCode = 7415"),
+        ('versionName = "2.8.1-s24u-h6r5r1"', 'versionName = "2.8.1-s24u-h6r5r1-c206.3"'),
+        ('"LocalDream_armv8a_$versionName.apk"', f'"{CAR_NAME}_armv8a_$versionName.apk"'),
     ])
     edit(main / "AndroidManifest.xml", [
         ('android:screenOrientation="portrait"',

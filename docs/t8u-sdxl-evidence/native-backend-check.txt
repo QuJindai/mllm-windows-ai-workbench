@@ -1,0 +1,8 @@
+11-17 19:32:49.956  1690  1884 I BackendService: Backend:  74693.6ms [  INFO ] T8U_SDXLMNN_STAGE stage=0 backend=OPENCL
+11-17 19:32:49.956  1690  1884 I BackendService: Backend:  74857.4ms [  INFO ] T8U_SDXLMNN_ACTUAL stage=0 backend=3
+11-17 19:33:01.578  1690  1884 I BackendService: Backend: 321835.2ms [  INFO ] T8U_SDXLMNN_STAGE stage=2 backend=CPU
+11-17 19:33:01.578  1690  1884 I BackendService: Backend: 323941.1ms [  INFO ] T8U_SDXLMNN_ACTUAL stage=2 backend=13
+11-17 19:38:36.557  1690  1884 I BackendService: Backend: 457800.0ms [  INFO ] T8U_SDXLMNN_STAGE stage=0 backend=OPENCL
+11-17 19:38:36.557  1690  1884 I BackendService: Backend: 457865.7ms [  INFO ] T8U_SDXLMNN_ACTUAL stage=0 backend=3
+11-17 19:38:50.710  1690  1884 I BackendService: Backend: 668311.9ms [  INFO ] T8U_SDXLMNN_STAGE stage=2 backend=CPU
+11-17 19:38:50.710  1690  1884 I BackendService: Backend: 670471.2ms [  INFO ] T8U_SDXLMNN_ACTUAL stage=2 backend=13

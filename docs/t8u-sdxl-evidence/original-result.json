@@ -1,0 +1,11 @@
+{
+  "channels": 3,
+  "first_step_time_ms": 18033,
+  "format": "raw",
+  "generation_time_ms": 275197,
+  "height": 1024,
+  "seed": 1632280009,
+  "type": "complete",
+  "width": 1024,
+  "observed_wall_s": 275.5460000000021
+}

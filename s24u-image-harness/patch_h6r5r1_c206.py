@@ -162,13 +162,74 @@ def enable_model_history_carousel(kotlin):
     ])
 
 
+def fit_result_to_viewport(kotlin):
+    screens = kotlin / "ui/screens"
+    edit(screens / "ModelRunPages.kt", [
+        ('import androidx.compose.ui.platform.LocalConfiguration', 'import androidx.compose.ui.layout.ContentScale\nimport androidx.compose.ui.platform.LocalConfiguration'),
+        ('''    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Crossfade(
+            targetState = currentBitmap != null,''', '''    Box(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Crossfade(
+            targetState = currentBitmap != null,'''),
+        ('                ElevatedCard(\n                    modifier = Modifier.padding(16.dp),',
+         '                ElevatedCard(\n                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),'),
+        ('''                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(''', '''                C206ResultLayout(
+                    actions = {
+                        Row('''),
+        ('                        // The shadowed Surface stays outside AnimatedContent:',
+         '                    },\n                    preview = { frame ->\n                        // The shadowed Surface stays outside AnimatedContent:'),
+        ('''                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f),
+                            shape = MaterialTheme.shapes.medium,''', '''                            modifier = frame,
+                            shape = MaterialTheme.shapes.medium,'''),
+        ('                                        contentDescription = "generated image",',
+         '                                        contentDescription = "generated image",\n                                        contentScale = ContentScale.Fit,'),
+        ('                        if (recentHistory.size > 1) {', '                    },\n                    details = {\n                        if (recentHistory.size > 1) {'),
+        ('''                    }
+                }
+            }
+        }
+    }
+}
+
+/** History tab of the run screen:''', '''                    },
+                )
+            }
+        }
+    }
+}
+
+/** History tab of the run screen:'''),
+    ])
+    shutil.copyfile(Path(__file__).with_name("c206") / "C206ResultLayout.kt", screens / "C206ResultLayout.kt")
+
+
 def apply(root):
     app = root / "app"
     main = app / "src/main"
     kotlin = main / "java/io/github/xororz/localdream"
     edit(app / "build.gradle.kts", [
-        ("versionCode = 7412", "versionCode = 7413"),
-        ('versionName = "2.8.1-s24u-h6r5r1"', 'versionName = "2.8.1-s24u-h6r5r1-c206.1"'),
+        ("versionCode = 7412", "versionCode = 7414"),
+        ('versionName = "2.8.1-s24u-h6r5r1"', 'versionName = "2.8.1-s24u-h6r5r1-c206.2"'),
     ])
     edit(main / "AndroidManifest.xml", [
         ('android:screenOrientation="portrait"',
@@ -252,6 +313,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding"""),
     fix_cpu_microscope(main, kotlin)
     enable_model_history_carousel(kotlin)
     fix_history_swipe(kotlin)
+    fit_result_to_viewport(kotlin)
 
 
 if __name__ == "__main__":

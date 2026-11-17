@@ -4,7 +4,9 @@ Public experimental Android image-generation harness for Samsung Galaxy S24 Ultr
 
 ## C206 横屏显微镜
 
-[H6R5R1 构建](../.github/workflows/s24u-image-harness-h6r5-build.yml)先生成 S24 Ultra 手机版，再用同一份 ARM64 推理库生成 `c206-image-harness-h6r5r1-landscape` 附件。车机版版本号为 `2.8.1-s24u-h6r5r1-c206.1`（7413），与手机版共用包名。模型目录采用网格排列，显微镜横向并排显示计算链、Token 和耗时，历史图预览避开系统栏。
+[H6R5R1 构建](../.github/workflows/s24u-image-harness-h6r5-build.yml)先生成 S24 Ultra 手机版，再用同一份 ARM64 推理库生成 `c206-image-harness-h6r5r1-landscape` 附件。车机版版本号为 `2.8.1-s24u-h6r5r1-c206.2`（7414），与手机版共用包名。模型目录采用网格排列，显微镜横向并排显示计算链、Token 和耗时，历史图预览避开系统栏。
+
+在「生成结果」页，宽屏左侧按可用高度等比显示完整图片，右侧显示操作、最近出图和生成参数。点主图可进入缩放预览。回归时用历史里的同一张图，先核对首屏是否同时显示图像四边和参数，再切换缩略图、打开大图并返回。7413 的结果页曾按整屏宽度生成正方形容器，导致 256×256 样图只有一部分能在首屏看到。
 
 GitHub 附件使用项目测试证书。C206 实机安装包需要使用该车已配置的平台签名；用同一证书覆盖安装可以保留模型。
 

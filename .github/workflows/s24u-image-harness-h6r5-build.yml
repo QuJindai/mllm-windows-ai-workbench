@@ -226,13 +226,13 @@ jobs:
             cd local-dream
             ./gradlew --no-daemon --stacktrace -PRELEASE_STORE_FILE=/tmp/s24u-test.jks -PRELEASE_STORE_PASSWORD="$SIGN_PASS" -PRELEASE_KEY_ALIAS="$SIGN_ALIAS" -PRELEASE_KEY_PASSWORD="$SIGN_PASS" testBasicDebugUnitTest assembleBasicDebug
           )
-          APK=LocalDream-H6R5R1-C206.2.apk
-          cp local-dream/app/build/outputs/apk/basic/debug/*-c206.2.apk "$APK"
+          APK=HuimengPLUS-H6R5R1-C206.3.apk
+          cp local-dream/app/build/outputs/apk/basic/debug/*-c206.3.apk "$APK"
           TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           "$TOOLS/aapt2" dump badging "$APK" > c206-badging.txt
-          grep -F "package: name='io.github.xororz.localdream.s24uharness' versionCode='7414' versionName='2.8.1-s24u-h6r5r1-c206.2'" c206-badging.txt
-          grep -F "application-label:'HQ 绘梦'" c206-badging.txt
-          grep -F "application-label-zh:'HQ 绘梦'" c206-badging.txt
+          grep -F "package: name='io.github.xororz.localdream.s24uharness' versionCode='7415' versionName='2.8.1-s24u-h6r5r1-c206.3'" c206-badging.txt
+          "$TOOLS/aapt2" dump xmltree "$APK" --file AndroidManifest.xml > c206-manifest.txt
+          python3 s24u-image-harness/tests/verify_c206_branding.py "$APK" c206-badging.txt c206-manifest.txt
           unzip -p "$APK" 'classes*.dex' | strings > c206-dex-strings.txt
           grep -F 'localhost:18081' c206-dex-strings.txt
           "$TOOLS/apksigner" verify --verbose --print-certs "$APK" > c206-signing.txt
@@ -247,7 +247,7 @@ jobs:
         with:
           name: c206-image-harness-h6r5r1-landscape
           path: |
-            LocalDream-H6R5R1-C206.2.apk
+            HuimengPLUS-H6R5R1-C206.3.apk
             C206-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7

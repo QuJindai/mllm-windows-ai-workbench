@@ -1,0 +1,10 @@
+{
+  "product": "huimeng-plus",
+  "repository": "QuJindai/hq-branding",
+  "version": "1.5.0",
+  "sourceCommit": "e71db324acbf87f812f8c170ced86c6138c96cc5",
+  "files": {
+    "hq_huimeng_plus.png": "783122a8424edb91723574664e4a0f9a65b0b0bda6d192324be190262c77b149",
+    "hq_huimeng_plus_monochrome.png": "c366f82718ddc8cd4da5114059b42b4258faa6fab80105b707c23a5c278adb58"
+  }
+}

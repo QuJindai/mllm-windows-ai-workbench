@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="16.67%">
-    <bitmap android:src="@drawable/hq_huimeng_notification" android:gravity="fill" android:filter="true" />
+    <bitmap android:src="@drawable/hq_huimeng_plus_monochrome" android:gravity="fill" android:filter="true" />
 </inset>

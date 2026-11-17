@@ -57,3 +57,5 @@
 - 沿用的界面在首次U-Net初始化时仍停留CLIP阶段，运行期总耗时尚未完成时显示0或空；最终完成值正确。提示词计数包含BOS/EOS，显微镜内容token计数不包含，两处相差2。
 
 本次未验证多chunk融合A/B、img2img、UltraFix或所有SDXL模型。原版对照引擎已停止，临时原版App已移除，保留已升级的绘梦PLUS。
+
+Evidence: [result](t8u-sdxl-evidence/result.png), [pixel comparison](t8u-sdxl-evidence/original-comparison.json), [original engine timing](t8u-sdxl-evidence/original-result.json), [actual backend log](t8u-sdxl-evidence/native-backend-check.txt).

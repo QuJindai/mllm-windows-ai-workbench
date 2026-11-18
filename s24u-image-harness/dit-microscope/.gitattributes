@@ -1,0 +1,2 @@
+*.sh text eol=lf
+integration.patch text eol=lf whitespace=-blank-at-eol

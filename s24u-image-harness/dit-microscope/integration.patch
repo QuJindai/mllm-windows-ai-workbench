@@ -1,0 +1,67 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -34,8 +34,8 @@
+         minSdk = 28
+ //        minSdk = 31
+         targetSdk = 36
+-        versionCode = 7416
+-        versionName = "2.8.1-t8u-h6r5r2-sdxlmnn"
++        versionCode = 7421
++        versionName = "2.8.1-t8u-h6r5r7-dit"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+         vectorDrawables {
+@@ -79,6 +79,7 @@
+             signingConfig = signingConfigs.getByName("release")
+         }
+     }
++    packaging { jniLibs { useLegacyPackaging = true } }
+     compileOptions {
+         sourceCompatibility = JavaVersion.VERSION_17
+         targetCompatibility = JavaVersion.VERSION_17
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -22,6 +22,8 @@
+     <application
+         android:name=".LocalDreamApplication"
+         android:allowBackup="true"
++        android:extractNativeLibs="true"
++        android:largeHeap="true"
+         android:dataExtractionRules="@xml/data_extraction_rules"
+         android:enableOnBackInvokedCallback="true"
+         android:fullBackupContent="@xml/backup_rules"
+@@ -74,5 +76,17 @@
+             android:enabled="true"
+             android:exported="false"
+             android:foregroundServiceType="dataSync" />
+-    </application>
++    <activity android:name="com.hexanima.npu.Main" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.History" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.Viewer" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.ModelsActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.Info" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.Settings" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.Welcome" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.WallEdit" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<activity android:name="com.hexanima.npu.MicroscopeActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:configChanges="orientation|screenSize|uiMode" />
++<service android:name="com.hexanima.npu.DownloadService" android:exported="false" android:foregroundServiceType="dataSync"/>
++<provider android:name="com.hexanima.npu.GalleryProvider" android:authorities="io.github.xororz.localdream.s24uharness.hexgallery" android:exported="false" android:grantUriPermissions="true"/>
++<uses-native-library android:name="libcdsprpc.so" android:required="false"/>
++</application>
+ </manifest>
+--- a/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelListScreen.kt
++++ b/app/src/main/java/io/github/xororz/localdream/ui/screens/ModelListScreen.kt
+@@ -957,6 +957,13 @@
+                             expanded = menuExpanded,
+                             onDismissRequest = { menuExpanded = false },
+                         ) {
++                            DropdownMenuItem(
++                                text = { Text("DiT NPU 模型 · 显微镜") },
++                                onClick = {
++                                    menuExpanded = false
++                                    context.startActivity(android.content.Intent(context, com.hexanima.npu.Main::class.java))
++                                },
++                            )
+                             DropdownMenuItem(
+                                 text = { Text(stringResource(R.string.help)) },
+                                 leadingIcon = {
